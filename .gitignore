@@ -16,3 +16,4 @@ build/
 public/
 *.pem
 postgres/certs/
+flair-vents-automation-handoff-spec.md

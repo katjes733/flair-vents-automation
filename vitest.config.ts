@@ -15,7 +15,12 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts", "src/**/*.tsx"],
-      exclude: ["src/**/*.d.ts"],
+      // datasource.ts is pure DB-connection/bootstrap wiring (schema
+      // creation, TLS, synchronize()) — verified against a real Postgres
+      // instance via the live smoke test in the Verification Plan, not
+      // unit-testable without one. Neither reference app unit-tests this
+      // layer either.
+      exclude: ["src/**/*.d.ts", "src/server/database/datasource.ts"],
       reporter: ["text"],
       thresholds: {
         lines: 80,
