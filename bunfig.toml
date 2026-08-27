@@ -1,0 +1,1 @@
+preload = ["./src/server/bootstrap/logger-global.ts"]
