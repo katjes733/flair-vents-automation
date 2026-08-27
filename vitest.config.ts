@@ -15,12 +15,19 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts", "src/**/*.tsx"],
-      // datasource.ts is pure DB-connection/bootstrap wiring (schema
-      // creation, TLS, synchronize()) — verified against a real Postgres
-      // instance via the live smoke test in the Verification Plan, not
-      // unit-testable without one. Neither reference app unit-tests this
-      // layer either.
-      exclude: ["src/**/*.d.ts", "src/server/database/datasource.ts"],
+      // Pure connection/process wiring — verified live (the smoke test /
+      // Docker health-cmd in the Verification Plan), not meaningfully
+      // unit-testable without a real DB/Redis/HTTP server. Neither
+      // reference app unit-tests this layer either. Real logic that sits
+      // next to this wiring (retry.ts, validateBody.ts, health.ts) is still
+      // tested normally.
+      exclude: [
+        "src/**/*.d.ts",
+        "src/server/database/datasource.ts",
+        "src/server/util/redis.ts",
+        "src/server/middleware/rateLimiter.ts",
+        "src/server/main.ts",
+      ],
       reporter: ["text"],
       thresholds: {
         lines: 80,

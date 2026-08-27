@@ -29,7 +29,11 @@ export default defineConfig([
       "@typescript-eslint": ts,
     },
     rules: {
-      "no-unused-vars": [
+      // The base rule doesn't understand TS-only constructs (interface
+      // method signatures, function-type params) and misfires on them —
+      // same issue and same fix as the client config below.
+      "no-unused-vars": "off",
+      "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],

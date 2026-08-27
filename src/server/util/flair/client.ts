@@ -1,0 +1,276 @@
+import {
+  getTokenWithClientCredentials,
+  getTokenWithRefreshToken,
+} from "~/server/util/auth";
+import {
+  getFlairTokenByInstallation,
+  recordFlairRefreshError,
+  upsertFlairToken,
+} from "~/server/util/routes/flairToken";
+import { recordTokenCall } from "~/server/util/flair/tokenBudget";
+import { getRetryAfterMs } from "~/server/util/flair/rateLimit";
+import {
+  createOutageTracker,
+  type OutageTracker,
+} from "~/server/util/flair/outage";
+
+// --- Semantic, fully-fakeable interface ---------------------------------
+// Every domain/control test above this layer codes against these shapes,
+// never raw JSON:API — see tests/helpers/fakeFlairClient.ts. Field names
+// below are a best-effort JSON:API-convention guess, NOT confirmed Flair
+// behavior — Phase 0 (docs/flair-api-schema.md) is what corrects them; the
+// interface shape itself is designed to survive that correction unchanged.
+
+export interface FlairStructure {
+  id: string;
+  name: string;
+  // Whether Flair exposes these at all, and under what field name, is a
+  // Phase 0 question (see the Phase 0 checklist in the plan) — undefined
+  // means "not yet known/applicable," not "confirmed absent."
+  hvacCallState?: "cooling" | "heating" | "fan_only" | "idle" | "unknown";
+  equipmentFault?: boolean;
+}
+
+export interface FlairRoom {
+  id: string;
+  structureId: string;
+  name: string;
+  currentTemperatureC: number | null;
+  setpointC: number | null;
+  active: boolean;
+}
+
+export interface FlairVent {
+  id: string;
+  roomId: string;
+  percentOpen: number;
+  reportedPercentOpen: number | null;
+  connected: boolean;
+}
+
+export interface FlairClient {
+  getAccessToken(): Promise<string>;
+  fetchStructures(): Promise<FlairStructure[]>;
+  fetchRooms(structureId: string): Promise<FlairRoom[]>;
+  fetchVents(structureId: string): Promise<FlairVent[]>;
+  setVentPercentOpen(ventId: string, percentOpen: number): Promise<void>;
+  setStructureSetpointC(structureId: string, setpointC: number): Promise<void>;
+}
+
+// Refresh only on demonstrated need — within this margin of the persisted
+// expiry, not speculatively ahead of it. See "Token persistence" in the plan.
+const TOKEN_SAFETY_MARGIN_MS = 2 * 60 * 1000;
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 5000;
+
+function baseUrl(): string {
+  return process.env.FLAIR_API_BASE_URL || "https://api.flair.co";
+}
+
+export class FlairApiClient implements FlairClient {
+  private accessToken: string | null = null;
+  private tokenExpiresAt = 0;
+  private tokenRefreshPromise: Promise<string> | null = null;
+  private readonly outage: OutageTracker;
+  private readonly log: ReturnType<typeof logger.child>;
+
+  constructor(private readonly installationId: string) {
+    this.outage = createOutageTracker(installationId);
+    this.log = logger.child({
+      service: "flair",
+      installation_id: installationId,
+    });
+  }
+
+  async getAccessToken(): Promise<string> {
+    if (
+      this.accessToken &&
+      this.tokenExpiresAt - TOKEN_SAFETY_MARGIN_MS > Date.now()
+    ) {
+      return this.accessToken;
+    }
+    // Deduplicate concurrent refresh calls — several zones/handlers can ask
+    // for a token in the same tick.
+    if (this.tokenRefreshPromise) {
+      return this.tokenRefreshPromise;
+    }
+    this.tokenRefreshPromise = this.mintOrRefreshToken().finally(() => {
+      this.tokenRefreshPromise = null;
+    });
+    return this.tokenRefreshPromise;
+  }
+
+  private async mintOrRefreshToken(): Promise<string> {
+    const stored = await getFlairTokenByInstallation(this.installationId);
+    if (
+      stored?.accessToken &&
+      stored.expiresAt &&
+      stored.expiresAt.getTime() - TOKEN_SAFETY_MARGIN_MS > Date.now()
+    ) {
+      this.accessToken = stored.accessToken;
+      this.tokenExpiresAt = stored.expiresAt.getTime();
+      return this.accessToken;
+    }
+
+    const grantMode = process.env.FLAIR_GRANT_MODE || "client_credentials";
+    const response =
+      grantMode === "refresh_token" && stored?.refreshToken
+        ? await getTokenWithRefreshToken(stored.refreshToken)
+        : await getTokenWithClientCredentials();
+
+    const callsToday = await recordTokenCall();
+    this.log.debug(
+      { grant_type: grantMode, calls_today: callsToday },
+      "Flair token call recorded",
+    );
+
+    if (!response.ok) {
+      // A terminal failure (the grant itself is invalid) needs re-auth;
+      // a transient one (network/5xx/rate-limit) doesn't — distinguished at
+      // the first attempt, not after accumulating retries, per the plan.
+      const terminal = response.status === 400 || response.status === 401;
+      const errorMsg = `Flair token request failed: ${response.status} ${response.statusText}`;
+      this.log.warn(
+        { status: response.status, terminal },
+        "Flair token refresh failed",
+      );
+      await recordFlairRefreshError(this.installationId, errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    const tokenData = (await response.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in: number;
+      scope?: string;
+    };
+    this.accessToken = tokenData.access_token;
+    this.tokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
+    await upsertFlairToken({
+      installationId: this.installationId,
+      accessToken: this.accessToken,
+      refreshToken: tokenData.refresh_token ?? stored?.refreshToken ?? null,
+      expiresAt: new Date(this.tokenExpiresAt),
+      scope: tokenData.scope ?? null,
+    });
+    this.log.info("Flair token refreshed successfully");
+    return this.accessToken;
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    const token = await this.getAccessToken();
+    const url = new URL(path, baseUrl()).toString();
+    const res = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/vnd.api+json",
+        Accept: "application/vnd.api+json",
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    if (res.status === 429) {
+      const retryAfterMs =
+        getRetryAfterMs(res) ?? DEFAULT_RATE_LIMIT_BACKOFF_MS;
+      this.log.debug(
+        { endpoint: path, retry_after_ms: retryAfterMs },
+        "Flair API error",
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+      return this.request<T>(method, path, body);
+    }
+
+    if (!res.ok) {
+      this.outage.recordFailure();
+      this.log.warn({ endpoint: path, status: res.status }, "Flair API error");
+      throw new Error(
+        `Flair API error: ${method} ${path} -> ${res.status} ${res.statusText}`,
+      );
+    }
+
+    this.outage.recordSuccess();
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  }
+
+  // --- Resource methods ---------------------------------------------------
+  // Paths/attribute names below are a placeholder JSON:API-convention guess —
+  // see the interface-level comment above. Expect these bodies specifically
+  // to be rewritten once Phase 0 lands real findings; the public method
+  // signatures are what's meant to survive that.
+
+  async fetchStructures(): Promise<FlairStructure[]> {
+    const body = await this.request<{
+      data: Array<{ id: string; attributes: Record<string, unknown> }>;
+    }>("GET", "/api/structures");
+    return body.data.map((d) => ({
+      id: d.id,
+      name: String(d.attributes.name ?? ""),
+      hvacCallState: undefined,
+      equipmentFault: undefined,
+    }));
+  }
+
+  async fetchRooms(structureId: string): Promise<FlairRoom[]> {
+    const body = await this.request<{
+      data: Array<{ id: string; attributes: Record<string, unknown> }>;
+    }>("GET", `/api/structures/${structureId}/rooms`);
+    return body.data.map((d) => ({
+      id: d.id,
+      structureId,
+      name: String(d.attributes.name ?? ""),
+      currentTemperatureC:
+        (d.attributes["current-temperature-c"] as number | undefined) ?? null,
+      setpointC:
+        (d.attributes["set-point-temperature-c"] as number | undefined) ?? null,
+      active: Boolean(d.attributes.active ?? true),
+    }));
+  }
+
+  async fetchVents(structureId: string): Promise<FlairVent[]> {
+    const body = await this.request<{
+      data: Array<{
+        id: string;
+        attributes: Record<string, unknown>;
+        relationships?: { room?: { data?: { id: string } } };
+      }>;
+    }>("GET", `/api/structures/${structureId}/vents`);
+    return body.data.map((d) => ({
+      id: d.id,
+      roomId: d.relationships?.room?.data?.id ?? "",
+      percentOpen: Number(d.attributes["percent-open"] ?? 0),
+      reportedPercentOpen:
+        d.attributes["percent-open"] !== undefined
+          ? Number(d.attributes["percent-open"])
+          : null,
+      connected: Boolean(d.attributes.connected ?? true),
+    }));
+  }
+
+  async setVentPercentOpen(ventId: string, percentOpen: number): Promise<void> {
+    await this.request("PATCH", `/api/vents/${ventId}`, {
+      data: {
+        type: "vents",
+        id: ventId,
+        attributes: { "percent-open": percentOpen },
+      },
+    });
+  }
+
+  async setStructureSetpointC(
+    structureId: string,
+    setpointC: number,
+  ): Promise<void> {
+    await this.request("PATCH", `/api/structures/${structureId}`, {
+      data: {
+        type: "structures",
+        id: structureId,
+        attributes: { "set-point-temperature-c": setpointC },
+      },
+    });
+  }
+}

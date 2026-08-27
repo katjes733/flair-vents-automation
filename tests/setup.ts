@@ -24,22 +24,6 @@ type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 
 const noop = (): void => {};
 
-function makeChildStub(): unknown {
-  const stub: Record<string, unknown> = {};
-  for (const lvl of [
-    "trace",
-    "debug",
-    "info",
-    "warn",
-    "error",
-    "fatal",
-  ] as LogLevel[]) {
-    stub[lvl] = vi.fn(noop);
-  }
-  stub["child"] = vi.fn(makeChildStub);
-  return stub;
-}
-
 beforeEach(() => {
   for (const lvl of [
     "trace",
@@ -51,9 +35,13 @@ beforeEach(() => {
   ] as LogLevel[]) {
     vi.spyOn(logger, lvl).mockImplementation(noop);
   }
-  vi.spyOn(logger, "child").mockImplementation(
-    makeChildStub as typeof logger.child,
-  );
+  // child() returns the same (already-spied) logger rather than a
+  // disconnected stub — every server module here calls
+  // logger.child({service: ...}) as its own convention, so logSpy() needs
+  // to observe calls made through a child logger, not just direct
+  // logger.error()/logger.info() calls. A fresh, unrelated stub per call
+  // (the shape both reference apps use) would make those invisible here.
+  vi.spyOn(logger, "child").mockReturnValue(logger);
 });
 
 afterEach(() => {
