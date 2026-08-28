@@ -16,7 +16,7 @@ function makeEvent(
     start_time: "08:00",
     end_time: "17:00",
     days_of_week: 0b1111111,
-    assigned_zone_ids: [],
+    zone_settings: [],
     ...overrides,
   };
 }
