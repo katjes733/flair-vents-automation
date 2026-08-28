@@ -1,8 +1,11 @@
 import type {
   FlairClient,
   FlairStructure,
+  FlairZone,
+  FlairThermostatState,
   FlairRoom,
   FlairVent,
+  FlairVentReading,
 } from "~/server/util/flair/client";
 
 // A stateful, in-memory fake — not HTTP mocking. Every domain/control test
@@ -25,8 +28,11 @@ export interface SetpointCommand {
 
 export class FakeFlairClient implements FlairClient {
   private structures: FlairStructure[] = [];
+  private zones: FlairZone[] = [];
+  private thermostatStates = new Map<string, FlairThermostatState>();
   private rooms: FlairRoom[] = [];
   private vents: FlairVent[] = [];
+  private ventReadings = new Map<string, FlairVentReading>();
   private forcedError: Error | null = null;
   private rateLimitedOnce = false;
   private readonly ventCommandHistory: VentCommand[] = [];
@@ -39,12 +45,24 @@ export class FakeFlairClient implements FlairClient {
     this.structures = structures;
   }
 
+  setZones(zones: FlairZone[]): void {
+    this.zones = zones;
+  }
+
+  setThermostatState(state: FlairThermostatState): void {
+    this.thermostatStates.set(state.thermostatId, state);
+  }
+
   setRooms(rooms: FlairRoom[]): void {
     this.rooms = rooms;
   }
 
   setVents(vents: FlairVent[]): void {
     this.vents = vents;
+  }
+
+  setVentReading(reading: FlairVentReading): void {
+    this.ventReadings.set(reading.ventId, reading);
   }
 
   /** The next call to any fetch/set method throws this error instead of succeeding. */
@@ -84,6 +102,21 @@ export class FakeFlairClient implements FlairClient {
     return this.structures;
   }
 
+  async fetchZones(structureId: string): Promise<FlairZone[]> {
+    this.maybeThrow();
+    return this.zones.filter((z) => z.structureId === structureId);
+  }
+
+  async fetchThermostatState(
+    thermostatId: string,
+  ): Promise<FlairThermostatState> {
+    this.maybeThrow();
+    const state = this.thermostatStates.get(thermostatId);
+    if (!state)
+      throw new Error(`No fixture thermostat state set for ${thermostatId}`);
+    return state;
+  }
+
   async fetchRooms(structureId: string): Promise<FlairRoom[]> {
     this.maybeThrow();
     return this.rooms.filter((r) => r.structureId === structureId);
@@ -97,16 +130,22 @@ export class FakeFlairClient implements FlairClient {
     return this.vents.filter((v) => roomIds.has(v.roomId));
   }
 
+  async fetchVentReading(ventId: string): Promise<FlairVentReading> {
+    this.maybeThrow();
+    const reading = this.ventReadings.get(ventId);
+    if (!reading) throw new Error(`No fixture vent reading set for ${ventId}`);
+    return reading;
+  }
+
   async setVentPercentOpen(ventId: string, percentOpen: number): Promise<void> {
     this.maybeThrow();
     this.ventCommandHistory.push({ ventId, percentOpen, at: Date.now() });
     const vent = this.vents.find((v) => v.id === ventId);
     if (vent) {
       // Immediate reconciliation by default — tests simulating a degraded
-      // vent should call setVents() afterward to pin reportedPercentOpen
-      // away from the commanded value instead.
+      // vent should call setVents() afterward to pin the vent's own
+      // percentOpen away from the commanded value instead.
       vent.percentOpen = percentOpen;
-      vent.reportedPercentOpen = percentOpen;
     }
   }
 

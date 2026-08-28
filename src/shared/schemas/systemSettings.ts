@@ -116,6 +116,22 @@ export const systemSettingsConfigSchema = z.object({
   tick_watchdog_seconds: z.number().positive().default(45),
   reconciliation_retry_count: z.number().int().positive().default(3),
 
+  // --- Emergency fail-safe (duct-temperature differential — see the plan's
+  // Emergency fail-safe section for why this is derived rather than read
+  // directly from a Flair-provided fault field, which doesn't exist).
+  // No figures stated in the plan pending real-world tuning. PLACEHOLDER.
+  equipment_fault_grace_period_minutes: z.number().positive().default(10),
+  equipment_fault_duct_delta_threshold_c: z.number().positive().default(5.56),
+  equipment_fault_clear_dwell_minutes: z.number().positive().default(5),
+  // Alert-only backstop, never a fail-safe trigger — see the plan.
+  hvac_no_improvement_alert_minutes: z.number().positive().default(75),
+  // Isolated per-zone duct-airflow anomaly (this vent fails the duct-temp
+  // differential while a sibling passes) — reuses
+  // equipment_fault_duct_delta_threshold_c for the threshold itself, but
+  // needs a longer sustained-duration before alerting since this is
+  // diagnostic, not protective, and benefits from more confidence.
+  duct_anomaly_alert_minutes: z.number().positive().default(20),
+
   // --- Comfort / deadband ---
   // 2°F → 1.11°C (Config-time validation section).
   heat_cool_deadband_min_c: z.number().positive().default(1.11),

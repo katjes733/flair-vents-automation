@@ -17,42 +17,84 @@ import {
 // --- Semantic, fully-fakeable interface ---------------------------------
 // Every domain/control test above this layer codes against these shapes,
 // never raw JSON:API — see tests/helpers/fakeFlairClient.ts. Field names
-// below are a best-effort JSON:API-convention guess, NOT confirmed Flair
-// behavior — Phase 0 (docs/flair-api-schema.md) is what corrects them; the
-// interface shape itself is designed to survive that correction unchanged.
+// below are confirmed live via Phase 0 discovery (docs/flair-api-schema.md),
+// not placeholders — this file was rewritten once real findings landed.
 
 export interface FlairStructure {
   id: string;
   name: string;
-  // Whether Flair exposes these at all, and under what field name, is a
-  // Phase 0 question (see the Phase 0 checklist in the plan) — undefined
-  // means "not yet known/applicable," not "confirmed absent."
-  hvacCallState?: "cooling" | "heating" | "fan_only" | "idle" | "unknown";
-  equipmentFault?: boolean;
+  timeZone: string | null;
+}
+
+// A Flair "zone" — the actual "one air handler" concept. One structure
+// contains multiple zones; each zone has its own thermostat and room set.
+// See "Resource model — the critical correction" in docs/flair-api-schema.md.
+export interface FlairZone {
+  id: string;
+  structureId: string;
+  name: string;
+  thermostatId: string | null;
+}
+
+// The real-time call-state resource — a thermostat's `current-state`.
+// `ambientTemperatureC` is exactly this app's `thermostatReading` input for
+// the Ecobee/Bosch offset-correction mechanism, already resolved by Flair
+// regardless of which physical sensor is behind it.
+export interface FlairThermostatState {
+  thermostatId: string;
+  operatingState: "cool" | "heat" | "idle" | "fan" | string;
+  mode: string;
+  ambientTemperatureC: number | null;
+  targetTemperatureC: number | null;
+  homeAway: string | null;
+  fanState: string | null;
+  online: boolean;
+  written: boolean;
+  writtenConfirmed: boolean;
+  writtenFailures: number | null;
+  createdAt: string;
 }
 
 export interface FlairRoom {
   id: string;
+  zoneId: string | null;
   structureId: string;
   name: string;
   currentTemperatureC: number | null;
   setpointC: number | null;
   active: boolean;
+  hasVents: boolean;
+  hasPucks: boolean;
+  hasRemoteSensors: boolean;
 }
 
 export interface FlairVent {
   id: string;
   roomId: string;
   percentOpen: number;
-  reportedPercentOpen: number | null;
-  connected: boolean;
+  inactive: boolean;
+  voltage: number | null;
+  currentRssi: number | null;
+}
+
+// A vent's own timestamped reading — a separate sub-resource
+// (`vent-sensor-readings`), not embedded in the vent's own attributes.
+// `ductTemperatureC` is the input `detectEquipmentFault()` needs.
+export interface FlairVentReading {
+  ventId: string;
+  percentOpen: number;
+  ductTemperatureC: number | null;
+  createdAt: string;
 }
 
 export interface FlairClient {
   getAccessToken(): Promise<string>;
   fetchStructures(): Promise<FlairStructure[]>;
+  fetchZones(structureId: string): Promise<FlairZone[]>;
+  fetchThermostatState(thermostatId: string): Promise<FlairThermostatState>;
   fetchRooms(structureId: string): Promise<FlairRoom[]>;
   fetchVents(structureId: string): Promise<FlairVent[]>;
+  fetchVentReading(ventId: string): Promise<FlairVentReading>;
   setVentPercentOpen(ventId: string, percentOpen: number): Promise<void>;
   setStructureSetpointC(structureId: string, setpointC: number): Promise<void>;
 }
@@ -197,11 +239,7 @@ export class FlairApiClient implements FlairClient {
     return (await res.json()) as T;
   }
 
-  // --- Resource methods ---------------------------------------------------
-  // Paths/attribute names below are a placeholder JSON:API-convention guess —
-  // see the interface-level comment above. Expect these bodies specifically
-  // to be rewritten once Phase 0 lands real findings; the public method
-  // signatures are what's meant to survive that.
+  // --- Resource methods, using field names confirmed live via Phase 0 -----
 
   async fetchStructures(): Promise<FlairStructure[]> {
     const body = await this.request<{
@@ -210,24 +248,82 @@ export class FlairApiClient implements FlairClient {
     return body.data.map((d) => ({
       id: d.id,
       name: String(d.attributes.name ?? ""),
-      hvacCallState: undefined,
-      equipmentFault: undefined,
+      timeZone: (d.attributes["time-zone"] as string | undefined) ?? null,
     }));
   }
 
-  async fetchRooms(structureId: string): Promise<FlairRoom[]> {
+  async fetchZones(structureId: string): Promise<FlairZone[]> {
     const body = await this.request<{
-      data: Array<{ id: string; attributes: Record<string, unknown> }>;
-    }>("GET", `/api/structures/${structureId}/rooms`);
+      data: Array<{
+        id: string;
+        attributes: Record<string, unknown>;
+        relationships?: { thermostat?: { data?: { id: string | null } } };
+      }>;
+    }>("GET", `/api/structures/${structureId}/zones`);
     return body.data.map((d) => ({
       id: d.id,
       structureId,
       name: String(d.attributes.name ?? ""),
+      thermostatId: d.relationships?.thermostat?.data?.id ?? null,
+    }));
+  }
+
+  async fetchThermostatState(
+    thermostatId: string,
+  ): Promise<FlairThermostatState> {
+    const body = await this.request<{
+      data: { attributes: Record<string, unknown> };
+    }>("GET", `/api/thermostats/${thermostatId}/current-state`);
+    const a = body.data.attributes;
+    return {
+      thermostatId,
+      operatingState: String(a["operating-state"] ?? "idle"),
+      mode: String(a.mode ?? ""),
+      ambientTemperatureC:
+        (a["ambient-temperature-c"] as number | undefined) ?? null,
+      targetTemperatureC:
+        (a["target-temperature-c"] as number | undefined) ?? null,
+      homeAway: (a["home-away"] as string | undefined) ?? null,
+      fanState: (a["fan-state"] as string | undefined) ?? null,
+      online: Boolean(a.online ?? true),
+      written: Boolean(a.written ?? false),
+      writtenConfirmed: Boolean(a["written-confirmed"] ?? false),
+      writtenFailures: (a["written-failures"] as number | undefined) ?? null,
+      createdAt: String(a["created-at"] ?? ""),
+    };
+  }
+
+  async fetchRooms(structureId: string): Promise<FlairRoom[]> {
+    const body = await this.request<{
+      data: Array<{
+        id: string;
+        attributes: Record<string, unknown>;
+        relationships: {
+          zones?: { data?: Array<{ id: string }> };
+          vents?: { data?: unknown[] };
+          pucks?: { data?: unknown[] };
+          "remote-sensors"?: { data?: unknown[] };
+        };
+      }>;
+    }>("GET", `/api/structures/${structureId}/rooms`);
+    return body.data.map((d) => ({
+      id: d.id,
+      // Modeled as a single zone — the relationship is an array in the raw
+      // API, but every room observed so far belongs to exactly one.
+      zoneId: d.relationships.zones?.data?.[0]?.id ?? null,
+      structureId,
+      name: String(d.attributes.name ?? ""),
+      // Rooms use `set-point-c`, distinct from the structure's own
+      // `set-point-temperature-c` — a real, confirmed field-name difference,
+      // not a typo.
       currentTemperatureC:
         (d.attributes["current-temperature-c"] as number | undefined) ?? null,
-      setpointC:
-        (d.attributes["set-point-temperature-c"] as number | undefined) ?? null,
+      setpointC: (d.attributes["set-point-c"] as number | undefined) ?? null,
       active: Boolean(d.attributes.active ?? true),
+      hasVents: (d.relationships.vents?.data?.length ?? 0) > 0,
+      hasPucks: (d.relationships.pucks?.data?.length ?? 0) > 0,
+      hasRemoteSensors:
+        (d.relationships["remote-sensors"]?.data?.length ?? 0) > 0,
     }));
   }
 
@@ -243,12 +339,23 @@ export class FlairApiClient implements FlairClient {
       id: d.id,
       roomId: d.relationships?.room?.data?.id ?? "",
       percentOpen: Number(d.attributes["percent-open"] ?? 0),
-      reportedPercentOpen:
-        d.attributes["percent-open"] !== undefined
-          ? Number(d.attributes["percent-open"])
-          : null,
-      connected: Boolean(d.attributes.connected ?? true),
+      inactive: Boolean(d.attributes.inactive ?? false),
+      voltage: (d.attributes.voltage as number | undefined) ?? null,
+      currentRssi: (d.attributes["current-rssi"] as number | undefined) ?? null,
     }));
+  }
+
+  async fetchVentReading(ventId: string): Promise<FlairVentReading> {
+    const body = await this.request<{
+      data: { attributes: Record<string, unknown> };
+    }>("GET", `/api/vents/${ventId}/current-reading`);
+    const a = body.data.attributes;
+    return {
+      ventId,
+      percentOpen: Number(a["percent-open"] ?? 0),
+      ductTemperatureC: (a["duct-temperature-c"] as number | undefined) ?? null,
+      createdAt: String(a["created-at"] ?? ""),
+    };
   }
 
   async setVentPercentOpen(ventId: string, percentOpen: number): Promise<void> {
@@ -261,6 +368,12 @@ export class FlairApiClient implements FlairClient {
     });
   }
 
+  // Writes to the STRUCTURE's setpoint — the only confirmed writable
+  // setpoint path. With one zone active today this is equivalent to "the
+  // air handler's setpoint," but it's genuinely unconfirmed whether a
+  // second simultaneously-active zone would get its own independent value
+  // or share this same one — see "Open items" in docs/flair-api-schema.md.
+  // Re-verify before a second air handler goes live.
   async setStructureSetpointC(
     structureId: string,
     setpointC: number,

@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { find, insert } = vi.hoisted(() => ({ find: vi.fn(), insert: vi.fn() }));
+const { find, insert, update } = vi.hoisted(() => ({
+  find: vi.fn(),
+  insert: vi.fn(),
+  update: vi.fn(),
+}));
 const { getRepository } = vi.hoisted(() => ({
-  getRepository: vi.fn(() => ({ find, insert })),
+  getRepository: vi.fn(() => ({ find, insert, update })),
 }));
 vi.mock("~/server/database/datasource", () => ({
   default: { getInstance: vi.fn().mockResolvedValue({ getRepository }) },
 }));
 
-const { getOrCreateDefaultInstallation } =
+const { getOrCreateDefaultInstallation, setInstallationFlairStructureId } =
   await import("~/server/util/routes/installation");
 
 describe("getOrCreateDefaultInstallation", () => {
@@ -18,9 +22,15 @@ describe("getOrCreateDefaultInstallation", () => {
   });
 
   it("returns the existing installation without inserting a new one", async () => {
-    find.mockResolvedValue([{ id: "inst-1", name: "Existing" }]);
+    find.mockResolvedValue([
+      { id: "inst-1", name: "Existing", flair_structure_id: "92514" },
+    ]);
     const result = await getOrCreateDefaultInstallation();
-    expect(result).toEqual({ id: "inst-1", name: "Existing" });
+    expect(result).toEqual({
+      id: "inst-1",
+      name: "Existing",
+      flairStructureId: "92514",
+    });
     expect(insert).not.toHaveBeenCalled();
   });
 
@@ -38,5 +48,25 @@ describe("getOrCreateDefaultInstallation", () => {
     find.mockResolvedValue([]);
     const result = await getOrCreateDefaultInstallation();
     expect(result.name).toBe("Default Installation");
+  });
+
+  it("leaves flairStructureId null for a newly created installation", async () => {
+    find.mockResolvedValue([]);
+    const result = await getOrCreateDefaultInstallation();
+    expect(result.flairStructureId).toBeNull();
+  });
+});
+
+describe("setInstallationFlairStructureId", () => {
+  beforeEach(() => {
+    update.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("updates the installation's flair_structure_id", async () => {
+    await setInstallationFlairStructureId("inst-1", "92514");
+    expect(update).toHaveBeenCalledWith(
+      "inst-1",
+      expect.objectContaining({ flair_structure_id: "92514" }),
+    );
   });
 });

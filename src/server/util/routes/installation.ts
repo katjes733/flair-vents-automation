@@ -1,9 +1,10 @@
 import AppDataSource from "~/server/database/datasource";
-import { withTimestamps } from "~/server/util/entityTimestamps";
+import { withTimestamps, touch } from "~/server/util/entityTimestamps";
 
 export interface InstallationData {
   id: string;
   name: string;
+  flairStructureId: string | null;
 }
 
 // This app runs against exactly one installation today — no multi-user/auth
@@ -19,9 +20,26 @@ export async function getOrCreateDefaultInstallation(
   );
   const existing = await repo.find({ take: 1 });
   if (existing.length > 0) {
-    return { id: existing[0].id, name: existing[0].name };
+    return {
+      id: existing[0].id,
+      name: existing[0].name,
+      flairStructureId: existing[0].flair_structure_id,
+    };
   }
-  const row = withTimestamps({ name });
+  const row = withTimestamps({ name, flair_structure_id: null });
   await repo.insert(row);
-  return { id: row.id, name: row.name };
+  return { id: row.id, name: row.name, flairStructureId: null };
+}
+
+export async function setInstallationFlairStructureId(
+  installationId: string,
+  flairStructureId: string,
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "Installation",
+  );
+  await repo.update(installationId, {
+    flair_structure_id: flairStructureId,
+    ...touch(),
+  });
 }

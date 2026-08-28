@@ -175,7 +175,12 @@ describe("FlairApiClient.request (via resource methods)", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          data: [{ id: "s1", attributes: { name: "Upstairs" } }],
+          data: [
+            {
+              id: "s1",
+              attributes: { name: "Upstairs", "time-zone": "America/Phoenix" },
+            },
+          ],
         }),
         { status: 200 },
       ),
@@ -187,8 +192,7 @@ describe("FlairApiClient.request (via resource methods)", () => {
       {
         id: "s1",
         name: "Upstairs",
-        hvacCallState: undefined,
-        equipmentFault: undefined,
+        timeZone: "America/Phoenix",
       },
     ]);
     const [, init] = fetchMock.mock.calls[0];
@@ -239,5 +243,87 @@ describe("FlairApiClient.request (via resource methods)", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       data: { type: "vents", id: "vent-1", attributes: { "percent-open": 42 } },
     });
+  });
+
+  it("parses a zones response, including the thermostat relationship id", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "z1",
+                attributes: { name: "Upstairs" },
+                relationships: { thermostat: { data: { id: "t1" } } },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const client = new FlairApiClient("inst-1");
+    expect(await client.fetchZones("s1")).toEqual([
+      { id: "z1", structureId: "s1", name: "Upstairs", thermostatId: "t1" },
+    ]);
+  });
+
+  it("parses a thermostat-state response, including ambientTemperatureC (thermostatReading)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: {
+              attributes: {
+                "operating-state": "cool",
+                mode: "COOL",
+                "ambient-temperature-c": 23.11,
+                "target-temperature-c": 21.78,
+                "home-away": "Home",
+                "fan-state": "auto",
+                online: true,
+                written: false,
+                "written-confirmed": false,
+                "written-failures": null,
+                "created-at": "2026-08-27T23:59:42.386787+00:00",
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const client = new FlairApiClient("inst-1");
+    const state = await client.fetchThermostatState("t1");
+    expect(state.operatingState).toBe("cool");
+    expect(state.ambientTemperatureC).toBe(23.11);
+    expect(state.homeAway).toBe("Home");
+    expect(state.online).toBe(true);
+  });
+
+  it("parses a vent-sensor-reading response, including ductTemperatureC", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: {
+              attributes: {
+                "percent-open": 100,
+                "duct-temperature-c": 16.75,
+                "created-at": "2026-08-28T00:03:02.387552+00:00",
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const client = new FlairApiClient("inst-1");
+    const reading = await client.fetchVentReading("vent-1");
+    expect(reading.ductTemperatureC).toBe(16.75);
+    expect(reading.percentOpen).toBe(100);
   });
 });

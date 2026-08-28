@@ -5,7 +5,11 @@ import { Installation } from "~/server/database/models/installation";
 
 export interface IAirHandler {
   installation_id: string;
-  flair_structure_id: string | null;
+  // A Flair "zone", not a "structure" — Phase 0 discovery confirmed one
+  // Flair structure (the whole house/account) contains multiple zones, and
+  // a zone (with its own thermostat and room set) is the actual "one air
+  // handler" concept. See docs/flair-api-schema.md.
+  flair_zone_id: string | null;
   name: string;
   active: boolean;
   config: AirHandlerConfig;
@@ -19,7 +23,7 @@ export const AirHandler = new EntitySchema<IBasicEntity & IAirHandler>({
     creation_time: { type: "timestamp with time zone", nullable: false },
     modified_time: { type: "timestamp with time zone", nullable: false },
     installation_id: { type: "uuid", nullable: false },
-    flair_structure_id: {
+    flair_zone_id: {
       type: "varchar",
       length: 255,
       nullable: true,
