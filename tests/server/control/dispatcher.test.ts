@@ -33,7 +33,7 @@ describe("dispatchZoneCommand", () => {
     });
     expect(result).toEqual({ dispatched: true, lastDispatchedPosition: 80 });
     expect(client.getVentCommandHistory()).toHaveLength(1);
-    expect(await queue.dequeueDue(61000)).toEqual(["z1"]);
+    expect(await queue.dequeueDue(61000)).toEqual(["z1:vent-1"]);
   });
 
   it("suppresses under the step-delta threshold and never calls the client", async () => {

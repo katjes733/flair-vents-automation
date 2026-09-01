@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { ingestZoneReading } from "~/server/util/flair/ingest";
+import {
+  ingestZoneRoomReading,
+  ingestZoneVentReading,
+} from "~/server/util/flair/ingest";
 import { asTempDelta } from "~/shared/types/temperature";
 import type {
   FlairRoom,
@@ -61,13 +64,11 @@ function occupancyReading(
   };
 }
 
-describe("ingestZoneReading", () => {
+describe("ingestZoneRoomReading", () => {
   it("applies calibration exactly once, retaining the raw value only in diagnostics", () => {
-    const result = ingestZoneReading({
+    const result = ingestZoneRoomReading({
       zoneId: "z1",
       room: room({ currentTemperatureC: 21 }),
-      vent: vent(),
-      ventReading: ventReading(),
       occupancyReading: null,
       calibrationOffsetC: asTempDelta(1),
     });
@@ -75,38 +76,10 @@ describe("ingestZoneReading", () => {
     expect(result.diagnostics.rawTemp).toBe(21);
   });
 
-  it("passes through the vent's reported position and duct temperature", () => {
-    const result = ingestZoneReading({
-      zoneId: "z1",
-      room: room(),
-      vent: vent({ percentOpen: 73 }),
-      ventReading: ventReading({ ductTemperatureC: 12.5 }),
-      occupancyReading: null,
-      calibrationOffsetC: asTempDelta(0),
-    });
-    expect(result.reportedPositionPct).toBe(73);
-    expect(result.ductTemperatureC).toBe(12.5);
-  });
-
-  it("handles a zone with no vent/reading at all (manual_fixed_vent / no_vent)", () => {
-    const result = ingestZoneReading({
-      zoneId: "z1",
-      room: room(),
-      vent: null,
-      ventReading: null,
-      occupancyReading: null,
-      calibrationOffsetC: asTempDelta(0),
-    });
-    expect(result.reportedPositionPct).toBeNull();
-    expect(result.ductTemperatureC).toBeNull();
-  });
-
   it("handles a room with no temperature reading yet", () => {
-    const result = ingestZoneReading({
+    const result = ingestZoneRoomReading({
       zoneId: "z1",
       room: room({ currentTemperatureC: null }),
-      vent: null,
-      ventReading: null,
       occupancyReading: null,
       calibrationOffsetC: asTempDelta(2),
     });
@@ -115,24 +88,42 @@ describe("ingestZoneReading", () => {
   });
 
   it("passes through the live occupancy reading, distinguishing null (no sensor) from a real value", () => {
-    const withSensor = ingestZoneReading({
+    const withSensor = ingestZoneRoomReading({
       zoneId: "z1",
       room: room(),
-      vent: null,
-      ventReading: null,
       occupancyReading: occupancyReading({ occupied: true }),
       calibrationOffsetC: asTempDelta(0),
     });
     expect(withSensor.occupiedRaw).toBe(true);
 
-    const withoutSensor = ingestZoneReading({
+    const withoutSensor = ingestZoneRoomReading({
       zoneId: "z1",
       room: room(),
-      vent: null,
-      ventReading: null,
       occupancyReading: null,
       calibrationOffsetC: asTempDelta(0),
     });
     expect(withoutSensor.occupiedRaw).toBeNull();
+  });
+});
+
+describe("ingestZoneVentReading", () => {
+  it("passes through the vent's reported position and duct temperature", () => {
+    const result = ingestZoneVentReading({
+      flairVentId: "vent-1",
+      vent: vent({ percentOpen: 73 }),
+      ventReading: ventReading({ ductTemperatureC: 12.5 }),
+    });
+    expect(result.reportedPositionPct).toBe(73);
+    expect(result.ductTemperatureC).toBe(12.5);
+  });
+
+  it("handles a vent id with no vent/reading at all (not yet visible in this tick's snapshot)", () => {
+    const result = ingestZoneVentReading({
+      flairVentId: "vent-1",
+      vent: null,
+      ventReading: null,
+    });
+    expect(result.reportedPositionPct).toBeNull();
+    expect(result.ductTemperatureC).toBeNull();
   });
 });

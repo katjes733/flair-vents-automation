@@ -1,5 +1,5 @@
 import AppDataSource from "~/server/database/datasource";
-import { touch } from "~/server/util/entityTimestamps";
+import { withTimestamps, touch } from "~/server/util/entityTimestamps";
 import {
   resolveZoneConfig,
   type ZoneConfig,
@@ -56,6 +56,76 @@ export async function getZonesForAirHandler(
     where: { air_handler_id: airHandlerId },
   })) as ZoneRow[];
   return rows.map(toZoneData);
+}
+
+export async function getZonesForInstallation(
+  installationId: string,
+): Promise<ZoneData[]> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Zone");
+  const rows = (await repo.find({
+    where: { installation_id: installationId },
+  })) as ZoneRow[];
+  return rows.map(toZoneData);
+}
+
+export async function getZoneById(id: string): Promise<ZoneData | null> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Zone");
+  const row = (await repo.findOne({ where: { id } })) as ZoneRow | null;
+  return row ? toZoneData(row) : null;
+}
+
+export async function createZone(fields: {
+  installationId: string;
+  airHandlerId: string;
+  flairRoomId: string | null;
+  name: string;
+  ventHardwareType: VentHardwareType;
+  config: ZoneConfig;
+}): Promise<ZoneData> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Zone");
+  const row = withTimestamps({
+    installation_id: fields.installationId,
+    air_handler_id: fields.airHandlerId,
+    flair_room_id: fields.flairRoomId,
+    name: fields.name,
+    vent_hardware_type: fields.ventHardwareType,
+    config: fields.config,
+    state: EMPTY_ZONE_RUNTIME_STATE,
+  });
+  await repo.insert(row);
+  return toZoneData(row as unknown as ZoneRow);
+}
+
+export async function updateZone(
+  id: string,
+  fields: Partial<{
+    airHandlerId: string;
+    name: string;
+    ventHardwareType: VentHardwareType;
+    flairRoomId: string | null;
+    config: ZoneConfig;
+  }>,
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Zone");
+  await repo.update(id, {
+    ...(fields.airHandlerId !== undefined && {
+      air_handler_id: fields.airHandlerId,
+    }),
+    ...(fields.name !== undefined && { name: fields.name }),
+    ...(fields.ventHardwareType !== undefined && {
+      vent_hardware_type: fields.ventHardwareType,
+    }),
+    ...(fields.flairRoomId !== undefined && {
+      flair_room_id: fields.flairRoomId,
+    }),
+    ...(fields.config !== undefined && { config: fields.config }),
+    ...touch(),
+  });
+}
+
+export async function deleteZone(id: string): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Zone");
+  await repo.delete(id);
 }
 
 /**

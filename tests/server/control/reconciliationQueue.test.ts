@@ -69,4 +69,12 @@ describe("createInMemoryReconciliationQueue", () => {
     await queue.remove("z1");
     expect(await queue.dequeueDue(NOW)).toEqual([]);
   });
+
+  it("two vents in the same zone reconcile independently via compound keys — a shared zoneId-only key would coalesce them", async () => {
+    const queue = createInMemoryReconciliationQueue();
+    await queue.enqueue("z1:vent-1", NOW - 1000);
+    await queue.enqueue("z1:vent-2", NOW - 500);
+    const due = await queue.dequeueDue(NOW);
+    expect(due.sort()).toEqual(["z1:vent-1", "z1:vent-2"]);
+  });
 });

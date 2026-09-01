@@ -93,7 +93,7 @@ describe("fetchAirHandlerSnapshot", () => {
     return fetchAirHandlerSnapshot(client, "s1", "zone-a").then((snapshot) => {
       expect(snapshot.thermostatState?.thermostatId).toBe("therm-a");
       expect([...snapshot.roomsById.keys()]).toEqual(["room-a"]);
-      expect([...snapshot.ventsByRoomId.keys()]).toEqual(["room-a"]);
+      expect([...snapshot.ventsById.keys()]).toEqual(["vent-a"]);
       expect(snapshot.ventReadingsByVentId.has("vent-b")).toBe(false);
     });
   });

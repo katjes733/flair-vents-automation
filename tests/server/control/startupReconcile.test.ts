@@ -19,7 +19,7 @@ describe("computeStartupReconciliation", () => {
     const result = computeStartupReconciliation([
       {
         zoneId: "z1",
-        reportedPosition: 42,
+        vents: [{ flairVentId: "v1", reportedPosition: 42 }],
         lastTargetPosition: 42,
         minStepDeltaPct: 15,
       },
@@ -31,19 +31,19 @@ describe("computeStartupReconciliation", () => {
     const result = computeStartupReconciliation([
       {
         zoneId: "z1",
-        reportedPosition: 10,
+        vents: [{ flairVentId: "v1", reportedPosition: 10 }],
         lastTargetPosition: 80,
         minStepDeltaPct: 15,
       },
     ]);
-    expect(result.mismatches).toEqual(["z1"]);
+    expect(result.mismatches).toEqual([{ zoneId: "z1", flairVentId: "v1" }]);
   });
 
   it("drops stale reconciliations with no persisted target to compare against", () => {
     const result = computeStartupReconciliation([
       {
         zoneId: "z1",
-        reportedPosition: 10,
+        vents: [{ flairVentId: "v1", reportedPosition: 10 }],
         lastTargetPosition: null,
         minStepDeltaPct: 15,
       },
@@ -55,12 +55,34 @@ describe("computeStartupReconciliation", () => {
     const result = computeStartupReconciliation([
       {
         zoneId: "z1",
-        reportedPosition: null,
+        vents: [{ flairVentId: "v1", reportedPosition: null }],
         lastTargetPosition: 50,
         minStepDeltaPct: 15,
       },
     ]);
     expect(result.seedLastCommandedTarget.has("z1")).toBe(false);
+  });
+
+  it("seeds a 2-vent zone with the minimum reported position across its vents, and flags each vent's own mismatch independently", () => {
+    const result = computeStartupReconciliation([
+      {
+        zoneId: "z1",
+        vents: [
+          { flairVentId: "v1", reportedPosition: 40 },
+          { flairVentId: "v2", reportedPosition: 10 },
+        ],
+        lastTargetPosition: 80,
+        minStepDeltaPct: 15,
+      },
+    ]);
+    expect(result.seedLastCommandedTarget.get("z1")).toBe(10);
+    expect(result.mismatches).toEqual(
+      expect.arrayContaining([
+        { zoneId: "z1", flairVentId: "v1" },
+        { zoneId: "z1", flairVentId: "v2" },
+      ]),
+    );
+    expect(result.mismatches).toHaveLength(2);
   });
 });
 
@@ -73,7 +95,7 @@ describe("runStartupReconciliation", () => {
       zones: [
         {
           zoneId: "z1",
-          reportedPosition: 10,
+          vents: [{ flairVentId: "v1", reportedPosition: 10 }],
           lastTargetPosition: 80,
           minStepDeltaPct: 15,
         },
@@ -81,6 +103,6 @@ describe("runStartupReconciliation", () => {
       reconciliationQueue: queue,
       nowMs: 1000,
     });
-    expect(await queue.dequeueDue(1000)).toEqual(["z1"]);
+    expect(await queue.dequeueDue(1000)).toEqual(["z1:v1"]);
   });
 });

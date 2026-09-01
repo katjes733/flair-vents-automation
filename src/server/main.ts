@@ -9,6 +9,13 @@ import pinoHttp from "pino-http";
 import AppDataSource from "~/server/database/datasource";
 import { router as HealthRouter } from "~/server/routes/health";
 import { router as FlairAuthRouter } from "~/server/routes/flairAuth";
+import { router as AirHandlersRouter } from "~/server/routes/airHandlers";
+import { router as ZonesRouter } from "~/server/routes/zones";
+import { router as SchedulesRouter } from "~/server/routes/schedules";
+import { router as OverridesRouter } from "~/server/routes/overrides";
+import { router as SettingsRouter } from "~/server/routes/settings";
+import { router as ControlRouter } from "~/server/routes/control";
+import { router as SyncRouter } from "~/server/routes/sync";
 import { errorHandler } from "~/server/middleware/errorHandler";
 import { HttpError } from "~/server/util/httpError";
 import { redis } from "~/server/util/redis";
@@ -110,6 +117,13 @@ app.use(express.json({ limit: "100kb" }));
 
 app.use("/api/v1/health", HealthRouter);
 app.use("/api/v1/flair-auth", FlairAuthRouter);
+app.use("/api/v1/air-handlers", AirHandlersRouter);
+app.use("/api/v1/zones", ZonesRouter);
+app.use("/api/v1/schedules", SchedulesRouter);
+app.use("/api/v1/overrides", OverridesRouter);
+app.use("/api/v1/settings", SettingsRouter);
+app.use("/api/v1/control", ControlRouter);
+app.use("/api/v1/sync", SyncRouter);
 
 // Bare (not /api/v1) — this must match the OAuth redirect_uri Flair itself
 // is configured with, and is only ever reached in authorization_code mode.

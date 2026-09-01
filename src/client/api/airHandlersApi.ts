@@ -1,0 +1,130 @@
+import { httpClient } from "~/client/api/httpClient";
+
+export interface AirHandlerConfig {
+  topology_mode: "single_stage" | "two_stage" | "variable_speed";
+  pressure_cap_override_pct?: number;
+  tonnage_tons?: number;
+  blower_rated_flow_rate_lps?: number;
+  blower_rated_flow_rate_is_estimate: boolean;
+  minimum_aggregate_flow_lps?: number;
+  minimum_aggregate_flow_is_estimate: boolean;
+}
+
+export interface AirHandler {
+  id: string;
+  installationId: string;
+  flairZoneId: string | null;
+  name: string;
+  active: boolean;
+  config: AirHandlerConfig;
+}
+
+export interface CreateAirHandlerRequest {
+  flair_zone_id?: string | null;
+  name: string;
+  active?: boolean;
+  config?: Partial<AirHandlerConfig>;
+}
+
+export interface UpdateAirHandlerRequest {
+  flair_zone_id?: string | null;
+  name?: string;
+  active?: boolean;
+  config?: Partial<AirHandlerConfig>;
+}
+
+export async function createAirHandler(
+  body: CreateAirHandlerRequest,
+): Promise<AirHandler> {
+  const { data } = await httpClient.post<AirHandler>("/air-handlers", body);
+  return data;
+}
+
+export async function updateAirHandler(
+  id: string,
+  body: UpdateAirHandlerRequest,
+): Promise<AirHandler> {
+  const { data } = await httpClient.patch<AirHandler>(
+    `/air-handlers/${id}`,
+    body,
+  );
+  return data;
+}
+
+// One entry per zone.config.flair_vent_ids member. See "Multi-Vent Zones".
+export interface VentTickDecisionRecord {
+  flair_vent_id: string;
+  commanded_position_pct: number | null;
+  reported_position_pct: number | null;
+  dispatch_decision: string;
+  degraded: boolean;
+}
+
+export interface ZoneTickDecisionRecord {
+  zone_id: string;
+  name: string;
+  vent_hardware_type: string;
+  classification: string;
+  occupied: boolean;
+  spiking: boolean;
+  desired_position_pct: number | null;
+  post_contention_position_pct: number | null;
+  vents: VentTickDecisionRecord[];
+  reason: string;
+}
+
+export interface AirHandlerTickDecision {
+  air_handler_id: string;
+  tick_at: string;
+  duration_ms: number;
+  dry_run: boolean;
+  control_disarmed: boolean;
+  hvac_state: string;
+  call_confidence: "reported" | "unknown";
+  zones: ZoneTickDecisionRecord[];
+  contention: unknown;
+  pressure: {
+    aggregate_open_lps: number;
+    aggregate_open_pct: number;
+    floor_lps: number;
+    cap_pct: number;
+    clamped: boolean;
+    blower_rated_flow_rate_is_estimate: boolean;
+    minimum_aggregate_flow_is_estimate: boolean;
+  } | null;
+  driving_zone: { zone_id: string | null; reason: string } | null;
+  setpoint_push: {
+    pushed_value: number | null;
+    pushed_value_c: number | null;
+    thermostat_reading: number | null;
+    would_write: boolean;
+    demanding_zone_count: number;
+  } | null;
+  narrative: string;
+}
+
+export async function fetchAirHandlers(): Promise<AirHandler[]> {
+  const { data } = await httpClient.get<AirHandler[]>("/air-handlers");
+  return data;
+}
+
+export async function fetchAirHandlerTickDecision(
+  airHandlerId: string,
+): Promise<AirHandlerTickDecision | null> {
+  try {
+    const { data } = await httpClient.get<AirHandlerTickDecision>(
+      `/air-handlers/${airHandlerId}/tick-decision`,
+    );
+    return data;
+  } catch (err) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "response" in err &&
+      (err as { response?: { status?: number } }).response?.status === 404
+    ) {
+      return null;
+    }
+    throw err;
+  }
+}

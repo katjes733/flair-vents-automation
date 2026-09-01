@@ -57,6 +57,12 @@ export const zoneConfigSchema = z.object({
     .default(0),
   min_vent_position: z.number().min(0).max(100).default(0),
   max_vent_position: z.number().min(0).max(100).default(100),
+  // The zone's Flair vents to actuate — separate from flair_room_id, which
+  // anchors room-scoped sensor data (temperature/occupancy) only. A Flair
+  // room can have more than one vent (docs/flair-api-schema.md); every
+  // vent in this list is commanded to the same computed target position
+  // ("ganged" — see "Multi-Vent Zones" in the implementation plan).
+  flair_vent_ids: z.array(z.string()).default([]),
 });
 
 export type ZoneConfig = z.infer<typeof zoneConfigSchema>;

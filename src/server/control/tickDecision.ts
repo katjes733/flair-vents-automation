@@ -1,5 +1,17 @@
 import type { ContentionResult } from "~/server/domain/position/step3Contention";
 
+// One entry per zone.config.flair_vent_ids member — genuinely per-vent,
+// since every vent in a zone is ganged to the same target but reconciles
+// and can degrade independently. See "Multi-Vent Zones" in the
+// implementation plan.
+export interface VentTickDecision {
+  flair_vent_id: string;
+  commanded_position_pct: number | null;
+  reported_position_pct: number | null;
+  dispatch_decision: "dispatched" | "suppressed_step_delta";
+  degraded: boolean;
+}
+
 // The exhaustive per-tick record — see "Comprehensive tick decision
 // record" in the implementation plan. Complements the granular event
 // catalogue (logEvents.ts); this is the "everything, one place" view.
@@ -12,10 +24,8 @@ export interface ZoneTickDecision {
   spiking: boolean;
   desired_position_pct: number | null;
   post_contention_position_pct: number | null;
-  commanded_position_pct: number | null;
-  reported_position_pct: number | null;
-  dispatch_decision:
-    "dispatched" | "suppressed_step_delta" | "not_applicable_no_vent";
+  // Empty for manual_fixed_vent/no_vent zones (nothing to dispatch).
+  vents: VentTickDecision[];
   reason: string;
 }
 

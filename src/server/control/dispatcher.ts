@@ -50,6 +50,7 @@ export async function dispatchZoneCommand(params: {
     logVentCommandSuppressed(params.log, {
       air_handler_id: params.airHandlerId,
       zone_id: params.zoneId,
+      vent_id: params.ventId,
       target_pct: params.targetPosition,
       last_dispatched_pct: params.lastDispatchedPosition,
       step_delta_pct: stepDeltaPct,
@@ -66,8 +67,12 @@ export async function dispatchZoneCommand(params: {
       params.ventId,
       params.targetPosition,
     );
+    // Compound key — see "Multi-Vent Zones": two vents in the same zone
+    // must reconcile independently, and a shared zoneId-only key would
+    // silently coalesce the second vent's pending reconciliation into the
+    // first's (ZADD/Map.set semantics).
     await params.reconciliationQueue.enqueue(
-      params.zoneId,
+      `${params.zoneId}:${params.ventId}`,
       params.nowMs + params.actuationDelayMs,
     );
   }
@@ -75,6 +80,7 @@ export async function dispatchZoneCommand(params: {
   logVentCommandDispatched(params.log, {
     air_handler_id: params.airHandlerId,
     zone_id: params.zoneId,
+    vent_id: params.ventId,
     target_pct: params.targetPosition,
     reported_pct: params.reportedPosition,
     step_delta_pct: stepDeltaPct,

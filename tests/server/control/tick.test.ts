@@ -12,6 +12,7 @@ import { resolveSystemSettings } from "~/shared/schemas/systemSettings";
 import {
   EMPTY_ZONE_RUNTIME_STATE,
   type ZoneRuntimeState,
+  type VentRuntimeState,
 } from "~/shared/types/zone";
 import { createInMemoryReconciliationQueue } from "~/server/control/reconciliationQueue";
 import { createInMemorySpikeBufferStore } from "~/server/control/spikeBuffer";
@@ -50,6 +51,10 @@ function makeAirHandler(
 function makeZone(params: {
   id: string;
   flairRoomId: string;
+  // Defaults to this fixture file's own room-N/vent-N naming convention —
+  // every existing call site follows it, so this keeps the diff for
+  // adding flair_vent_ids minimal. Pass explicitly for a multi-vent zone.
+  flairVentIds?: string[];
   state?: Partial<ZoneRuntimeState>;
 }): ZoneData {
   return {
@@ -62,8 +67,25 @@ function makeZone(params: {
     config: resolveZoneConfig({
       has_temperature_sensor: true,
       idle_baseline_position: 100,
+      flair_vent_ids: params.flairVentIds ?? [
+        params.flairRoomId.replace("room", "vent"),
+      ],
     }),
     state: { ...EMPTY_ZONE_RUNTIME_STATE, ...params.state },
+  };
+}
+
+function makeVentState(
+  flairVentId: string,
+  overrides: Partial<Omit<VentRuntimeState, "flair_vent_id">> = {},
+): VentRuntimeState {
+  return {
+    flair_vent_id: flairVentId,
+    last_reported_position: null,
+    degraded: false,
+    degraded_since: null,
+    reconcile_attempts: 0,
+    ...overrides,
   };
 }
 
@@ -205,7 +227,8 @@ describe("runTick — no contention", () => {
 
     expect(decision.hvac_state).toBe("COOLING_CALL");
     expect(
-      decision.zones.find((z) => z.zone_id === "z1")?.commanded_position_pct,
+      decision.zones.find((z) => z.zone_id === "z1")?.vents[0]
+        ?.commanded_position_pct,
     ).toBeGreaterThan(0);
     expect(
       client
@@ -283,11 +306,12 @@ describe("runTick — FAN_ONLY/IDLE baselines", () => {
     expect(decision.hvac_state).toBe("FAN_ONLY");
     expect(decision.call_confidence).toBe("reported");
     expect(
-      decision.zones.find((z) => z.zone_id === "z-unocc")
+      decision.zones.find((z) => z.zone_id === "z-unocc")?.vents[0]
         ?.commanded_position_pct,
     ).toBe(50); // idle_baseline_position(100) * unoccupied_idle_factor(0.5)
     expect(
-      decision.zones.find((z) => z.zone_id === "z-occ")?.commanded_position_pct,
+      decision.zones.find((z) => z.zone_id === "z-occ")?.vents[0]
+        ?.commanded_position_pct,
     ).toBe(100); // occupied (Sleep Mode) — unscaled
   });
 });
@@ -344,12 +368,12 @@ describe("runTick — mixed vent hardware types", () => {
     expect(client.getVentCommandHistory().map((c) => c.ventId)).toEqual([
       "vent-smart",
     ]);
+    expect(decision.zones.find((z) => z.zone_id === "z-manual")?.vents).toEqual(
+      [],
+    );
     expect(
-      decision.zones.find((z) => z.zone_id === "z-manual")?.dispatch_decision,
-    ).toBe("not_applicable_no_vent");
-    expect(
-      decision.zones.find((z) => z.zone_id === "z-no-vent")?.dispatch_decision,
-    ).toBe("not_applicable_no_vent");
+      decision.zones.find((z) => z.zone_id === "z-no-vent")?.vents,
+    ).toEqual([]);
     // The manual vent's fixed position is real airflow the pressure math
     // must still account for — never zero, never excluded like no_vent.
     expect(decision.pressure?.aggregate_open_lps).toBeGreaterThan(0);
@@ -569,7 +593,7 @@ describe("runTick — stale sensor safeguard", () => {
     // reading, which held it at 100 on tick 1. Step 2's own ramp limiting
     // means it doesn't reach 0 in a single tick — the ramp-toward-floor
     // direction is the property under test here, not the exact value.
-    expect(zoneDecision?.commanded_position_pct).toBeLessThan(100);
+    expect(zoneDecision?.vents[0]?.commanded_position_pct).toBeLessThan(100);
     expect(zoneDecision?.classification).toBe("unclassified_no_sensor");
   });
 });
@@ -599,7 +623,9 @@ describe("runTick — shadow mode (dry run)", () => {
     );
 
     expect(decision.dry_run).toBe(true);
-    expect(decision.zones[0].commanded_position_pct).toBeGreaterThan(0);
+    expect(decision.zones[0].vents[0]?.commanded_position_pct).toBeGreaterThan(
+      0,
+    );
     expect(client.getVentCommandHistory()).toHaveLength(0);
     expect(client.getSetpointCommandHistory()).toHaveLength(0);
   });
@@ -686,8 +712,8 @@ describe("runTick — genuine contention", () => {
     expect(decision.contention).not.toBeNull();
     const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
     const z2 = decision.zones.find((z) => z.zone_id === "z2")!;
-    expect(z1.commanded_position_pct!).toBeGreaterThanOrEqual(
-      z2.commanded_position_pct!,
+    expect(z1.vents[0]!.commanded_position_pct!).toBeGreaterThanOrEqual(
+      z2.vents[0]!.commanded_position_pct!,
     );
 
     // The driving zone (worst-off, both equally demanding here) still gets
@@ -714,18 +740,21 @@ describe("runTick — reconciliation retry and degrade", () => {
         flairRoomId: "room-1",
         state: {
           last_target_position: 80, // the vent never actually got there
-          reconcile_attempts: 3, // already at the default max (3)
+          vents: [makeVentState("vent-1", { reconcile_attempts: 3 })], // already at the default max (3)
         },
       }),
     ];
     const persisted = new Map<string, ZoneRuntimeState>();
     const ctx = makeCtx();
     const deps = makeDeps(client, persisted, NOW);
-    await deps.reconciliationQueue.enqueue("z1", NOW); // due right now
+    await deps.reconciliationQueue.enqueue("z1:vent-1", NOW); // due right now
 
     await runTick(makeAirHandler(), zones, ctx, deps);
 
-    expect(persisted.get("z1")?.degraded).toBe(true);
+    expect(
+      persisted.get("z1")?.vents.find((v) => v.flair_vent_id === "vent-1")
+        ?.degraded,
+    ).toBe(true);
   });
 
   it("reconciles cleanly when the reported position now matches the target", async () => {
@@ -745,20 +774,28 @@ describe("runTick — reconciliation retry and degrade", () => {
         flairRoomId: "room-1",
         state: {
           last_target_position: 80,
-          reconcile_attempts: 1,
-          degraded: true,
+          vents: [
+            makeVentState("vent-1", {
+              reconcile_attempts: 1,
+              degraded: true,
+              degraded_since: "2024-01-01T00:00:00.000Z",
+            }),
+          ],
         },
       }),
     ];
     const persisted = new Map<string, ZoneRuntimeState>();
     const ctx = makeCtx();
     const deps = makeDeps(client, persisted, NOW);
-    await deps.reconciliationQueue.enqueue("z1", NOW);
+    await deps.reconciliationQueue.enqueue("z1:vent-1", NOW);
 
     await runTick(makeAirHandler(), zones, ctx, deps);
 
-    expect(persisted.get("z1")?.reconcile_attempts).toBe(0);
-    expect(persisted.get("z1")?.degraded).toBe(false);
+    const ventAfter = persisted
+      .get("z1")
+      ?.vents.find((v) => v.flair_vent_id === "vent-1");
+    expect(ventAfter?.reconcile_attempts).toBe(0);
+    expect(ventAfter?.degraded).toBe(false);
   });
 });
 
@@ -817,7 +854,7 @@ describe("runTick — periodic drift-check backstop", () => {
 
     await runTick(makeAirHandler(), zones, ctx, deps);
 
-    expect(enqueueSpy).toHaveBeenCalledWith("z1", NOW);
+    expect(enqueueSpy).toHaveBeenCalledWith("z1:vent-1", NOW);
   });
 
   it("does not check yet if the configured interval hasn't been reached", async () => {
@@ -1003,6 +1040,136 @@ describe("runTick — isolated duct airflow anomaly", () => {
   });
 });
 
+describe("runTick — multi-vent zones", () => {
+  it("gangs both of a zone's vents to the same computed target position", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 50,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      makeCtx(),
+      makeDeps(client, persisted, NOW),
+    );
+
+    const history = client.getVentCommandHistory();
+    expect(history.map((c) => c.ventId).sort()).toEqual(["vent-1", "vent-2"]);
+    const [cmd1, cmd2] = history;
+    expect(cmd1.percentOpen).toBe(cmd2.percentOpen);
+    const zoneDecision = decision.zones.find((z) => z.zone_id === "z1")!;
+    expect(zoneDecision.vents).toHaveLength(2);
+    expect(zoneDecision.vents[0].commanded_position_pct).toBe(
+      zoneDecision.vents[1].commanded_position_pct,
+    );
+  });
+
+  it("one vent degrading doesn't punish its sibling — zone-level rollup is 'any degraded'", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 10,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+        state: {
+          last_target_position: 80,
+          vents: [
+            makeVentState("vent-1", { reconcile_attempts: 3 }), // already at max
+            makeVentState("vent-2", { last_reported_position: 80 }), // already there — healthy
+          ],
+        },
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.reconciliationQueue.enqueue("z1:vent-1", NOW);
+
+    await runTick(makeAirHandler(), zones, ctx, deps);
+
+    const finalVents = persisted.get("z1")?.vents ?? [];
+    expect(finalVents.find((v) => v.flair_vent_id === "vent-1")?.degraded).toBe(
+      true,
+    );
+    expect(finalVents.find((v) => v.flair_vent_id === "vent-2")?.degraded).toBe(
+      false,
+    );
+  });
+
+  it("an isolated duct anomaly on one vent is not cleared by a healthy sibling processed in the same tick — the compound-key regression test", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      }, // fails the differential
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      }, // passes
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    const failingTracking = await deps.zoneDemandTrackingStore.get("z1:vent-1");
+    const passingTracking = await deps.zoneDemandTrackingStore.get("z1:vent-2");
+    expect(failingTracking.ductAnomalySinceMs).not.toBeNull();
+    expect(passingTracking.ductAnomalySinceMs).toBeNull();
+  });
+});
+
 describe("runTick — Away Mode (partial house)", () => {
   it("applies the away setpoint/tolerance only to the native-away zone, resolving the other zone normally in the same tick", async () => {
     const client = new FakeFlairClient();
@@ -1050,14 +1217,14 @@ describe("runTick — Away Mode (partial house)", () => {
       decision.zones.find((z) => z.zone_id === "z-away")?.classification,
     ).toBe("satisfied");
     expect(
-      decision.zones.find((z) => z.zone_id === "z-away")
+      decision.zones.find((z) => z.zone_id === "z-away")?.vents[0]
         ?.commanded_position_pct,
     ).toBe(0);
     expect(
       decision.zones.find((z) => z.zone_id === "z-home")?.classification,
     ).toBe("demanding");
     expect(
-      decision.zones.find((z) => z.zone_id === "z-home")
+      decision.zones.find((z) => z.zone_id === "z-home")?.vents[0]
         ?.commanded_position_pct,
     ).toBeGreaterThan(0);
   });
@@ -1149,12 +1316,18 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
       makeZone({
         id: "z1",
         flairRoomId: "room-1",
-        state: { last_target_position: 50, last_reported_position: 40 },
+        state: {
+          last_target_position: 50,
+          vents: [makeVentState("vent-1", { last_reported_position: 40 })],
+        },
       }),
       makeZone({
         id: "z2",
         flairRoomId: "room-2",
-        state: { last_target_position: 50, last_reported_position: 40 },
+        state: {
+          last_target_position: 50,
+          vents: [makeVentState("vent-2", { last_reported_position: 40 })],
+        },
       }),
     ];
     const persisted = new Map<string, ZoneRuntimeState>();

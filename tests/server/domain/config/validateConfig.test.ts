@@ -11,6 +11,7 @@ function zoneConfig(overrides = {}) {
   return {
     ventHardwareType: "flair_smart_vent" as const,
     flairRoomId: null,
+    flairVentIds: ["vent-1"],
     assumedFixedPosition: undefined,
     minVentPosition: 0,
     maxVentPosition: 100,
@@ -58,6 +59,25 @@ describe("validateZoneConfig", () => {
       zoneConfig({ minVentPosition: 60, maxVentPosition: 40 }),
     );
     expect(issues.some((i) => i.code === "min_exceeds_max")).toBe(true);
+  });
+
+  it("requires at least one flair_vent_id for a flair_smart_vent zone", () => {
+    const issues = validateZoneConfig(zoneConfig({ flairVentIds: [] }));
+    expect(
+      issues.some((i) => i.code === "flair_smart_vent_requires_vent_ids"),
+    ).toBe(true);
+  });
+
+  it("rejects flair_vent_ids on a non-smart-vent zone", () => {
+    const issues = validateZoneConfig(
+      zoneConfig({
+        ventHardwareType: "no_vent",
+        flairVentIds: ["vent-1"],
+      }),
+    );
+    expect(issues.some((i) => i.code === "flair_vent_ids_not_applicable")).toBe(
+      true,
+    );
   });
 
   it("rejects idle_baseline_position outside [min,max] rather than clamping it", () => {

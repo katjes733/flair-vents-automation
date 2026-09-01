@@ -1,18 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { find, findOne } = vi.hoisted(() => ({
+const { find, findOne, insert, update } = vi.hoisted(() => ({
   find: vi.fn(),
   findOne: vi.fn(),
+  insert: vi.fn(),
+  update: vi.fn(),
 }));
 const { getRepository } = vi.hoisted(() => ({
-  getRepository: vi.fn(() => ({ find, findOne })),
+  getRepository: vi.fn(() => ({ find, findOne, insert, update })),
 }));
 vi.mock("~/server/database/datasource", () => ({
   default: { getInstance: vi.fn().mockResolvedValue({ getRepository }) },
 }));
 
-const { getActiveAirHandlers, getAirHandlerById } =
-  await import("~/server/util/routes/airHandler");
+const {
+  getActiveAirHandlers,
+  getAirHandlerById,
+  getAirHandlersForInstallation,
+  createAirHandler,
+  updateAirHandler,
+} = await import("~/server/util/routes/airHandler");
 
 describe("getActiveAirHandlers", () => {
   beforeEach(() => {
@@ -58,5 +65,45 @@ describe("getAirHandlerById", () => {
   it("returns null when not found", async () => {
     findOne.mockResolvedValue(null);
     expect(await getAirHandlerById("missing")).toBeNull();
+  });
+});
+
+describe("getAirHandlersForInstallation", () => {
+  it("queries by installation_id, active and inactive alike", async () => {
+    find.mockReset().mockResolvedValue([]);
+    await getAirHandlersForInstallation("inst-1");
+    expect(find).toHaveBeenCalledWith({
+      where: { installation_id: "inst-1" },
+    });
+  });
+});
+
+describe("createAirHandler", () => {
+  it("inserts a new row with fresh timestamps", async () => {
+    insert.mockReset().mockResolvedValue(undefined);
+    const airHandler = await createAirHandler({
+      installationId: "inst-1",
+      flairZoneId: null,
+      name: "Downstairs",
+      active: false,
+      config: { topology_mode: "variable_speed" } as never,
+    });
+    expect(insert).toHaveBeenCalledOnce();
+    expect(airHandler.name).toBe("Downstairs");
+  });
+});
+
+describe("updateAirHandler", () => {
+  it("only writes fields that were actually passed", async () => {
+    update.mockReset().mockResolvedValue(undefined);
+    await updateAirHandler("ah-1", { active: true });
+    expect(update).toHaveBeenCalledWith(
+      "ah-1",
+      expect.objectContaining({
+        active: true,
+        modified_time: expect.any(Date),
+      }),
+    );
+    expect(update.mock.calls[0][1]).not.toHaveProperty("name");
   });
 });

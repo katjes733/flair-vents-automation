@@ -1,6 +1,11 @@
 import type { FlairClient } from "~/server/util/flair/client";
 import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
-import { ingestZoneReading } from "~/server/util/flair/ingest";
+import {
+  ingestZoneRoomReading,
+  ingestZoneVentReading,
+  type ZoneRoomReading,
+  type ZoneVentReading,
+} from "~/server/util/flair/ingest";
 import { pushSetpoint } from "~/server/util/flair/commands";
 import type { AirHandlerData } from "~/server/util/routes/airHandler";
 import type { ZoneData } from "~/server/util/routes/zone";
@@ -8,6 +13,13 @@ import type { ScheduleData } from "~/server/util/routes/schedule";
 import type { ManualOverrideRow } from "~/server/util/routes/manualOverride";
 import type { SystemSettingsConfig } from "~/shared/schemas/systemSettings";
 import { asAbsoluteTemp, asTempDelta } from "~/shared/types/temperature";
+import {
+  isZoneDegraded,
+  zoneDegradedSince,
+  patchVentState,
+  ventState,
+  type VentRuntimeState,
+} from "~/shared/types/zone";
 
 import { deriveHvacState } from "~/server/domain/state/hvacState";
 import {
@@ -60,6 +72,7 @@ import {
   cacheTickDecision,
   type AirHandlerTickDecision,
   type ZoneTickDecision,
+  type VentTickDecision,
 } from "~/server/control/tickDecision";
 import {
   logHvacStateTransition,
@@ -113,6 +126,28 @@ function toIso(ms: number): string {
 
 function parseIsoOrNull(iso: string | null): number | null {
   return iso ? new Date(iso).getTime() : null;
+}
+
+// One room-scoped reading (temperature/occupancy) plus one entry per
+// zone.config.flair_vent_ids member, same order — see "Multi-Vent Zones".
+interface ZoneReadingBundle {
+  room: ZoneRoomReading;
+  vents: ZoneVentReading[];
+}
+
+// Reconciliation keys are `${zoneId}:${flairVentId}` — a zone id is always
+// a well-formed UUID (never contains ":"), so the first ":" unambiguously
+// separates the two, even though a Flair vent id's own format isn't
+// guaranteed colon-free.
+function reconciliationKey(zoneId: string, flairVentId: string): string {
+  return `${zoneId}:${flairVentId}`;
+}
+function parseReconciliationKey(key: string): {
+  zoneId: string;
+  flairVentId: string;
+} {
+  const i = key.indexOf(":");
+  return { zoneId: key.slice(0, i), flairVentId: key.slice(i + 1) };
 }
 
 /**
@@ -193,51 +228,81 @@ export async function runTick(
   );
 
   // --- Step 1: ingest ------------------------------------------------
-  const readings = new Map(
+  const readings = new Map<string, ZoneReadingBundle>(
     zones.map((zone) => {
       const room = zone.flairRoomId
         ? (snapshot.roomsById.get(zone.flairRoomId) ?? null)
         : null;
-      const vent = room ? (snapshot.ventsByRoomId.get(room.id) ?? null) : null;
-      const ventReading = vent
-        ? (snapshot.ventReadingsByVentId.get(vent.id) ?? null)
-        : null;
       const occupancyReading = room
         ? (snapshot.occupancyReadingByRoomId.get(room.id) ?? null)
         : null;
+      const vents = zone.config.flair_vent_ids.map((flairVentId) => {
+        const vent = snapshot.ventsById.get(flairVentId) ?? null;
+        const ventReading = vent
+          ? (snapshot.ventReadingsByVentId.get(vent.id) ?? null)
+          : null;
+        return ingestZoneVentReading({ flairVentId, vent, ventReading });
+      });
       return [
         zone.id,
         {
-          reading: ingestZoneReading({
+          room: ingestZoneRoomReading({
             zoneId: zone.id,
             room,
-            vent,
-            ventReading,
             occupancyReading,
             calibrationOffsetC: asTempDelta(
               zone.config.sensor_calibration_offset,
             ),
           }),
-          ventId: vent?.id ?? null,
+          vents,
         },
       ] as const;
     }),
   );
 
+  // Per-tick accumulator of each zone's latest `vents` array — seeded from
+  // the start-of-tick snapshot, updated every time any step below patches
+  // a vent. Required because several steps this tick (reconciliation,
+  // fail-safe dispatch, the main dispatch loop) can each touch the SAME
+  // zone's vents array: without a shared accumulator, each step would
+  // independently read the stale pre-tick `zone.state.vents`, and
+  // whichever step's persistZoneState call lands last would silently
+  // overwrite every earlier step's update to that same zone (a plain
+  // object-spread merge can't help here, since the whole array is one
+  // field). See "Multi-Vent Zones".
+  const currentVentsByZoneId = new Map<string, VentRuntimeState[]>(
+    zones.map((z) => [z.id, z.state.vents]),
+  );
+  function ventStateNow(
+    zoneId: string,
+    flairVentId: string,
+  ): VentRuntimeState | undefined {
+    return currentVentsByZoneId
+      .get(zoneId)
+      ?.find((v) => v.flair_vent_id === flairVentId);
+  }
+
   // --- Step 3: reconciliation sweep ------------------------------------
   // Reuses the readings just fetched — zero extra Flair API calls, per
-  // "Reconciliation & startup reconciliation".
-  const dueZoneIds = await deps.reconciliationQueue.dequeueDue(startedAtMs);
-  for (const zoneId of dueZoneIds) {
+  // "Reconciliation & startup reconciliation". Per (zone, vent) pair —
+  // two vents in the same zone reconcile independently. See "Multi-Vent
+  // Zones".
+  const dueKeys = await deps.reconciliationQueue.dequeueDue(startedAtMs);
+  for (const key of dueKeys) {
+    const { zoneId, flairVentId } = parseReconciliationKey(key);
     const zone = zones.find((z) => z.id === zoneId);
     if (!zone) continue;
-    const reportedPosition =
-      readings.get(zoneId)?.reading.reportedPositionPct ?? null;
+    const ventReading = readings
+      .get(zoneId)
+      ?.vents.find((v) => v.flairVentId === flairVentId);
+    const reportedPosition = ventReading?.reportedPositionPct ?? null;
+    const priorVent = ventStateNow(zoneId, flairVentId);
+    const currentVents = currentVentsByZoneId.get(zoneId) ?? [];
     const outcome = evaluateReconciliation({
       targetPosition: zone.state.last_target_position ?? 0,
       reportedPosition,
       minStepDeltaPct: ctx.settings.min_step_delta_pct,
-      attemptsSoFar: zone.state.reconcile_attempts,
+      attemptsSoFar: priorVent?.reconcile_attempts ?? 0,
       maxAttempts: ctx.settings.reconciliation_retry_count,
       dueForCheck: true,
     });
@@ -245,33 +310,41 @@ export async function runTick(
       logVentReconciled(log, {
         air_handler_id: airHandler.id,
         zone_id: zoneId,
-        attempt: zone.state.reconcile_attempts,
+        vent_id: flairVentId,
+        attempt: priorVent?.reconcile_attempts ?? 0,
         reported_pct: reportedPosition ?? 0,
       });
-      await deps.persistZoneState(zoneId, {
+      const vents = patchVentState(currentVents, flairVentId, {
         reconcile_attempts: 0,
         degraded: false,
         degraded_since: null,
       });
+      currentVentsByZoneId.set(zoneId, vents);
+      await deps.persistZoneState(zoneId, { vents });
     } else if (outcome.status === "retry") {
       await deps.reconciliationQueue.enqueue(
-        zoneId,
+        key,
         startedAtMs + ACTUATION_DELAY_MS,
       );
-      await deps.persistZoneState(zoneId, {
+      const vents = patchVentState(currentVents, flairVentId, {
         reconcile_attempts: outcome.attempt,
       });
+      currentVentsByZoneId.set(zoneId, vents);
+      await deps.persistZoneState(zoneId, { vents });
     } else if (outcome.status === "degraded") {
       logVentDegraded(log, {
         air_handler_id: airHandler.id,
         zone_id: zoneId,
-        reconcile_attempts: zone.state.reconcile_attempts,
+        vent_id: flairVentId,
+        reconcile_attempts: priorVent?.reconcile_attempts ?? 0,
         last_reported_pct: reportedPosition,
       });
-      await deps.persistZoneState(zoneId, {
+      const vents = patchVentState(currentVents, flairVentId, {
         degraded: true,
         degraded_since: toIso(startedAtMs),
       });
+      currentVentsByZoneId.set(zoneId, vents);
+      await deps.persistZoneState(zoneId, { vents });
     }
   }
 
@@ -281,7 +354,8 @@ export async function runTick(
   // it has no true position feedback (confirmed live — see
   // docs/flair-api-schema.md's write-boundary verification). Costs zero
   // extra Flair API calls: reported positions are already in `readings`
-  // from Step 1. See "Resolved Design Decisions".
+  // from Step 1. Per (zone, vent) pair. See "Resolved Design Decisions"
+  // and "Multi-Vent Zones".
   const ticksSinceDriftCheck = priorRuntime.ticksSinceDriftCheck + 1;
   const driftCheckDue =
     ticksSinceDriftCheck >= ctx.settings.drift_check_interval_ticks;
@@ -291,20 +365,24 @@ export async function runTick(
     let mismatchesFound = 0;
     for (const zone of zones) {
       if (!isControllable(zone.ventHardwareType)) continue;
-      const reportedPosition =
-        readings.get(zone.id)?.reading.reportedPositionPct ?? null;
-      if (reportedPosition === null) continue;
       if (zone.state.last_target_position === null) continue;
-      ventsChecked += 1;
-      if (
-        detectDrift({
-          reportedPosition,
-          lastTargetPosition: zone.state.last_target_position,
-          minStepDeltaPct: ctx.settings.min_step_delta_pct,
-        })
-      ) {
-        mismatchesFound += 1;
-        await deps.reconciliationQueue.enqueue(zone.id, startedAtMs);
+      for (const ventReading of readings.get(zone.id)?.vents ?? []) {
+        const reportedPosition = ventReading.reportedPositionPct;
+        if (reportedPosition === null) continue;
+        ventsChecked += 1;
+        if (
+          detectDrift({
+            reportedPosition,
+            lastTargetPosition: zone.state.last_target_position,
+            minStepDeltaPct: ctx.settings.min_step_delta_pct,
+          })
+        ) {
+          mismatchesFound += 1;
+          await deps.reconciliationQueue.enqueue(
+            reconciliationKey(zone.id, ventReading.flairVentId),
+            startedAtMs,
+          );
+        }
       }
     }
     logDriftCheckCompleted(log, {
@@ -380,19 +458,25 @@ export async function runTick(
   }
 
   // --- Step 5: equipment fault -----------------------------------------
+  // One entry per VENT, not per zone — a 2-vent zone contributes 2
+  // entries — since detectEquipmentFault/detectDuctAirflowAnomaly already
+  // treat this as a flat list, tolerant of duplicate zoneIds. See
+  // "Multi-Vent Zones".
   const ductZones: DuctReadingZone[] = zones
     .filter((z) => isControllable(z.ventHardwareType))
-    .map((z) => {
-      const r = readings.get(z.id)!.reading;
-      return {
+    .flatMap((z) => {
+      const bundle = readings.get(z.id)!;
+      const roomTemperatureC = bundle.room.calibratedTemp ?? Number.NaN;
+      return bundle.vents.map((v) => ({
         zoneId: z.id,
+        ventId: v.flairVentId,
         hasSmartVent: true,
-        ductTemperatureC: r.ductTemperatureC,
+        ductTemperatureC: v.ductTemperatureC,
         ductReadingStale: false,
-        roomTemperatureC: r.calibratedTemp ?? Number.NaN,
+        roomTemperatureC,
         demanding: false,
         commandedPositionPct: 0,
-      };
+      }));
     })
     .filter((z) => Number.isFinite(z.roomTemperatureC));
 
@@ -455,42 +539,50 @@ export async function runTick(
     for (const zone of zones) {
       const target = commands[zone.id];
       if (target === undefined) continue;
-      const ventId = readings.get(zone.id)!.ventId;
-      if (!ventId) continue;
-      // Fail-safe is the one dispatch path where a per-zone write failure
-      // must never be allowed to abort the loop — every other zone still
-      // needs its unconditional 100% command regardless of one zone's
+      const ventReadings = readings.get(zone.id)!.vents;
+      let vents = currentVentsByZoneId.get(zone.id) ?? zone.state.vents;
+      // Fail-safe is the one dispatch path where a per-vent write failure
+      // must never be allowed to abort the loop — every other vent still
+      // needs its unconditional 100% command regardless of one vent's
       // Flair API error (a confirmed real failure mode — see
       // docs/flair-api-schema.md's live write-boundary verification).
-      try {
-        const { lastDispatchedPosition } = await dispatchZoneCommand({
-          log,
-          client: deps.client,
-          airHandlerId: airHandler.id,
-          zoneId: zone.id,
-          ventId,
-          targetPosition: target,
-          lastDispatchedPosition: zone.state.last_target_position,
-          reportedPosition: readings.get(zone.id)!.reading.reportedPositionPct,
-          minStepDeltaPct: 0, // fail-safe bypasses the step-delta suppressor entirely
-          reconciliationQueue: deps.reconciliationQueue,
-          nowMs: startedAtMs,
-          actuationDelayMs: ACTUATION_DELAY_MS,
-          dryRun,
-        });
-        await deps.persistZoneState(zone.id, {
-          last_target_position: target,
-          last_commanded_at: dryRun
-            ? zone.state.last_commanded_at
-            : toIso(startedAtMs),
-          last_reported_position: lastDispatchedPosition,
-        });
-      } catch (err) {
-        log.error(
-          { zone_id: zone.id, err },
-          "Vent dispatch failed during emergency fail-safe — continuing with remaining zones",
-        );
+      for (const ventReading of ventReadings) {
+        try {
+          const { lastDispatchedPosition } = await dispatchZoneCommand({
+            log,
+            client: deps.client,
+            airHandlerId: airHandler.id,
+            zoneId: zone.id,
+            ventId: ventReading.flairVentId,
+            targetPosition: target,
+            lastDispatchedPosition:
+              ventStateNow(zone.id, ventReading.flairVentId)
+                ?.last_reported_position ?? null,
+            reportedPosition: ventReading.reportedPositionPct,
+            minStepDeltaPct: 0, // fail-safe bypasses the step-delta suppressor entirely
+            reconciliationQueue: deps.reconciliationQueue,
+            nowMs: startedAtMs,
+            actuationDelayMs: ACTUATION_DELAY_MS,
+            dryRun,
+          });
+          vents = patchVentState(vents, ventReading.flairVentId, {
+            last_reported_position: lastDispatchedPosition,
+          });
+          currentVentsByZoneId.set(zone.id, vents);
+        } catch (err) {
+          log.error(
+            { zone_id: zone.id, vent_id: ventReading.flairVentId, err },
+            "Vent dispatch failed during emergency fail-safe — continuing with remaining vents",
+          );
+        }
       }
+      await deps.persistZoneState(zone.id, {
+        last_target_position: target,
+        last_commanded_at: dryRun
+          ? zone.state.last_commanded_at
+          : toIso(startedAtMs),
+        vents,
+      });
     }
     await deps.airHandlerRuntimeStore.set(airHandler.id, {
       ...priorRuntime,
@@ -519,7 +611,7 @@ export async function runTick(
     { spiking: boolean; belowThresholdSinceMs: number | null }
   >();
   for (const zone of zones) {
-    const reading = readings.get(zone.id)!.reading;
+    const reading = readings.get(zone.id)!.room;
     const priorLastReadingChangedAtMs = parseIsoOrNull(
       zone.state.last_reading_changed_at,
     );
@@ -563,11 +655,16 @@ export async function runTick(
       await deps.alerting.clearAlert(staleAlertKey);
     }
 
+    // Zone-level rollup: degraded if ANY of its vents are. degraded_since
+    // is the MIN over currently-degraded vents' own timestamps, so a
+    // long-stuck vent's timer isn't reset by an unrelated sibling
+    // recovering. See "Multi-Vent Zones".
     const degradedAlertKey = `alert:ventDegraded:${zone.id}`;
-    const degradedSinceMs = zone.state.degraded_since
-      ? new Date(zone.state.degraded_since).getTime()
+    const zoneDegradedSinceIso = zoneDegradedSince(zone.state);
+    const degradedSinceMs = zoneDegradedSinceIso
+      ? new Date(zoneDegradedSinceIso).getTime()
       : null;
-    if (zone.state.degraded && degradedSinceMs !== null) {
+    if (isZoneDegraded(zone.state) && degradedSinceMs !== null) {
       const degradedMinutes = (startedAtMs - degradedSinceMs) / 60000;
       if (degradedMinutes >= ctx.settings.vent_degraded_alert_minutes) {
         await deps.alerting.alertOnce({
@@ -734,7 +831,7 @@ export async function runTick(
   // schedule explicitly says "someone is sleeping here" is.
   const sleepModeActiveByZone = new Map<string, boolean>();
   for (const zone of zones) {
-    const reading = readings.get(zone.id)!.reading;
+    const reading = readings.get(zone.id)!.room;
     const hysteresis = evaluateOccupancy({
       hasOccupancySensor: zone.config.has_occupancy_sensor,
       rawOccupied: reading.occupiedRaw,
@@ -767,7 +864,7 @@ export async function runTick(
   const floorLps = topologyLimits.minimumAggregateFlowLps;
 
   const pipelineInputs: PipelineZoneInput[] = zones.map((zone) => {
-    const reading = readings.get(zone.id)!.reading;
+    const reading = readings.get(zone.id)!.room;
     const target = targetsByZone.get(zone.id)!;
     const priorityList =
       governingEventByZone.get(zone.id)?.event.zone_priority_order ??
@@ -795,7 +892,7 @@ export async function runTick(
       priorityRank: priorityRank === -1 ? Infinity : priorityRank,
       lastCommandedTarget: zone.state.last_target_position,
       manualPositionPct: target.manualPositionPct,
-      degraded: zone.state.degraded,
+      degraded: isZoneDegraded(zone.state),
     };
   });
 
@@ -868,7 +965,7 @@ export async function runTick(
   });
 
   for (const zone of zones) {
-    const reading = readings.get(zone.id)!.reading;
+    const reading = readings.get(zone.id)!.room;
     const classification = pipelineResult.classifications[zone.id];
     if (classification === "satisfied" || classification === "inactive") {
       logZoneExcluded(log, {
@@ -902,20 +999,29 @@ export async function runTick(
   }
 
   // --- Duct airflow anomaly (isolated per-zone) ---------------------------
+  // One entry per vent (see Step 5 above). Tracking/alert keys are
+  // compound `${zoneId}:${ventId}` — a real bug otherwise: with two
+  // vents' results processed sequentially in the same tick, a healthy
+  // sibling's "not anomalous" branch would immediately clear the *other*
+  // vent's just-recorded anomaly timer and alert, permanently masking a
+  // real, sustained single-vent duct problem for as long as the sibling
+  // stays healthy. See "Multi-Vent Zones".
   if (callActive) {
     const anomalyZones: DuctReadingZone[] = zones
       .filter((z) => isControllable(z.ventHardwareType))
-      .map((z) => {
-        const r = readings.get(z.id)!.reading;
-        return {
+      .flatMap((z) => {
+        const bundle = readings.get(z.id)!;
+        const roomTemperatureC = bundle.room.calibratedTemp ?? Number.NaN;
+        return bundle.vents.map((v) => ({
           zoneId: z.id,
+          ventId: v.flairVentId,
           hasSmartVent: true,
-          ductTemperatureC: r.ductTemperatureC,
+          ductTemperatureC: v.ductTemperatureC,
           ductReadingStale: false,
-          roomTemperatureC: r.calibratedTemp ?? Number.NaN,
+          roomTemperatureC,
           demanding: pipelineResult.classifications[z.id] === "demanding",
           commandedPositionPct: pipelineResult.commandedPositions[z.id] ?? 0,
-        };
+        }));
       })
       .filter((z) => Number.isFinite(z.roomTemperatureC));
     const anomalies = detectDuctAirflowAnomaly({
@@ -924,19 +1030,22 @@ export async function runTick(
       zones: anomalyZones,
     });
     for (const a of anomalies) {
-      const anomalyAlertKey = `alert:ductAnomaly:${a.zoneId}`;
-      const demandTracking = await deps.zoneDemandTrackingStore.get(a.zoneId);
+      const trackingKey = reconciliationKey(a.zoneId, a.ventId ?? "");
+      const anomalyAlertKey = `alert:ductAnomaly:${trackingKey}`;
+      const demandTracking =
+        await deps.zoneDemandTrackingStore.get(trackingKey);
       if (a.anomalous) {
         logDuctAirflowAnomalyDetected(log, {
           air_handler_id: airHandler.id,
           zone_id: a.zoneId,
+          vent_id: a.ventId ?? "",
           duct_delta_c: null,
           commanded_position_pct:
             pipelineResult.commandedPositions[a.zoneId] ?? 0,
         });
         const since = demandTracking.ductAnomalySinceMs ?? startedAtMs;
         const anomalyMinutes = (startedAtMs - since) / 60000;
-        await deps.zoneDemandTrackingStore.set(a.zoneId, {
+        await deps.zoneDemandTrackingStore.set(trackingKey, {
           ...demandTracking,
           ductAnomalySinceMs: since,
         });
@@ -952,7 +1061,7 @@ export async function runTick(
           });
         }
       } else {
-        await deps.zoneDemandTrackingStore.set(a.zoneId, {
+        await deps.zoneDemandTrackingStore.set(trackingKey, {
           ...demandTracking,
           ductAnomalySinceMs: null,
         });
@@ -965,7 +1074,7 @@ export async function runTick(
   const drivingCandidates: DrivingZoneCandidate[] = zones
     .filter((z) => z.config.has_temperature_sensor)
     .map((z) => {
-      const reading = readings.get(z.id)!.reading;
+      const reading = readings.get(z.id)!.room;
       const target = targetsByZone.get(z.id)!;
       const deviation =
         reading.calibratedTemp !== null && target.setpoint !== null
@@ -1107,7 +1216,7 @@ export async function runTick(
     const pushResult = computeSetpointPush({
       state: hvac.state as "COOLING_CALL" | "HEATING_CALL",
       trackedZoneSetpoint: trackedTarget.setpoint ?? 0,
-      trackedZoneTemp: readings.get(trackedZone.id)!.reading.calibratedTemp,
+      trackedZoneTemp: readings.get(trackedZone.id)!.room.calibratedTemp,
       trackedZoneStale: zoneStaleness.get(trackedZone.id) ?? false,
       thermostatReading: snapshot.thermostatState?.ambientTemperatureC ?? null,
       previousSmoothedOffset: priorRuntime.smoothedOffsetC,
@@ -1179,21 +1288,24 @@ export async function runTick(
   }
 
   // --- Steps 12-13: dispatch ------------------------------------------
+  // Per vent, not per zone — every vent in a zone is ganged to the same
+  // target, but dispatches/reconciles/persists independently, since one
+  // vent's own last-dispatched-position must never suppress a correction
+  // to a stuck sibling. See "Multi-Vent Zones".
   let commandsDispatched = 0;
+  // Captured per vent for the tick decision record built below — the
+  // dispatch outcome and post-dispatch degraded state aren't otherwise
+  // available once this loop ends.
+  const dispatchDecisionByVentKey = new Map<
+    string,
+    "dispatched" | "suppressed_step_delta"
+  >();
   for (const zone of zones) {
     if (!isControllable(zone.ventHardwareType)) continue;
     const target = finalPositions[zone.id];
     if (target === undefined) continue;
-    const ventId = readings.get(zone.id)!.ventId;
-    if (!ventId) continue;
-    // One zone's Flair API failure (confirmed real, live — see
-    // docs/flair-api-schema.md's write-boundary verification) must never
-    // abort dispatch for every other zone on this air handler. On
-    // failure, treat this zone as "not dispatched this tick" and keep
-    // going — reconciliation/retry on a later tick is what recovers it,
-    // not aborting the whole tick now.
-    let dispatched = false;
-    let lastDispatchedPosition = zone.state.last_reported_position;
+    const ventReadings = readings.get(zone.id)!.vents;
+    if (ventReadings.length === 0) continue;
     // Quiet actuation: a zone in an active Sleep Mode window dispatches
     // against a wider threshold, so small deviations accumulate into
     // fewer, larger movements instead of repeated small motor cycles —
@@ -1201,43 +1313,64 @@ export async function runTick(
     const effectiveMinStepDeltaPct = sleepModeActiveByZone.get(zone.id)
       ? ctx.settings.sleep_mode_min_step_delta_pct
       : ctx.settings.min_step_delta_pct;
-    try {
-      const result = await dispatchZoneCommand({
-        log,
-        client: deps.client,
-        airHandlerId: airHandler.id,
-        zoneId: zone.id,
-        ventId,
-        targetPosition: target,
-        lastDispatchedPosition: zone.state.last_reported_position,
-        reportedPosition: readings.get(zone.id)!.reading.reportedPositionPct,
-        minStepDeltaPct: effectiveMinStepDeltaPct,
-        reconciliationQueue: deps.reconciliationQueue,
-        nowMs: startedAtMs,
-        actuationDelayMs: ACTUATION_DELAY_MS,
-        dryRun,
-      });
-      dispatched = result.dispatched;
-      lastDispatchedPosition = result.lastDispatchedPosition;
-    } catch (err) {
-      log.error(
-        { zone_id: zone.id, err },
-        "Vent dispatch failed — continuing with remaining zones",
-      );
+
+    let vents = currentVentsByZoneId.get(zone.id) ?? zone.state.vents;
+    let zoneDispatchedThisTick = false;
+    for (const ventReading of ventReadings) {
+      const priorVent = ventStateNow(zone.id, ventReading.flairVentId);
+      // One vent's Flair API failure (confirmed real, live — see
+      // docs/flair-api-schema.md's write-boundary verification) must
+      // never abort dispatch for every other vent on this air handler.
+      // On failure, treat this vent as "not dispatched this tick" and
+      // keep going — reconciliation/retry on a later tick is what
+      // recovers it, not aborting the whole tick now.
+      try {
+        const result = await dispatchZoneCommand({
+          log,
+          client: deps.client,
+          airHandlerId: airHandler.id,
+          zoneId: zone.id,
+          ventId: ventReading.flairVentId,
+          targetPosition: target,
+          lastDispatchedPosition: priorVent?.last_reported_position ?? null,
+          reportedPosition: ventReading.reportedPositionPct,
+          minStepDeltaPct: effectiveMinStepDeltaPct,
+          reconciliationQueue: deps.reconciliationQueue,
+          nowMs: startedAtMs,
+          actuationDelayMs: ACTUATION_DELAY_MS,
+          dryRun,
+        });
+        if (result.dispatched) {
+          commandsDispatched += 1;
+          zoneDispatchedThisTick = true;
+        }
+        dispatchDecisionByVentKey.set(
+          reconciliationKey(zone.id, ventReading.flairVentId),
+          result.dispatched ? "dispatched" : "suppressed_step_delta",
+        );
+        vents = patchVentState(vents, ventReading.flairVentId, {
+          last_reported_position: dryRun
+            ? (priorVent?.last_reported_position ?? null)
+            : result.lastDispatchedPosition,
+        });
+        currentVentsByZoneId.set(zone.id, vents);
+      } catch (err) {
+        log.error(
+          { zone_id: zone.id, vent_id: ventReading.flairVentId, err },
+          "Vent dispatch failed — continuing with remaining vents",
+        );
+      }
     }
-    if (dispatched) commandsDispatched += 1;
 
     // --- Step 15: persist zone state ------------------------------------
-    const reading = readings.get(zone.id)!.reading;
+    const reading = readings.get(zone.id)!.room;
     await deps.persistZoneState(zone.id, {
       last_target_position: target,
       last_commanded_at:
-        dispatched && !dryRun
+        zoneDispatchedThisTick && !dryRun
           ? toIso(startedAtMs)
           : zone.state.last_commanded_at,
-      last_reported_position: dryRun
-        ? zone.state.last_reported_position
-        : lastDispatchedPosition,
+      vents,
       last_reading_value: reading.calibratedTemp,
       last_reading_changed_at:
         reading.calibratedTemp !== null &&
@@ -1281,24 +1414,37 @@ export async function runTick(
     control_disarmed: controlDisarmed,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
-    zones: zones.map((zone): ZoneTickDecision => ({
-      zone_id: zone.id,
-      name: zone.name,
-      vent_hardware_type: zone.ventHardwareType,
-      classification:
-        pipelineResult.classifications[zone.id] ?? "unclassified_no_sensor",
-      occupied: occupiedByZone.get(zone.id) ?? false,
-      spiking: zoneSpike.get(zone.id)?.spiking ?? false,
-      desired_position_pct: pipelineResult.commandedPositions[zone.id] ?? null,
-      post_contention_position_pct:
-        pipelineResult.commandedPositions[zone.id] ?? null,
-      commanded_position_pct: finalPositions[zone.id] ?? null,
-      reported_position_pct: readings.get(zone.id)!.reading.reportedPositionPct,
-      dispatch_decision: isControllable(zone.ventHardwareType)
-        ? "dispatched"
-        : "not_applicable_no_vent",
-      reason: "",
-    })),
+    zones: zones.map((zone): ZoneTickDecision => {
+      const finalVents = currentVentsByZoneId.get(zone.id) ?? zone.state.vents;
+      return {
+        zone_id: zone.id,
+        name: zone.name,
+        vent_hardware_type: zone.ventHardwareType,
+        classification:
+          pipelineResult.classifications[zone.id] ?? "unclassified_no_sensor",
+        occupied: occupiedByZone.get(zone.id) ?? false,
+        spiking: zoneSpike.get(zone.id)?.spiking ?? false,
+        desired_position_pct:
+          pipelineResult.commandedPositions[zone.id] ?? null,
+        post_contention_position_pct:
+          pipelineResult.commandedPositions[zone.id] ?? null,
+        vents: (readings.get(zone.id)?.vents ?? []).map(
+          (v): VentTickDecision => ({
+            flair_vent_id: v.flairVentId,
+            commanded_position_pct: finalPositions[zone.id] ?? null,
+            reported_position_pct: v.reportedPositionPct,
+            dispatch_decision:
+              dispatchDecisionByVentKey.get(
+                reconciliationKey(zone.id, v.flairVentId),
+              ) ?? "suppressed_step_delta",
+            degraded:
+              finalVents.find((fv) => fv.flair_vent_id === v.flairVentId)
+                ?.degraded ?? false,
+          }),
+        ),
+        reason: "",
+      };
+    }),
     contention: pipelineResult.contention,
     pressure: {
       aggregate_open_lps: aggregateOpenLps,
@@ -1389,13 +1535,15 @@ function buildFaultDecision(
       spiking: false,
       desired_position_pct: 100,
       post_contention_position_pct: 100,
-      commanded_position_pct: isControllable(zone.ventHardwareType)
-        ? 100
-        : null,
-      reported_position_pct: null,
-      dispatch_decision: isControllable(zone.ventHardwareType)
-        ? "dispatched"
-        : "not_applicable_no_vent",
+      vents: isControllable(zone.ventHardwareType)
+        ? zone.config.flair_vent_ids.map((flairVentId) => ({
+            flair_vent_id: flairVentId,
+            commanded_position_pct: 100,
+            reported_position_pct: null,
+            dispatch_decision: "dispatched" as const,
+            degraded: false,
+          }))
+        : [],
       reason:
         "Emergency fail-safe active — forced open, bypassing all other logic.",
     })),
@@ -1411,10 +1559,7 @@ function buildFaultDecision(
 async function holdAtIdleBaseline(params: {
   airHandler: AirHandlerData;
   zones: ZoneData[];
-  readings: Map<
-    string,
-    { reading: ReturnType<typeof ingestZoneReading>; ventId: string | null }
-  >;
+  readings: Map<string, ZoneReadingBundle>;
   ctx: TickContext;
   deps: TickDeps;
   log: ReturnType<typeof logger.child>;
@@ -1426,38 +1571,40 @@ async function holdAtIdleBaseline(params: {
     params;
   for (const zone of zones) {
     if (!isControllable(zone.ventHardwareType)) continue;
-    const ventId = readings.get(zone.id)?.ventId;
-    if (!ventId) continue;
+    const ventReadings = readings.get(zone.id)?.vents ?? [];
+    if (ventReadings.length === 0) continue;
     const target = clampToZoneRange(
       zone.config.idle_baseline_position,
       zone.config.min_vent_position,
       zone.config.max_vent_position,
     );
-    // Same reasoning as the other two dispatch loops: one zone's Flair API
+    // Same reasoning as the other dispatch loops: one vent's Flair API
     // failure must not stop the rest from being held at their idle
     // baseline while call-state confidence is unknown.
-    try {
-      await dispatchZoneCommand({
-        log,
-        client: deps.client,
-        airHandlerId: airHandler.id,
-        zoneId: zone.id,
-        ventId,
-        targetPosition: target,
-        lastDispatchedPosition: zone.state.last_reported_position,
-        reportedPosition:
-          readings.get(zone.id)?.reading.reportedPositionPct ?? null,
-        minStepDeltaPct: 0,
-        reconciliationQueue: deps.reconciliationQueue,
-        nowMs: startedAtMs,
-        actuationDelayMs: ACTUATION_DELAY_MS,
-        dryRun,
-      });
-    } catch (err) {
-      log.error(
-        { zone_id: zone.id, err },
-        "Vent dispatch failed while holding at idle baseline (unknown call confidence) — continuing with remaining zones",
-      );
+    for (const ventReading of ventReadings) {
+      const priorVent = ventState(zone.state, ventReading.flairVentId);
+      try {
+        await dispatchZoneCommand({
+          log,
+          client: deps.client,
+          airHandlerId: airHandler.id,
+          zoneId: zone.id,
+          ventId: ventReading.flairVentId,
+          targetPosition: target,
+          lastDispatchedPosition: priorVent?.last_reported_position ?? null,
+          reportedPosition: ventReading.reportedPositionPct,
+          minStepDeltaPct: 0,
+          reconciliationQueue: deps.reconciliationQueue,
+          nowMs: startedAtMs,
+          actuationDelayMs: ACTUATION_DELAY_MS,
+          dryRun,
+        });
+      } catch (err) {
+        log.error(
+          { zone_id: zone.id, vent_id: ventReading.flairVentId, err },
+          "Vent dispatch failed while holding at idle baseline (unknown call confidence) — continuing with remaining vents",
+        );
+      }
     }
   }
   return {

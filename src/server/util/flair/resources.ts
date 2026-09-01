@@ -10,7 +10,11 @@ import type {
 export interface AirHandlerSnapshot {
   thermostatState: FlairThermostatState | null;
   roomsById: Map<string, FlairRoom>;
-  ventsByRoomId: Map<string, FlairVent>;
+  // Keyed by the vent's own id, not by room — a zone's vents are an
+  // explicit, app-owned list (zone.config.flair_vent_ids), not derived
+  // from room membership, since a Flair room can have more than one vent.
+  // See "Multi-Vent Zones" in the implementation plan.
+  ventsById: Map<string, FlairVent>;
   ventReadingsByVentId: Map<string, FlairVentReading>;
   // Occupancy lives on the remote-sensor's own reading sub-resource, not
   // on the room — see FlairRemoteSensorReading. `is-tstat` sensors are
@@ -64,8 +68,55 @@ export async function fetchAirHandlerSnapshot(
   return {
     thermostatState,
     roomsById: new Map(rooms.map((r) => [r.id, r])),
-    ventsByRoomId: new Map(vents.map((v) => [v.roomId, v])),
+    ventsById: new Map(vents.map((v) => [v.id, v])),
     ventReadingsByVentId: new Map(ventReadings.map((r) => [r.ventId, r])),
     occupancyReadingByRoomId,
   };
+}
+
+export interface SyncCandidateRoom {
+  flairRoomId: string;
+  name: string;
+  liveVentIds: string[];
+  // Derived from the room's own vents/pucks/remote-sensors relationship
+  // array lengths, per docs/flair-api-schema.md — either device carries
+  // an onboard temp sensor; only a remote-sensor carries occupancy (this
+  // app's ingest never reads occupancy from a vent/puck). See "Flair
+  // Sync Engine".
+  hasTemperatureSensor: boolean;
+  hasOccupancySensor: boolean;
+}
+
+/**
+ * Everything `computeSyncDiff` needs for one air handler's rooms — no
+ * vent readings, thermostat state, or remote-sensor readings, since sync
+ * only cares about current pairing/presence, not live values. Scoped the
+ * same way `fetchAirHandlerSnapshot` is (a Flair room's `zoneId` is this
+ * app's air-handler concept).
+ */
+export async function fetchSyncCandidates(
+  client: FlairClient,
+  structureId: string,
+  flairZoneId: string,
+): Promise<SyncCandidateRoom[]> {
+  const allRooms = await client.fetchRooms(structureId);
+  const rooms = allRooms.filter((r) => r.zoneId === flairZoneId);
+  const roomIds = new Set(rooms.map((r) => r.id));
+
+  const allVents = await client.fetchVents(structureId);
+  const ventIdsByRoomId = new Map<string, string[]>();
+  for (const vent of allVents) {
+    if (!roomIds.has(vent.roomId)) continue;
+    const existing = ventIdsByRoomId.get(vent.roomId);
+    if (existing) existing.push(vent.id);
+    else ventIdsByRoomId.set(vent.roomId, [vent.id]);
+  }
+
+  return rooms.map((r) => ({
+    flairRoomId: r.id,
+    name: r.name,
+    liveVentIds: ventIdsByRoomId.get(r.id) ?? [],
+    hasTemperatureSensor: r.hasVents || r.hasPucks,
+    hasOccupancySensor: r.hasRemoteSensors,
+  }));
 }

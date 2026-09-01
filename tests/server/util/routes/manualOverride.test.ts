@@ -11,15 +11,22 @@ const { createQueryBuilder } = vi.hoisted(() => {
   builder.getMany = vi.fn();
   return { createQueryBuilder: vi.fn(() => builder) };
 });
+const { insert, update } = vi.hoisted(() => ({
+  insert: vi.fn(),
+  update: vi.fn(),
+}));
 const { getRepository } = vi.hoisted(() => ({
-  getRepository: vi.fn(() => ({ createQueryBuilder })),
+  getRepository: vi.fn(() => ({ createQueryBuilder, insert, update })),
 }));
 vi.mock("~/server/database/datasource", () => ({
   default: { getInstance: vi.fn().mockResolvedValue({ getRepository }) },
 }));
 
-const { getLatestOverridesForZones } =
-  await import("~/server/util/routes/manualOverride");
+const {
+  getLatestOverridesForZones,
+  createManualOverride,
+  revokeManualOverride,
+} = await import("~/server/util/routes/manualOverride");
 
 describe("getLatestOverridesForZones", () => {
   beforeEach(() => {
@@ -59,5 +66,42 @@ describe("getLatestOverridesForZones", () => {
       expiresAtMs: null,
       revokedAtMs: null,
     });
+  });
+});
+
+describe("createManualOverride", () => {
+  it("inserts an append-only row with modified_time = creation_time", async () => {
+    insert.mockReset().mockResolvedValue(undefined);
+    const row = await createManualOverride({
+      installationId: "inst-1",
+      zoneId: "z1",
+      config: {
+        kind: "position",
+        value: 50,
+        hold_type: "2h",
+        actor: "Martin",
+      },
+      expiresAtMs: 123456,
+    });
+    expect(insert).toHaveBeenCalledOnce();
+    const inserted = insert.mock.calls[0][0];
+    expect(inserted.modified_time).toBe(inserted.creation_time);
+    expect(row.zoneId).toBe("z1");
+    expect(row.expiresAtMs).toBe(123456);
+  });
+});
+
+describe("revokeManualOverride", () => {
+  it("sets revoked_at and bumps modified_time, never touching the config", async () => {
+    update.mockReset().mockResolvedValue(undefined);
+    await revokeManualOverride("mo-1");
+    expect(update).toHaveBeenCalledWith(
+      "mo-1",
+      expect.objectContaining({
+        revoked_at: expect.any(Date),
+        modified_time: expect.any(Date),
+      }),
+    );
+    expect(update.mock.calls[0][1]).not.toHaveProperty("config");
   });
 });

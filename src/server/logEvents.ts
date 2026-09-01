@@ -107,6 +107,7 @@ export function logDrivingSetpointComputed(
 export interface VentCommandDispatchedFields {
   air_handler_id: string;
   zone_id: string;
+  vent_id: string;
   target_pct: number;
   reported_pct: number | null;
   step_delta_pct: number;
@@ -122,6 +123,7 @@ export function logVentCommandDispatched(
 export interface VentCommandSuppressedFields {
   air_handler_id: string;
   zone_id: string;
+  vent_id: string;
   target_pct: number;
   last_dispatched_pct: number | null;
   step_delta_pct: number;
@@ -136,6 +138,7 @@ export function logVentCommandSuppressed(
 export interface VentReconciledFields {
   air_handler_id: string;
   zone_id: string;
+  vent_id: string;
   attempt: number;
   reported_pct: number;
 }
@@ -149,6 +152,7 @@ export function logVentReconciled(
 export interface VentDegradedFields {
   air_handler_id: string;
   zone_id: string;
+  vent_id: string;
   reconcile_attempts: number;
   last_reported_pct: number | null;
 }
@@ -236,6 +240,7 @@ export function logFlairSetpointWriteFailing(
 export interface DuctAirflowAnomalyFields {
   air_handler_id: string;
   zone_id: string;
+  vent_id: string;
   duct_delta_c: number | null;
   commanded_position_pct: number;
 }
@@ -315,4 +320,52 @@ export function logDriftCheckCompleted(
   fields: DriftCheckCompletedFields,
 ): void {
   log.info(fields, "Drift check completed");
+}
+
+// The four sync-related events — see "Flair Sync Engine". All emitted
+// from util/services/syncService.ts, one per matched SyncDiffEntry kind
+// that isn't a no-op.
+export interface ZoneSensorFlagsUpdatedFields {
+  zone_id: string;
+  has_temperature_sensor: boolean;
+  has_occupancy_sensor: boolean;
+}
+export function logZoneSensorFlagsUpdated(
+  log: Logger,
+  fields: ZoneSensorFlagsUpdatedFields,
+): void {
+  log.info(fields, "Zone sensor flags updated");
+}
+
+// This app's own multi-vent-era addition — the spec's original catalogue
+// predates flair_vent_ids and only named the two events below, for a
+// single-vent-per-zone model. A partial (still non-empty) vent-set
+// change is passive, unlike total loss (see logZoneHardwareRemoved).
+export interface ZoneVentSetUpdatedFields {
+  zone_id: string;
+  flair_vent_ids: string[];
+}
+export function logZoneVentSetUpdated(
+  log: Logger,
+  fields: ZoneVentSetUpdatedFields,
+): void {
+  log.info(fields, "Zone vent set updated");
+}
+
+export interface ZoneHardwareTypeChangedFields {
+  zone_id: string;
+  from_type: string;
+  to_type: string;
+}
+export function logZoneHardwareRetrofitConverted(
+  log: Logger,
+  fields: ZoneHardwareTypeChangedFields,
+): void {
+  log.info(fields, "Zone hardware retrofit converted");
+}
+export function logZoneDegradedHardwareRemoved(
+  log: Logger,
+  fields: ZoneHardwareTypeChangedFields,
+): void {
+  log.warn(fields, "Zone degraded — hardware removed");
 }

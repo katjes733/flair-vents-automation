@@ -1,5 +1,10 @@
 import { vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
+// Registers jest-dom's matchers (toHaveTextContent, etc.) on vitest's
+// `expect` — safe to import unconditionally (server tests just never call
+// them), so this lives here rather than being repeated in every client
+// test file.
+import "@testing-library/jest-dom/vitest";
 
 // Pinned so schedule/DST tests behave identically between a developer's
 // local timezone and CI's own default — neither reference app sets this,

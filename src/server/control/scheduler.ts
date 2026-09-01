@@ -10,6 +10,7 @@ import { getSystemSettings } from "~/server/util/routes/systemSettings";
 import { FlairApiClient } from "~/server/util/flair/client";
 import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
 import { isControllable } from "~/server/domain/zone/predicates";
+import { patchVentState } from "~/shared/types/zone";
 import { createRedisReconciliationQueue } from "~/server/control/reconciliationQueue";
 import { createRedisSpikeBufferStore } from "~/server/control/spikeBuffer";
 import { createRedisAirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
@@ -47,7 +48,10 @@ function isControlLoopEnabled(): boolean {
 // cycle would reset that state every cycle too, silently defeating both
 // the once-per-transition logging and any outage-duration tracking.
 const clientsByInstallation = new Map<string, FlairApiClient>();
-function getFlairClient(installationId: string): FlairApiClient {
+// Exported so routes/sync.ts (a one-off, user-triggered Flair fetch, not
+// a tick) shares the same per-installation client/outage-tracker rather
+// than constructing a second one with its own independent state.
+export function getFlairClient(installationId: string): FlairApiClient {
   let client = clientsByInstallation.get(installationId);
   if (!client) {
     client = new FlairApiClient(installationId);
@@ -223,18 +227,16 @@ export async function runStartupReconciliationForInstallation(): Promise<void> {
     );
     const handlerLog = log.child({ air_handler_id: airHandler.id });
 
-    const zoneInputs = controllableZones.map((zone) => {
-      const room = zone.flairRoomId
-        ? (snapshot.roomsById.get(zone.flairRoomId) ?? null)
-        : null;
-      const vent = room ? (snapshot.ventsByRoomId.get(room.id) ?? null) : null;
-      return {
-        zoneId: zone.id,
-        reportedPosition: vent?.percentOpen ?? null,
-        lastTargetPosition: zone.state.last_target_position,
-        minStepDeltaPct: settings.min_step_delta_pct,
-      };
-    });
+    const zoneInputs = controllableZones.map((zone) => ({
+      zoneId: zone.id,
+      vents: zone.config.flair_vent_ids.map((flairVentId) => ({
+        flairVentId,
+        reportedPosition:
+          snapshot.ventsById.get(flairVentId)?.percentOpen ?? null,
+      })),
+      lastTargetPosition: zone.state.last_target_position,
+      minStepDeltaPct: settings.min_step_delta_pct,
+    }));
 
     const result = await runStartupReconciliation({
       log: handlerLog,
@@ -247,10 +249,18 @@ export async function runStartupReconciliationForInstallation(): Promise<void> {
     for (const zone of controllableZones) {
       const seeded = result.seedLastCommandedTarget.get(zone.id);
       if (seeded === undefined) continue;
+      let vents = zone.state.vents;
+      for (const flairVentId of zone.config.flair_vent_ids) {
+        const reportedPosition =
+          snapshot.ventsById.get(flairVentId)?.percentOpen ?? null;
+        vents = patchVentState(vents, flairVentId, {
+          last_reported_position: reportedPosition,
+        });
+      }
       await updateZoneState(zone.id, {
         ...zone.state,
         last_target_position: seeded,
-        last_reported_position: seeded,
+        vents,
       });
     }
   }

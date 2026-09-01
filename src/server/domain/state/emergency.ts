@@ -2,6 +2,12 @@ import type { HvacCallState } from "~/server/domain/types";
 
 export interface DuctReadingZone {
   zoneId: string;
+  // Which of the zone's (possibly several) vents this reading came from —
+  // optional since the functions below never key on it (a flat array
+  // tolerates more than one entry per zoneId just fine); present so the
+  // caller can trace an anomaly back to a specific vent. See "Multi-Vent
+  // Zones" in the implementation plan.
+  ventId?: string;
   hasSmartVent: boolean;
   ductTemperatureC: number | null;
   ductReadingStale: boolean;
@@ -85,6 +91,7 @@ export function buildFailSafeCommands(
 
 export interface DuctAnomalyResult {
   zoneId: string;
+  ventId?: string;
   anomalous: boolean;
 }
 
@@ -113,10 +120,15 @@ export function detectDuctAirflowAnomaly(params: {
   if (passing.length === 0) {
     // Every usable vent fails — detectEquipmentFault's case, not an
     // isolated anomaly.
-    return failing.map((z) => ({ zoneId: z.zoneId, anomalous: false }));
+    return failing.map((z) => ({
+      zoneId: z.zoneId,
+      ventId: z.ventId,
+      anomalous: false,
+    }));
   }
   return failing.map((z) => ({
     zoneId: z.zoneId,
+    ventId: z.ventId,
     anomalous: z.demanding && z.commandedPositionPct > 0,
   }));
 }

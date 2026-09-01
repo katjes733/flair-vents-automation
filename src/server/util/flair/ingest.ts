@@ -15,12 +15,18 @@ import type {
 // calibrated value" a compile-time property: no domain function signature
 // accepts `diagnostics.rawTemp`. See "Domain Logic Architecture" in the
 // implementation plan.
-export interface ZoneReading {
+//
+// Split into a room-scoped reading and a per-vent reading (below) rather
+// than one flat object, because a zone's comfort temperature/occupancy is
+// genuinely room-scoped (read exclusively from FlairRoom, never any vent)
+// while position/duct-temperature are genuinely per-vent — a zone can now
+// have more than one vent (zone.config.flair_vent_ids). Doing this split
+// at the ingestion boundary, not deeper in the control loop, is what
+// prevents every downstream consumer from having to guess which vent's
+// reading "represents" the zone. See "Multi-Vent Zones".
+export interface ZoneRoomReading {
   zoneId: string;
   calibratedTemp: AbsoluteTemp | null;
-  reportedPositionPct: number | null;
-  ductTemperatureC: number | null;
-  ductReadingCreatedAt: string | null;
   // Live, from the room's Ecobee SmartSensor (`remote-sensor-readings
   // .occupied`) — confirmed present via a targeted live check (see
   // docs/flair-api-schema.md). `null` when the room has no remote sensor
@@ -37,22 +43,26 @@ export interface ZoneReading {
   };
 }
 
+export interface ZoneVentReading {
+  flairVentId: string;
+  reportedPositionPct: number | null;
+  ductTemperatureC: number | null;
+  ductReadingCreatedAt: string | null;
+}
+
 /**
  * Applies calibration exactly once, at ingestion — the raw value is
  * retained only in `diagnostics` for logging, never passed to a domain
- * function. `room`/`vent`/`ventReading`/`occupancyReading` are all
- * independently nullable (a `no_vent`/`manual_fixed_vent` zone has no vent
- * at all; a brand new room may have no reading yet; a room with no
- * SmartSensor has no occupancy reading at all).
+ * function. `room`/`occupancyReading` are independently nullable (a brand
+ * new room may have no reading yet; a room with no SmartSensor has no
+ * occupancy reading at all).
  */
-export function ingestZoneReading(params: {
+export function ingestZoneRoomReading(params: {
   zoneId: string;
   room: FlairRoom | null;
-  vent: FlairVent | null;
-  ventReading: FlairVentReading | null;
   occupancyReading: FlairRemoteSensorReading | null;
   calibrationOffsetC: TempDelta;
-}): ZoneReading {
+}): ZoneRoomReading {
   const rawTemp = params.room?.currentTemperatureC ?? null;
   const calibratedTemp =
     rawTemp !== null
@@ -62,14 +72,29 @@ export function ingestZoneReading(params: {
   return {
     zoneId: params.zoneId,
     calibratedTemp,
-    reportedPositionPct: params.vent?.percentOpen ?? null,
-    ductTemperatureC: params.ventReading?.ductTemperatureC ?? null,
-    ductReadingCreatedAt: params.ventReading?.createdAt ?? null,
     occupiedRaw: params.occupancyReading?.occupied ?? null,
     occupancyReadingCreatedAt: params.occupancyReading?.createdAt ?? null,
     diagnostics: {
       rawTemp,
       sensorValues: rawTemp !== null ? { room: rawTemp } : {},
     },
+  };
+}
+
+/**
+ * One call per `flair_vent_id` a zone is configured with. `vent`/
+ * `ventReading` are independently nullable (a vent id not yet visible in
+ * this tick's Flair snapshot, or one with no reading yet).
+ */
+export function ingestZoneVentReading(params: {
+  flairVentId: string;
+  vent: FlairVent | null;
+  ventReading: FlairVentReading | null;
+}): ZoneVentReading {
+  return {
+    flairVentId: params.flairVentId,
+    reportedPositionPct: params.vent?.percentOpen ?? null,
+    ductTemperatureC: params.ventReading?.ductTemperatureC ?? null,
+    ductReadingCreatedAt: params.ventReading?.createdAt ?? null,
   };
 }

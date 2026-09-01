@@ -1,4 +1,5 @@
 import AppDataSource from "~/server/database/datasource";
+import { withTimestamps, touch } from "~/server/util/entityTimestamps";
 import {
   resolveScheduleEvents,
   resolveScheduleConfig,
@@ -40,4 +41,51 @@ export async function getSchedulesForInstallation(
     where: { installation_id: installationId },
   })) as ScheduleRow[];
   return rows.map(toScheduleData);
+}
+
+export async function getScheduleById(
+  id: string,
+): Promise<ScheduleData | null> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Schedule");
+  const row = (await repo.findOne({ where: { id } })) as ScheduleRow | null;
+  return row ? toScheduleData(row) : null;
+}
+
+export async function createSchedule(fields: {
+  installationId: string;
+  name: string;
+  events: ScheduleEvent[];
+  config: ScheduleConfig;
+}): Promise<ScheduleData> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Schedule");
+  const row = withTimestamps({
+    installation_id: fields.installationId,
+    name: fields.name,
+    events: fields.events,
+    config: fields.config,
+  });
+  await repo.insert(row);
+  return toScheduleData(row as unknown as ScheduleRow);
+}
+
+export async function updateSchedule(
+  id: string,
+  fields: Partial<{
+    name: string;
+    events: ScheduleEvent[];
+    config: ScheduleConfig;
+  }>,
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Schedule");
+  await repo.update(id, {
+    ...(fields.name !== undefined && { name: fields.name }),
+    ...(fields.events !== undefined && { events: fields.events }),
+    ...(fields.config !== undefined && { config: fields.config }),
+    ...touch(),
+  });
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("Schedule");
+  await repo.delete(id);
 }

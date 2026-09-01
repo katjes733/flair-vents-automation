@@ -13,15 +13,17 @@ const TONNAGE_MAX = 25;
  * `flair_room_id` non-null requires `flair_smart_vent` (the spec's
  * "always a manually-added local zone" invariant for
  * manual_fixed_vent/no_vent — the retrofit-conversion flow is the one
- * sanctioned exception, applied one layer up, not here);
- * assumed_fixed_position required iff manual_fixed_vent, rejected on other
- * types; min/max_vent_position ordering; idle_baseline_position within
- * [min,max] rejected, never silently clamped — see "Config-time
- * validation".
+ * sanctioned exception, applied one layer up, not here); `flair_vent_ids`
+ * non-empty requires `flair_smart_vent`, and a `flair_smart_vent` zone
+ * requires at least one vent id — see "Multi-Vent Zones"; assumed_fixed_position
+ * required iff manual_fixed_vent, rejected on other types; min/max_vent_position
+ * ordering; idle_baseline_position within [min,max] rejected, never silently
+ * clamped — see "Config-time validation".
  */
 export function validateZoneConfig(zone: {
   ventHardwareType: VentHardwareType;
   flairRoomId: string | null;
+  flairVentIds: string[];
   assumedFixedPosition: number | undefined;
   minVentPosition: number;
   maxVentPosition: number;
@@ -38,6 +40,22 @@ export function validateZoneConfig(zone: {
       severity: "error",
       message:
         "A zone linked to a Flair room must be vent_hardware_type flair_smart_vent.",
+    });
+  }
+
+  if (zone.ventHardwareType === "flair_smart_vent") {
+    if (zone.flairVentIds.length === 0) {
+      issues.push({
+        code: "flair_smart_vent_requires_vent_ids",
+        severity: "error",
+        message: "A flair_smart_vent zone requires at least one flair_vent_id.",
+      });
+    }
+  } else if (zone.flairVentIds.length > 0) {
+    issues.push({
+      code: "flair_vent_ids_not_applicable",
+      severity: "error",
+      message: "flair_vent_ids only applies to flair_smart_vent zones.",
     });
   }
 
