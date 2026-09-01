@@ -152,6 +152,43 @@ describe("FlairApiClient token management", () => {
     await client.getAccessToken();
     expect(recordTokenCall).toHaveBeenCalledTimes(1);
   });
+
+  it("getTokenRefreshFailureState is null before any refresh attempt", () => {
+    const client = new FlairApiClient("inst-1");
+    expect(client.getTokenRefreshFailureState()).toBe(null);
+  });
+
+  it("getTokenRefreshFailureState reflects a terminal failure — the 'alert immediately' input", async () => {
+    getTokenWithClientCredentials.mockResolvedValue(
+      new Response("bad", { status: 401, statusText: "Unauthorized" }),
+    );
+    const client = new FlairApiClient("inst-1");
+    await expect(client.getAccessToken()).rejects.toThrow(/401/);
+    expect(client.getTokenRefreshFailureState()).toEqual({
+      terminal: true,
+      message: expect.stringContaining("401"),
+    });
+  });
+
+  it("getTokenRefreshFailureState clears once a subsequent refresh succeeds", async () => {
+    getTokenWithClientCredentials
+      .mockResolvedValueOnce(
+        new Response("bad", { status: 401, statusText: "Unauthorized" }),
+      )
+      .mockResolvedValueOnce(
+        tokenResponse({ access_token: "at-1", expires_in: 3600 }),
+      );
+    const client = new FlairApiClient("inst-1");
+    await expect(client.getAccessToken()).rejects.toThrow(/401/);
+    expect(client.getTokenRefreshFailureState()).not.toBe(null);
+    await client.getAccessToken();
+    expect(client.getTokenRefreshFailureState()).toBe(null);
+  });
+
+  it("getOutageState starts healthy", () => {
+    const client = new FlairApiClient("inst-1");
+    expect(client.getOutageState()).toEqual({ failing: false, sinceMs: null });
+  });
 });
 
 describe("FlairApiClient.request (via resource methods)", () => {

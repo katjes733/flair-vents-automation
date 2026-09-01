@@ -2,6 +2,8 @@ export interface OutageTracker {
   recordFailure(now?: number): void;
   recordSuccess(now?: number): void;
   isFailing(): boolean;
+  /** Null when not currently failing — the scheduler's own once-per-cycle poll for the "extended outage" alert reads this, rather than this tracker sending email itself. */
+  failingSinceMs(): number | null;
 }
 
 // Logs "Flair outage detected"/"Flair outage cleared" exactly once each
@@ -35,6 +37,9 @@ export function createOutageTracker(installationId: string): OutageTracker {
     },
     isFailing() {
       return failing;
+    },
+    failingSinceMs() {
+      return failing ? since : null;
     },
   };
 }

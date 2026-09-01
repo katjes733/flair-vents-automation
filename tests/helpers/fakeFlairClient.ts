@@ -190,6 +190,31 @@ export class FakeFlairClient implements FlairClient {
     });
   }
 
+  private outageState: { failing: boolean; sinceMs: number | null } = {
+    failing: false,
+    sinceMs: null,
+  };
+  private refreshFailureState: { terminal: boolean; message: string } | null =
+    null;
+
+  setOutageState(state: { failing: boolean; sinceMs: number | null }): void {
+    this.outageState = state;
+  }
+
+  getOutageState(): { failing: boolean; sinceMs: number | null } {
+    return this.outageState;
+  }
+
+  setTokenRefreshFailureState(
+    state: { terminal: boolean; message: string } | null,
+  ): void {
+    this.refreshFailureState = state;
+  }
+
+  getTokenRefreshFailureState(): { terminal: boolean; message: string } | null {
+    return this.refreshFailureState;
+  }
+
   private maybeThrow(): void {
     if (this.rateLimitedOnce) {
       this.rateLimitedOnce = false;

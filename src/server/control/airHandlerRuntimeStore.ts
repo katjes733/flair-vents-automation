@@ -18,6 +18,11 @@ export interface AirHandlerRuntimeState {
   // can know without remembering it from the last one.
   lastHvacState: string | null;
   callStartedAtMs: number | null;
+  // The worst (largest) deviation among demanding zones at the moment
+  // this call began — "HVAC extended call with no improvement"'s
+  // snapshot-vs-now comparison. Reset alongside callStartedAtMs on every
+  // call-state transition, per the plan's Emergency fail-safe section.
+  worstDeviationAtCallStartC: number | null;
   // Equipment fail-safe hysteresis — a dwell before clearing, mirroring
   // spike detection's pattern, so a transient recovery reading can't flap
   // the fault state. See "Emergency fail-safe".
@@ -39,6 +44,7 @@ export const EMPTY_AIR_HANDLER_RUNTIME_STATE: AirHandlerRuntimeState = {
   lastPushedSetpointC: null,
   lastHvacState: null,
   callStartedAtMs: null,
+  worstDeviationAtCallStartC: null,
   equipmentFaultActive: false,
   equipmentFaultClearDwellSinceMs: null,
   ticksSinceDriftCheck: 0,

@@ -127,6 +127,10 @@ export interface FlairClient {
   ): Promise<FlairRemoteSensorReading>;
   setVentPercentOpen(ventId: string, percentOpen: number): Promise<void>;
   setStructureSetpointC(structureId: string, setpointC: number): Promise<void>;
+  /** Polled by the scheduler once per cycle for the "extended Flair outage" alert — see outage.ts. */
+  getOutageState(): { failing: boolean; sinceMs: number | null };
+  /** Polled by the scheduler once per cycle for the "Flair OAuth refresh failure" alert. Null once a refresh has since succeeded. */
+  getTokenRefreshFailureState(): { terminal: boolean; message: string } | null;
 }
 
 // Refresh only on demonstrated need — within this margin of the persisted
@@ -144,6 +148,8 @@ export class FlairApiClient implements FlairClient {
   private tokenRefreshPromise: Promise<string> | null = null;
   private readonly outage: OutageTracker;
   private readonly log: ReturnType<typeof logger.child>;
+  private lastRefreshFailure: { terminal: boolean; message: string } | null =
+    null;
 
   constructor(private readonly installationId: string) {
     this.outage = createOutageTracker(installationId);
@@ -151,6 +157,17 @@ export class FlairApiClient implements FlairClient {
       service: "flair",
       installation_id: installationId,
     });
+  }
+
+  getOutageState(): { failing: boolean; sinceMs: number | null } {
+    return {
+      failing: this.outage.isFailing(),
+      sinceMs: this.outage.failingSinceMs(),
+    };
+  }
+
+  getTokenRefreshFailureState(): { terminal: boolean; message: string } | null {
+    return this.lastRefreshFailure;
   }
 
   async getAccessToken(): Promise<string> {
@@ -205,6 +222,7 @@ export class FlairApiClient implements FlairClient {
         { status: response.status, terminal },
         "Flair token refresh failed",
       );
+      this.lastRefreshFailure = { terminal, message: errorMsg };
       await recordFlairRefreshError(this.installationId, errorMsg);
       throw new Error(errorMsg);
     }
@@ -225,6 +243,7 @@ export class FlairApiClient implements FlairClient {
       scope: tokenData.scope ?? null,
     });
     this.log.info("Flair token refreshed successfully");
+    this.lastRefreshFailure = null;
     return this.accessToken;
   }
 

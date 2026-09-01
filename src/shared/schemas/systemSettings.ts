@@ -141,6 +141,13 @@ export const systemSettingsConfigSchema = z.object({
   equipment_fault_clear_dwell_minutes: z.number().positive().default(5),
   // Alert-only backstop, never a fail-safe trigger — see the plan.
   hvac_no_improvement_alert_minutes: z.number().positive().default(75),
+  // The zone-scoped sibling of the above, added after live hardware
+  // verification confirmed a vent can silently under-actuate in a way
+  // neither reconciliation nor the whole-system alert can catch — see
+  // "Emergency fail-safe" in the plan. Shorter than the whole-system
+  // threshold since a single stuck zone is a narrower, easier-to-confirm
+  // signal than a whole handler's call length. PLACEHOLDER.
+  zone_no_improvement_alert_minutes: z.number().positive().default(45),
   // Isolated per-zone duct-airflow anomaly (this vent fails the duct-temp
   // differential while a sibling passes) — reuses
   // equipment_fault_duct_delta_threshold_c for the threshold itself, but
@@ -162,6 +169,10 @@ export const systemSettingsConfigSchema = z.object({
   token_budget_alert_threshold_pct: z.number().min(0).max(100).default(70),
   // In-process rate floor on notifyOnce (Email alerting section: "~15 min").
   email_rate_floor_minutes: z.number().positive().default(15),
+  // A connectivity concern, not a comfort one — alerted much sooner than
+  // the comfort-related "no improvement" thresholds. No specific figure
+  // stated in the plan. PLACEHOLDER.
+  flair_outage_alert_minutes: z.number().positive().default(5),
   // "default every 24h" (Manual disarm section).
   disarm_reminder_interval_hours: z.number().positive().default(24),
   // No specific figure stated for vent-degraded alert duration. PLACEHOLDER.

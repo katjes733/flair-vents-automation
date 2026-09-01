@@ -16,6 +16,8 @@ import {
 import { createInMemoryReconciliationQueue } from "~/server/control/reconciliationQueue";
 import { createInMemorySpikeBufferStore } from "~/server/control/spikeBuffer";
 import { createInMemoryAirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
+import { createInMemoryZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
+import { createInMemoryAlertingClient } from "~/server/util/alerting";
 import { FakeFlairClient } from "../../helpers/fakeFlairClient";
 
 // The release-gating test the Verification Plan names explicitly: "the one
@@ -133,6 +135,8 @@ function makeDeps(
     reconciliationQueue: createInMemoryReconciliationQueue(),
     spikeBufferStore: createInMemorySpikeBufferStore(),
     airHandlerRuntimeStore: createInMemoryAirHandlerRuntimeStore(),
+    zoneDemandTrackingStore: createInMemoryZoneDemandTrackingStore(),
+    alerting: createInMemoryAlertingClient(),
     persistZoneState: async (zoneId, patch) => {
       const current = persisted.get(zoneId) ?? EMPTY_ZONE_RUNTIME_STATE;
       persisted.set(zoneId, { ...current, ...patch });

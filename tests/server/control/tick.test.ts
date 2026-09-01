@@ -16,6 +16,8 @@ import {
 import { createInMemoryReconciliationQueue } from "~/server/control/reconciliationQueue";
 import { createInMemorySpikeBufferStore } from "~/server/control/spikeBuffer";
 import { createInMemoryAirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
+import { createInMemoryZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
+import { createInMemoryAlertingClient } from "~/server/util/alerting";
 import { FakeFlairClient } from "../../helpers/fakeFlairClient";
 
 const STRUCTURE_ID = "structure-1";
@@ -93,6 +95,8 @@ function makeDeps(
     reconciliationQueue: createInMemoryReconciliationQueue(),
     spikeBufferStore: createInMemorySpikeBufferStore(),
     airHandlerRuntimeStore: createInMemoryAirHandlerRuntimeStore(),
+    zoneDemandTrackingStore: createInMemoryZoneDemandTrackingStore(),
+    alerting: createInMemoryAlertingClient(),
     persistZoneState: vi.fn(async (zoneId: string, patch) => {
       const current = persisted.get(zoneId) ?? EMPTY_ZONE_RUNTIME_STATE;
       persisted.set(zoneId, { ...current, ...patch });
@@ -352,6 +356,144 @@ describe("runTick — mixed vent hardware types", () => {
   });
 });
 
+describe("runTick — HVAC extended call with no improvement", () => {
+  it("alerts once the call has run past the threshold with no shrinking deviation", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // 24°C vs. the default 23.89°C fallback setpoint is a tiny, easy
+      // deviation — swapped for a schedule below with a colder setpoint
+      // so the deviation is large and unambiguous.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ hvac_no_improvement_alert_minutes: 75 });
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Fixed setpoint",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21, // 24°C - 21°C = 3°C deviation
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const deps = makeDeps(client, persisted, NOW);
+    // The call has been running 80 minutes (past the 75-minute threshold)
+    // and the worst deviation at call-start was already 3°C — identical
+    // to right now, i.e. genuinely no improvement.
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 80 * 60000,
+      worstDeviationAtCallStartC: 3,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    await runTick(makeAirHandler(), zones, ctx, deps);
+
+    const alerting = deps.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting.getSentKeys().has("alert:hvacNoImprovement:ah-1")).toBe(
+      true,
+    );
+  });
+
+  it("stays quiet once the deviation has genuinely shrunk", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ hvac_no_improvement_alert_minutes: 75 });
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Fixed setpoint",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21, // 22°C - 21°C = 1°C deviation now — down from 3°C
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 80 * 60000,
+      worstDeviationAtCallStartC: 3,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    await runTick(makeAirHandler(), zones, ctx, deps);
+
+    const alerting = deps.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting.getSentKeys().has("alert:hvacNoImprovement:ah-1")).toBe(
+      false,
+    );
+  });
+});
+
 describe("runTick — emergency fail-safe", () => {
   it("forces every smart vent to 100% and bypasses the normal pipeline once a fault is detected", async () => {
     const client = new FakeFlairClient();
@@ -380,6 +522,7 @@ describe("runTick — emergency fail-safe", () => {
       callStartedAtMs: NOW - 20 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -632,6 +775,7 @@ describe("runTick — periodic drift-check backstop", () => {
       callStartedAtMs: null,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck,
     };
   }
@@ -810,6 +954,7 @@ describe("runTick — equipment fault clearing", () => {
       equipmentFaultActive: true,
       // Dwell (default 5 min) already exceeded — should clear this tick.
       equipmentFaultClearDwellSinceMs: NOW - 10 * 60000,
+      worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
 

@@ -36,6 +36,25 @@ describe("createOutageTracker", () => {
     expect(logSpy("info")).not.toHaveBeenCalled();
   });
 
+  it("failingSinceMs is null when healthy", () => {
+    expect(createOutageTracker("inst-1").failingSinceMs()).toBe(null);
+  });
+
+  it("failingSinceMs reports the start of the current outage, not the latest failure", () => {
+    const tracker = createOutageTracker("inst-1");
+    tracker.recordFailure(1000);
+    tracker.recordFailure(2000);
+    tracker.recordFailure(3000);
+    expect(tracker.failingSinceMs()).toBe(1000);
+  });
+
+  it("failingSinceMs resets to null once recovered", () => {
+    const tracker = createOutageTracker("inst-1");
+    tracker.recordFailure(1000);
+    tracker.recordSuccess(2000);
+    expect(tracker.failingSinceMs()).toBe(null);
+  });
+
   it("can detect a second outage after recovering from the first", () => {
     const tracker = createOutageTracker("inst-1");
     tracker.recordFailure(1000);

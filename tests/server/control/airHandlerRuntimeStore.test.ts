@@ -56,6 +56,7 @@ describe("createInMemoryAirHandlerRuntimeStore", () => {
       callStartedAtMs: 1704110400000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     };
     await store.set("ah-1", state);
@@ -73,6 +74,7 @@ describe("createInMemoryAirHandlerRuntimeStore", () => {
       callStartedAtMs: 1704110400000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
     expect(await store.get("ah-2")).toEqual(EMPTY_AIR_HANDLER_RUNTIME_STATE);

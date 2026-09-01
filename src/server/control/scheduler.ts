@@ -13,6 +13,12 @@ import { isControllable } from "~/server/domain/zone/predicates";
 import { createRedisReconciliationQueue } from "~/server/control/reconciliationQueue";
 import { createRedisSpikeBufferStore } from "~/server/control/spikeBuffer";
 import { createRedisAirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
+import { createRedisZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
+import { createRedisAlertingClient } from "~/server/util/alerting";
+import {
+  getTokenCallsToday,
+  FLAIR_TOKEN_DAILY_BUDGET,
+} from "~/server/util/flair/tokenBudget";
 import {
   runTick,
   type TickContext,
@@ -33,6 +39,23 @@ function isControlLoopEnabled(): boolean {
   return process.env.CONTROL_LOOP_ENABLED !== "false";
 }
 
+// One FlairClient per installation, reused across cycles — not recreated
+// per tick. This matters beyond avoiding waste: FlairApiClient's outage
+// tracker (see util/flair/outage.ts) holds its "currently failing since
+// <time>" state purely in memory, specifically so it logs a transition
+// exactly once rather than once per failed tick. A fresh client every
+// cycle would reset that state every cycle too, silently defeating both
+// the once-per-transition logging and any outage-duration tracking.
+const clientsByInstallation = new Map<string, FlairApiClient>();
+function getFlairClient(installationId: string): FlairApiClient {
+  let client = clientsByInstallation.get(installationId);
+  if (!client) {
+    client = new FlairApiClient(installationId);
+    clientsByInstallation.set(installationId, client);
+  }
+  return client;
+}
+
 /**
  * Runs one full cycle — every active air handler on the one configured
  * installation, sequentially, sharing a single FlairClient (and therefore
@@ -50,11 +73,70 @@ export async function runAllHandlers(): Promise<void> {
   const settings = await getSystemSettings(installation.id);
   const schedules = await getSchedulesForInstallation(installation.id);
   const airHandlers = await getActiveAirHandlers(installation.id);
-  const client = new FlairApiClient(installation.id);
+  const client = getFlairClient(installation.id);
   const reconciliationQueue = createRedisReconciliationQueue();
   const spikeBufferStore = createRedisSpikeBufferStore();
   const airHandlerRuntimeStore = createRedisAirHandlerRuntimeStore();
+  const zoneDemandTrackingStore = createRedisZoneDemandTrackingStore();
+  const alerting = createRedisAlertingClient();
   const globalDryRun = isDryRunEnv();
+
+  // Token budget — a per-installation concern (one shared Flair OAuth
+  // client), checked once per cycle here rather than once per air
+  // handler inside runTick(), which would just redundantly dedup N times.
+  const tokenBudgetAlertKey = `alert:tokenBudget:${installation.id}`;
+  const callsToday = await getTokenCallsToday();
+  const budgetUsedPct = (callsToday / FLAIR_TOKEN_DAILY_BUDGET) * 100;
+  if (budgetUsedPct >= settings.token_budget_alert_threshold_pct) {
+    await alerting.alertOnce({
+      key: tokenBudgetAlertKey,
+      subject: "Flair token budget approaching daily limit",
+      text: `${callsToday} of the ~${FLAIR_TOKEN_DAILY_BUDGET}/day Flair token-endpoint budget have been used today (${Math.round(budgetUsedPct)}%) — if this is unexpected, check for a retry storm or more than one environment sharing this Flair account.`,
+      rateFloorMinutes: settings.email_rate_floor_minutes,
+    });
+  } else {
+    await alerting.clearAlert(tokenBudgetAlertKey);
+  }
+
+  // Extended Flair outage — client.getOutageState() polled once per
+  // cycle rather than the outage tracker alerting itself, keeping
+  // client.ts a pure state tracker (per outage.ts's own design) and the
+  // alert decision (needs the current settings threshold) in the
+  // orchestration layer that already has them.
+  const outageAlertKey = `alert:flairOutage:${installation.id}`;
+  const outageState = client.getOutageState();
+  if (outageState.failing && outageState.sinceMs !== null) {
+    const outageMinutes = (Date.now() - outageState.sinceMs) / 60000;
+    if (outageMinutes >= settings.flair_outage_alert_minutes) {
+      await alerting.alertOnce({
+        key: outageAlertKey,
+        subject: "Extended Flair outage",
+        text: `Flair API requests have been failing for over ${settings.flair_outage_alert_minutes} minute(s) — vents are holding their last commanded position until this clears.`,
+        rateFloorMinutes: settings.email_rate_floor_minutes,
+      });
+    }
+  } else {
+    await alerting.clearAlert(outageAlertKey);
+  }
+
+  // Flair OAuth refresh failure — a terminal failure (the grant itself is
+  // invalid) alerts immediately, per "distinguished at the first attempt,
+  // not after accumulating retries." A transient failure (network/5xx/
+  // rate-limit) is folded into the same alert here rather than the
+  // plan's fuller resync-and-retry-once escalation path, which isn't
+  // built — a known, simpler stand-in, not silently pretended otherwise.
+  const refreshFailureAlertKey = `alert:flairTokenRefreshFailed:${installation.id}`;
+  const refreshFailure = client.getTokenRefreshFailureState();
+  if (refreshFailure) {
+    await alerting.alertOnce({
+      key: refreshFailureAlertKey,
+      subject: "Flair token refresh failed",
+      text: `${refreshFailure.message}${refreshFailure.terminal ? " — this looks terminal (the grant itself is invalid) and likely needs re-authentication." : " — a transient failure; will keep retrying on the normal schedule."}`,
+      rateFloorMinutes: settings.email_rate_floor_minutes,
+    });
+  } else {
+    await alerting.clearAlert(refreshFailureAlertKey);
+  }
 
   for (const airHandler of airHandlers) {
     const zones = await getZonesForAirHandler(airHandler.id);
@@ -82,6 +164,8 @@ export async function runAllHandlers(): Promise<void> {
       reconciliationQueue,
       spikeBufferStore,
       airHandlerRuntimeStore,
+      zoneDemandTrackingStore,
+      alerting,
       persistZoneState: async (zoneId, patch) => {
         const current = zoneStateById.get(zoneId);
         if (!current) return;
@@ -121,7 +205,7 @@ export async function runStartupReconciliationForInstallation(): Promise<void> {
 
   const settings = await getSystemSettings(installation.id);
   const airHandlers = await getActiveAirHandlers(installation.id);
-  const client = new FlairApiClient(installation.id);
+  const client = getFlairClient(installation.id);
   const reconciliationQueue = createRedisReconciliationQueue();
 
   for (const airHandler of airHandlers) {

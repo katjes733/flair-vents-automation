@@ -52,6 +52,9 @@ import {
 import type { ReconciliationQueue } from "~/server/control/reconciliationQueue";
 import type { SpikeBufferStore } from "~/server/control/spikeBuffer";
 import type { AirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
+import type { ZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
+import type { AlertingClient } from "~/server/util/alerting";
+import { detectNoImprovement } from "~/server/domain/state/noImprovement";
 import { dispatchZoneCommand } from "~/server/control/dispatcher";
 import {
   cacheTickDecision,
@@ -93,6 +96,8 @@ export interface TickDeps {
   reconciliationQueue: ReconciliationQueue;
   spikeBufferStore: SpikeBufferStore;
   airHandlerRuntimeStore: AirHandlerRuntimeStore;
+  zoneDemandTrackingStore: ZoneDemandTrackingStore;
+  alerting: AlertingClient;
   persistZoneState: (
     zoneId: string,
     patch: Partial<ZoneData["state"]>,
@@ -335,11 +340,21 @@ export async function runTick(
       ? (startedAtMs - callStartedAtMs) / 60000
       : 0;
 
+  const setpointWriteFailingKey = `alert:setpointWriteFailing:${airHandler.id}`;
   if (snapshot.thermostatState?.writtenFailures) {
     logFlairSetpointWriteFailing(log, {
       air_handler_id: airHandler.id,
       written_failures: snapshot.thermostatState.writtenFailures,
     });
+    await deps.alerting.alertOnce({
+      key: setpointWriteFailingKey,
+      subject: `${airHandler.name}: Flair setpoint writes are failing`,
+      text: `Flair reports ${snapshot.thermostatState.writtenFailures} failed setpoint write(s) for air handler "${airHandler.name}" — this is a control-channel problem (re-auth/connectivity), not necessarily an equipment fault.`,
+      rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+      nowMs: startedAtMs,
+    });
+  } else {
+    await deps.alerting.clearAlert(setpointWriteFailingKey);
   }
 
   if (hvac.confidence === "unknown") {
@@ -395,12 +410,20 @@ export async function runTick(
   let faultActive = priorRuntime.equipmentFaultActive ?? false;
   let faultClearDwellSinceMs =
     priorRuntime.equipmentFaultClearDwellSinceMs ?? null;
+  const failSafeAlertKey = `alert:failsafe:${airHandler.id}`;
   if (faultCheck.faulted) {
     if (!faultActive) {
       logEmergencyFailSafeTriggered(log, {
         air_handler_id: airHandler.id,
         fault_signal: "duct_temperature_differential",
         duct_delta_c: ctx.settings.equipment_fault_duct_delta_threshold_c,
+      });
+      await deps.alerting.alertOnce({
+        key: failSafeAlertKey,
+        subject: `${airHandler.name}: Emergency fail-safe triggered`,
+        text: `Every smart vent on air handler "${airHandler.name}" has been forced to 100% open — no vent is showing the expected duct-temperature differential for an active call, which this app treats as a possible equipment fault.`,
+        rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+        nowMs: startedAtMs,
       });
     }
     faultActive = true;
@@ -418,6 +441,7 @@ export async function runTick(
         fault_signal: "duct_temperature_differential",
         duct_delta_c: null,
       });
+      await deps.alerting.clearAlert(failSafeAlertKey);
     } else {
       faultClearDwellSinceMs = dwellSince;
     }
@@ -525,6 +549,38 @@ export async function runTick(
       previousClassification: zone.state.last_classification,
     });
     zoneStaleness.set(zone.id, staleness.stale);
+
+    const staleAlertKey = `alert:staleSensor:${zone.id}`;
+    if (staleness.stale) {
+      await deps.alerting.alertOnce({
+        key: staleAlertKey,
+        subject: `${zone.name}: sensor reading is stale`,
+        text: `Zone "${zone.name}"'s reading hasn't changed in over ${ctx.settings.stale_threshold_minutes} minute(s) — excluded from position control and resting at its idle baseline until it resumes.`,
+        rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+        nowMs: startedAtMs,
+      });
+    } else {
+      await deps.alerting.clearAlert(staleAlertKey);
+    }
+
+    const degradedAlertKey = `alert:ventDegraded:${zone.id}`;
+    const degradedSinceMs = zone.state.degraded_since
+      ? new Date(zone.state.degraded_since).getTime()
+      : null;
+    if (zone.state.degraded && degradedSinceMs !== null) {
+      const degradedMinutes = (startedAtMs - degradedSinceMs) / 60000;
+      if (degradedMinutes >= ctx.settings.vent_degraded_alert_minutes) {
+        await deps.alerting.alertOnce({
+          key: degradedAlertKey,
+          subject: `${zone.name}: vent degraded`,
+          text: `Zone "${zone.name}"'s vent has failed to reconcile to its commanded position for over ${ctx.settings.vent_degraded_alert_minutes} minute(s) and is excluded from the pressure aggregate in the meantime.`,
+          rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+          nowMs: startedAtMs,
+        });
+      }
+    } else {
+      await deps.alerting.clearAlert(degradedAlertKey);
+    }
 
     if (reading.calibratedTemp !== null) {
       await deps.spikeBufferStore.append(zone.id, {
@@ -775,6 +831,18 @@ export async function runTick(
       dry_run: dryRun,
     });
   }
+  const pressureFloorAlertKey = `alert:pressureFloorUnsatisfiable:${airHandler.id}`;
+  if (pipelineResult.contention?.insufficient) {
+    await deps.alerting.alertOnce({
+      key: pressureFloorAlertKey,
+      subject: `${airHandler.name}: pressure floor unsatisfiable`,
+      text: `Even with every zone at its floor, air handler "${airHandler.name}" cannot reach the topology's minimum open-area safeguard — likely a misconfiguration (min_vent_position/idle_baseline_position set too low across too many zones for this equipment).`,
+      rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+      nowMs: startedAtMs,
+    });
+  } else {
+    await deps.alerting.clearAlert(pressureFloorAlertKey);
+  }
 
   const aggregateOpenLps = pipelineInputs
     .filter((z) => contributesToPressure(z.ventHardwareType))
@@ -856,6 +924,8 @@ export async function runTick(
       zones: anomalyZones,
     });
     for (const a of anomalies) {
+      const anomalyAlertKey = `alert:ductAnomaly:${a.zoneId}`;
+      const demandTracking = await deps.zoneDemandTrackingStore.get(a.zoneId);
       if (a.anomalous) {
         logDuctAirflowAnomalyDetected(log, {
           air_handler_id: airHandler.id,
@@ -864,6 +934,29 @@ export async function runTick(
           commanded_position_pct:
             pipelineResult.commandedPositions[a.zoneId] ?? 0,
         });
+        const since = demandTracking.ductAnomalySinceMs ?? startedAtMs;
+        const anomalyMinutes = (startedAtMs - since) / 60000;
+        await deps.zoneDemandTrackingStore.set(a.zoneId, {
+          ...demandTracking,
+          ductAnomalySinceMs: since,
+        });
+        if (anomalyMinutes >= ctx.settings.duct_anomaly_alert_minutes) {
+          const zoneName =
+            zones.find((z) => z.id === a.zoneId)?.name ?? a.zoneId;
+          await deps.alerting.alertOnce({
+            key: anomalyAlertKey,
+            subject: `${zoneName}: isolated duct airflow anomaly`,
+            text: `Zone "${zoneName}"'s duct hasn't shown the expected temperature differential for over ${ctx.settings.duct_anomaly_alert_minutes} minute(s), while at least one sibling vent on the same air handler does — possibly a blocked or disconnected duct run.`,
+            rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+            nowMs: startedAtMs,
+          });
+        }
+      } else {
+        await deps.zoneDemandTrackingStore.set(a.zoneId, {
+          ...demandTracking,
+          ductAnomalySinceMs: null,
+        });
+        await deps.alerting.clearAlert(anomalyAlertKey);
       }
     }
   }
@@ -895,6 +988,62 @@ export async function runTick(
       priorityRank: c.priorityRank === -1 ? Infinity : c.priorityRank,
     }));
 
+  // --- Zone demand with no improvement -------------------------------
+  // The zone-scoped sibling of "HVAC extended call with no improvement" —
+  // added after live hardware verification confirmed a vent can silently
+  // under-actuate in a way neither reconciliation nor the whole-system
+  // alert can catch. "Near its ceiling" uses a small margin, not exact
+  // equality, since a demanding zone can hover a step or two below its
+  // configured max without ever landing exactly on it.
+  const ZONE_CEILING_MARGIN_PCT = 5;
+  for (const candidate of drivingCandidates) {
+    const zone = zones.find((z) => z.id === candidate.zoneId)!;
+    const commandedPct = pipelineResult.commandedPositions[zone.id] ?? 0;
+    const nearCeiling =
+      commandedPct >= zone.config.max_vent_position - ZONE_CEILING_MARGIN_PCT;
+    const demandTracking = await deps.zoneDemandTrackingStore.get(zone.id);
+    const zoneAlertKey = `alert:zoneNoImprovement:${zone.id}`;
+
+    if (
+      candidate.demanding &&
+      nearCeiling &&
+      Number.isFinite(candidate.deviation)
+    ) {
+      const demandStartedAtMs = demandTracking.demandStartedAtMs ?? startedAtMs;
+      const worstDeviationAtDemandStart =
+        demandTracking.worstDeviationAtDemandStart ?? candidate.deviation;
+      await deps.zoneDemandTrackingStore.set(zone.id, {
+        ...demandTracking,
+        demandStartedAtMs,
+        worstDeviationAtDemandStart,
+      });
+      const demandDurationMinutes = (startedAtMs - demandStartedAtMs) / 60000;
+      if (
+        detectNoImprovement({
+          worstDeviationAtStart: worstDeviationAtDemandStart,
+          currentWorstDeviation: candidate.deviation,
+          durationMinutes: demandDurationMinutes,
+          alertMinutes: ctx.settings.zone_no_improvement_alert_minutes,
+        })
+      ) {
+        await deps.alerting.alertOnce({
+          key: zoneAlertKey,
+          subject: `${zone.name}: demand with no improvement`,
+          text: `Zone "${zone.name}" has been commanded near its ceiling (${commandedPct}%) for over ${ctx.settings.zone_no_improvement_alert_minutes} minute(s) with no measurable improvement (deviation ${candidate.deviation.toFixed(2)}°C, vs ${worstDeviationAtDemandStart.toFixed(2)}°C when this began).`,
+          rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+          nowMs: startedAtMs,
+        });
+      }
+    } else {
+      await deps.zoneDemandTrackingStore.set(zone.id, {
+        ...demandTracking,
+        demandStartedAtMs: null,
+        worstDeviationAtDemandStart: null,
+      });
+      await deps.alerting.clearAlert(zoneAlertKey);
+    }
+  }
+
   const explicitOverrideZoneId =
     ctx.settings.driving_zone_overrides[airHandler.id] ?? null;
   const drivingSelection = selectDrivingZone({
@@ -913,6 +1062,39 @@ export async function runTick(
   const demandingZoneCount = zones.filter(
     (z) => pipelineResult.classifications[z.id] === "demanding",
   ).length;
+
+  // "HVAC extended call with no improvement" — snapshot-vs-now (see
+  // domain/state/noImprovement.ts). The snapshot resets exactly when
+  // callStartedAtMs does (Step 4), so a new call always gets a fresh
+  // baseline rather than inheriting a stale one from a prior call.
+  const currentWorstDeviationC = Math.max(
+    0,
+    ...drivingCandidates.filter((c) => c.demanding).map((c) => c.deviation),
+  );
+  const worstDeviationAtCallStartC = !callActive
+    ? null
+    : priorRuntime.lastHvacState === hvac.state
+      ? (priorRuntime.worstDeviationAtCallStartC ?? currentWorstDeviationC)
+      : currentWorstDeviationC;
+  const hvacNoImprovementKey = `alert:hvacNoImprovement:${airHandler.id}`;
+  if (
+    detectNoImprovement({
+      worstDeviationAtStart: worstDeviationAtCallStartC,
+      currentWorstDeviation: currentWorstDeviationC,
+      durationMinutes: callDurationMinutes,
+      alertMinutes: ctx.settings.hvac_no_improvement_alert_minutes,
+    })
+  ) {
+    await deps.alerting.alertOnce({
+      key: hvacNoImprovementKey,
+      subject: `${airHandler.name}: HVAC call running with no improvement`,
+      text: `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no zone measurably closer to target (worst deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`,
+      rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+      nowMs: startedAtMs,
+    });
+  } else {
+    await deps.alerting.clearAlert(hvacNoImprovementKey);
+  }
 
   let pushedValue: number | null = priorRuntime.lastPushedSetpointC;
   let smoothedOffsetC = priorRuntime.smoothedOffsetC;
@@ -976,6 +1158,24 @@ export async function runTick(
         zone.config.max_vent_position,
       );
     }
+    // Deliberately not alertOnce/dedup-and-quiet — this is the plan's one
+    // named exception: it re-fires on a coarse interval for as long as
+    // control_disarmed stays true, since "a temporary check-in was never
+    // reversed" is a risk a one-shot alert can't catch. Scoped per
+    // installation (control_disarmed is global), not per air handler —
+    // harmless double-send with today's one active handler, worth
+    // revisiting if a second handler is ever activated.
+    await deps.alerting.alertRecurring({
+      key: `alert:controlDisarmed:${ctx.installationId}`,
+      subject: "Control is disarmed",
+      text: `Automatic control has been disarmed since it was last toggled — every smart vent is being held at its idle baseline instead of actively controlled. If this wasn't intentional, resume automatic control from the app.`,
+      intervalHours: ctx.settings.disarm_reminder_interval_hours,
+      nowMs: startedAtMs,
+    });
+  } else {
+    await deps.alerting.clearRecurringAlert(
+      `alert:controlDisarmed:${ctx.installationId}`,
+    );
   }
 
   // --- Steps 12-13: dispatch ------------------------------------------
@@ -1066,6 +1266,7 @@ export async function runTick(
     lastPushedSetpointC: pushedValue,
     lastHvacState: hvac.state,
     callStartedAtMs,
+    worstDeviationAtCallStartC,
     equipmentFaultActive: faultActive,
     equipmentFaultClearDwellSinceMs: faultClearDwellSinceMs,
     ticksSinceDriftCheck: nextTicksSinceDriftCheck,
