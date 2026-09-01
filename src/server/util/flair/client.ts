@@ -87,6 +87,32 @@ export interface FlairVentReading {
   createdAt: string;
 }
 
+// An Ecobee-side sensor (either a genuine SmartSensor, `is-tstat: false`,
+// or the thermostat's own onboard sensor, `is-tstat: true`) — confirmed
+// live via `GET /api/structures/{id}/remote-sensors`. `roomId` is how this
+// joins to `FlairRoom`, mirroring `FlairVent.roomId`.
+export interface FlairRemoteSensor {
+  id: string;
+  roomId: string | null;
+  isTstat: boolean;
+  sensorType: string;
+  name: string;
+}
+
+// The occupancy signal lives here, not on FlairRemoteSensor itself — a
+// separate `remote-sensor-readings` sub-resource, confirmed live via
+// `GET /api/remote-sensors/{id}/current-reading`. This is exactly why an
+// earlier discovery pass that only dumped `remote-sensors` (not its
+// `current-reading`) missed it — the same "reading is a separate
+// sub-resource" shape `FlairVentReading` already has for duct temperature.
+export interface FlairRemoteSensorReading {
+  remoteSensorId: string;
+  occupied: boolean | null;
+  temperatureC: number | null;
+  humidity: number | null;
+  createdAt: string;
+}
+
 export interface FlairClient {
   getAccessToken(): Promise<string>;
   fetchStructures(): Promise<FlairStructure[]>;
@@ -95,6 +121,10 @@ export interface FlairClient {
   fetchRooms(structureId: string): Promise<FlairRoom[]>;
   fetchVents(structureId: string): Promise<FlairVent[]>;
   fetchVentReading(ventId: string): Promise<FlairVentReading>;
+  fetchRemoteSensors(structureId: string): Promise<FlairRemoteSensor[]>;
+  fetchRemoteSensorReading(
+    remoteSensorId: string,
+  ): Promise<FlairRemoteSensorReading>;
   setVentPercentOpen(ventId: string, percentOpen: number): Promise<void>;
   setStructureSetpointC(structureId: string, setpointC: number): Promise<void>;
 }
@@ -354,6 +384,42 @@ export class FlairApiClient implements FlairClient {
       ventId,
       percentOpen: Number(a["percent-open"] ?? 0),
       ductTemperatureC: (a["duct-temperature-c"] as number | undefined) ?? null,
+      createdAt: String(a["created-at"] ?? ""),
+    };
+  }
+
+  async fetchRemoteSensors(structureId: string): Promise<FlairRemoteSensor[]> {
+    const body = await this.request<{
+      data: Array<{
+        id: string;
+        attributes: Record<string, unknown>;
+        relationships?: { room?: { data?: { id: string | null } } };
+      }>;
+    }>("GET", `/api/structures/${structureId}/remote-sensors`);
+    return body.data.map((d) => ({
+      id: d.id,
+      roomId: d.relationships?.room?.data?.id ?? null,
+      isTstat: Boolean(d.attributes["is-tstat"]),
+      sensorType: String(d.attributes["sensor-type"] ?? ""),
+      name: String(d.attributes.name ?? ""),
+    }));
+  }
+
+  async fetchRemoteSensorReading(
+    remoteSensorId: string,
+  ): Promise<FlairRemoteSensorReading> {
+    const body = await this.request<{
+      data: { attributes: Record<string, unknown> };
+    }>("GET", `/api/remote-sensors/${remoteSensorId}/current-reading`);
+    const a = body.data.attributes;
+    return {
+      remoteSensorId,
+      occupied:
+        a.occupied === undefined || a.occupied === null
+          ? null
+          : Boolean(a.occupied),
+      temperatureC: (a["temperature-c"] as number | undefined) ?? null,
+      humidity: (a.humidity as number | undefined) ?? null,
       createdAt: String(a["created-at"] ?? ""),
     };
   }

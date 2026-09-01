@@ -17,17 +17,23 @@ export interface SetpointPushResult {
  * Ecobee/Bosch mechanism"). Piece 1 (accurate tracking, never padded):
  * push = trackedZoneSetpoint + smoothedOffset, where offset measures the
  * real, current gap between whatever Ecobee is comparing against and the
- * true tracked-zone temperature — self-correcting regardless of Ecobee's
- * comfort-setting sensor-group configuration. Piece 2 (prompt
- * termination): once every currently-demanding zone on the handler is
- * satisfied (demandingZoneCount === 0), the pushed value snaps toward
- * thermostatReading ± margin via a max/min guard, in the stop direction
- * only — the property that makes "never manufactures urgency" provable
- * rather than merely intended.
+ * true tracked-zone *temperature* — self-correcting regardless of
+ * Ecobee's comfort-setting sensor-group configuration. Getting this
+ * offset wrong is not a cosmetic bug: using the tracked zone's *setpoint*
+ * here instead (as an earlier version of this function did) makes
+ * `pushedValue` collapse to ≈`thermostatReading` regardless of the
+ * tracked zone's real state — Ecobee would always perceive itself as
+ * roughly at target, silently defeating the entire mechanism. Piece 2
+ * (prompt termination): once every currently-demanding zone on the
+ * handler is satisfied (demandingZoneCount === 0), the pushed value
+ * snaps toward thermostatReading ± margin via a max/min guard, in the
+ * stop direction only — the property that makes "never manufactures
+ * urgency" provable rather than merely intended.
  */
 export function computeSetpointPush(params: {
   state: HvacCallState;
   trackedZoneSetpoint: number;
+  trackedZoneTemp: number | null;
   trackedZoneStale: boolean;
   thermostatReading: number | null;
   previousSmoothedOffset: number;
@@ -36,7 +42,11 @@ export function computeSetpointPush(params: {
   demandingZoneCount: number;
   terminationMarginC: number;
 }): SetpointPushResult {
-  if (params.trackedZoneStale || params.thermostatReading === null) {
+  if (
+    params.trackedZoneStale ||
+    params.thermostatReading === null ||
+    params.trackedZoneTemp === null
+  ) {
     return {
       pushedValue: params.trackedZoneSetpoint,
       smoothedOffset: 0,
@@ -44,7 +54,7 @@ export function computeSetpointPush(params: {
     };
   }
 
-  const rawOffset = params.thermostatReading - params.trackedZoneSetpoint;
+  const rawOffset = params.thermostatReading - params.trackedZoneTemp;
   const smoothedOffset = smoothOffset({
     previousSmoothedOffset: params.previousSmoothedOffset,
     rawOffset,

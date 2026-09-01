@@ -16,6 +16,19 @@ export interface ZoneRuntimeState {
   stale: boolean;
   spike_active: boolean;
   spike_since: string | null;
+  // The previous tick's satisfied/demanding classification — the input
+  // classifyStaleness()'s "not already satisfied" gate needs, since a
+  // comfortable room's reading is unchanging by design. See "Stale sensor
+  // reading safeguard".
+  last_classification:
+    "satisfied" | "demanding" | "unclassified_no_sensor" | null;
+  // Debounced occupancy state — mirrors spike_active/spike_since's shape.
+  // The live signal (`remote-sensor-readings.occupied`, confirmed present
+  // via a targeted live check — see docs/flair-api-schema.md) is fed
+  // through this hysteresis before being unioned with any schedule-driven
+  // Sleep Mode override. See "Occupancy" in the implementation plan.
+  occupied: boolean;
+  occupancy_pending_flip_since: string | null;
 }
 
 export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
@@ -30,4 +43,7 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   stale: false,
   spike_active: false,
   spike_since: null,
+  last_classification: null,
+  occupied: false,
+  occupancy_pending_flip_since: null,
 };

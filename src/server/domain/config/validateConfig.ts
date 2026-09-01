@@ -147,6 +147,29 @@ export function validateStepDeltaRelationship(params: {
   return [];
 }
 
+/**
+ * sleep_mode_min_step_delta_pct only does anything if it's actually wider
+ * than the normal dispatch threshold it's meant to replace during Sleep
+ * Mode — a value at or below min_step_delta_pct is silently a no-op, so
+ * this is worth flagging even though it can't break anything.
+ */
+export function validateSleepModeStepDelta(params: {
+  minStepDeltaPct: number;
+  sleepModeMinStepDeltaPct: number;
+}): ValidationIssue[] {
+  if (params.sleepModeMinStepDeltaPct <= params.minStepDeltaPct) {
+    return [
+      {
+        code: "sleep_mode_step_delta_no_effect",
+        severity: "warning",
+        message:
+          "sleep_mode_min_step_delta_pct is not wider than min_step_delta_pct — quiet actuation during Sleep Mode will have no effect.",
+      },
+    ];
+  }
+  return [];
+}
+
 /** No duplicate zone ids, and — the caller supplies existence — every id resolves. */
 export function validatePriorityOrder(
   zonePriorityOrder: string[],

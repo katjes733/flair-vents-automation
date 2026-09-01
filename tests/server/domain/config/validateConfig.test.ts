@@ -3,6 +3,7 @@ import {
   validateZoneConfig,
   validateAirHandlerConfig,
   validateStepDeltaRelationship,
+  validateSleepModeStepDelta,
   validatePriorityOrder,
 } from "~/server/domain/config/validateConfig";
 
@@ -129,6 +130,26 @@ describe("validateStepDeltaRelationship", () => {
         minStepDeltaPct: 5,
         modulationStepPct: 10,
         maxStepsPerTick: 1,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("validateSleepModeStepDelta", () => {
+  it("warns when the sleep-mode threshold isn't actually wider than normal", () => {
+    const issues = validateSleepModeStepDelta({
+      minStepDeltaPct: 15,
+      sleepModeMinStepDeltaPct: 15,
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe("warning");
+  });
+
+  it("is silent when the sleep-mode threshold is wider", () => {
+    expect(
+      validateSleepModeStepDelta({
+        minStepDeltaPct: 15,
+        sleepModeMinStepDeltaPct: 30,
       }),
     ).toEqual([]);
   });

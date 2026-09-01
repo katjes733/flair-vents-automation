@@ -6,6 +6,8 @@ import type {
   FlairRoom,
   FlairVent,
   FlairVentReading,
+  FlairRemoteSensor,
+  FlairRemoteSensorReading,
 } from "~/server/util/flair/client";
 
 // A stateful, in-memory fake — not HTTP mocking. Every domain/control test
@@ -33,6 +35,8 @@ export class FakeFlairClient implements FlairClient {
   private rooms: FlairRoom[] = [];
   private vents: FlairVent[] = [];
   private ventReadings = new Map<string, FlairVentReading>();
+  private remoteSensors: FlairRemoteSensor[] = [];
+  private remoteSensorReadings = new Map<string, FlairRemoteSensorReading>();
   private forcedError: Error | null = null;
   private rateLimitedOnce = false;
   private readonly ventCommandHistory: VentCommand[] = [];
@@ -63,6 +67,14 @@ export class FakeFlairClient implements FlairClient {
 
   setVentReading(reading: FlairVentReading): void {
     this.ventReadings.set(reading.ventId, reading);
+  }
+
+  setRemoteSensors(sensors: FlairRemoteSensor[]): void {
+    this.remoteSensors = sensors;
+  }
+
+  setRemoteSensorReading(reading: FlairRemoteSensorReading): void {
+    this.remoteSensorReadings.set(reading.remoteSensorId, reading);
   }
 
   /** The next call to any fetch/set method throws this error instead of succeeding. */
@@ -134,6 +146,23 @@ export class FakeFlairClient implements FlairClient {
     this.maybeThrow();
     const reading = this.ventReadings.get(ventId);
     if (!reading) throw new Error(`No fixture vent reading set for ${ventId}`);
+    return reading;
+  }
+
+  async fetchRemoteSensors(_structureId: string): Promise<FlairRemoteSensor[]> {
+    this.maybeThrow();
+    return this.remoteSensors;
+  }
+
+  async fetchRemoteSensorReading(
+    remoteSensorId: string,
+  ): Promise<FlairRemoteSensorReading> {
+    this.maybeThrow();
+    const reading = this.remoteSensorReadings.get(remoteSensorId);
+    if (!reading)
+      throw new Error(
+        `No fixture remote-sensor reading set for ${remoteSensorId}`,
+      );
     return reading;
   }
 

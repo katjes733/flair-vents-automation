@@ -19,6 +19,10 @@ import {
 import { getTokenWithAuthorizationCode } from "~/server/util/auth";
 import { upsertFlairToken } from "~/server/util/routes/flairToken";
 import { renderOAuthCallbackPage } from "~/server/util/oauthCallbackPage";
+import {
+  runStartupReconciliationForInstallation,
+  startControlLoop,
+} from "~/server/control/scheduler";
 
 // Fail-fast: required env vars are checked synchronously at module load,
 // not lazily on first request.
@@ -205,10 +209,28 @@ server.listen(port, () => {
   logger.info({ port, ssl: sslEnabled }, "Server listening");
 });
 
-// Stops accepting new connections without moving anything — the control
-// loop (added in a later stage) layers its own "hold last position, don't
-// dispatch on the way out" behavior on top of this same signal.
+// Startup reconciliation runs once, before the loop's first tick, so the
+// first ramp starts from where the vents actually are rather than
+// whatever the DB held across a restart — see "Reconciliation & startup
+// reconciliation". A failure here (e.g. Flair unreachable at boot) must
+// not prevent the server from serving the API/UI, so it's logged and the
+// loop starts regardless — the loop's own per-handler try/catch and the
+// next tick's own reconciliation sweep are what actually recover from it.
+try {
+  await runStartupReconciliationForInstallation();
+} catch (err) {
+  logger.error(
+    { err },
+    "Startup reconciliation failed — starting the control loop anyway",
+  );
+}
+const controlLoop = startControlLoop();
+
+// Stops accepting new connections and stops scheduling further ticks
+// without moving anything — holding last position is this app's own
+// stated safe default for any outage, so shutdown behaves the same way.
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received, shutting down gracefully");
+  controlLoop.stop();
   server.close(() => process.exit(0));
 });

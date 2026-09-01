@@ -34,6 +34,16 @@ export const systemSettingsConfigSchema = z.object({
   modulation_step_pct: z.number().positive().default(10),
   max_steps_per_tick: z.number().int().positive().default(1),
   min_step_delta_pct: z.number().positive().default(15),
+  // Quiet actuation: while a zone's currently-active schedule event has
+  // Sleep Mode (assume_occupied) set for it, this threshold replaces
+  // min_step_delta_pct at the dispatch decision only — small deviations
+  // accumulate silently until they cross this wider bar, so a bedroom
+  // vent moves less often but further each time, rather than motor-cycling
+  // repeatedly overnight. Never widens reconciliation's own tolerance for
+  // whether a dispatched command actually landed — that stays comfort/
+  // correctness-focused regardless of the hour. PLACEHOLDER pending
+  // real-world tuning; must stay >= min_step_delta_pct to have any effect.
+  sleep_mode_min_step_delta_pct: z.number().positive().max(100).default(30),
   // Backstop drift check, compares reported vs. last_target_position every
   // Nth tick (Resolved Design Decisions).
   drift_check_interval_ticks: z.number().int().positive().default(10),
@@ -56,6 +66,12 @@ export const systemSettingsConfigSchema = z.object({
   // Stated default (Occupancy section: "During FAN_ONLY/IDLE only, the
   // gentler settings.unoccupiedIdleFactor (default 0.5)").
   unoccupied_idle_factor: z.number().min(0).max(1).default(0.5),
+  // Stabilization dwell before flipping the debounced occupancy state,
+  // mirroring spike detection's hysteresis shape — shorter than spike's
+  // default (5 min), since "someone walked into the room" shouldn't lag as
+  // much, but still needs some debounce against a flickering raw signal.
+  // PLACEHOLDER pending real-world tuning.
+  occupancy_stabilization_minutes: z.number().positive().default(2),
 
   // --- Dynamic thermal spike detection ---
   // Window stated as a 10-15 minute range; 12 picked as a representative
