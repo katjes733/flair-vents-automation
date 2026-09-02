@@ -12,7 +12,7 @@
     "docker:up": "docker-compose --env-file .env up -d",
     "docker:down": "docker-compose --env-file .env down",
     "build": "bun build src/server/main.ts --outdir build --target bun --minify",
-    "eslint": "bun x eslint src tests",
+    "eslint": "bun x eslint --max-warnings=0 src tests",
     "eslint:fix": "bun eslint -- --quiet --fix",
     "generate-certs": "bash scripts/generate-certs.sh",
     "new-flair-token": "bun run scripts/getNewFlairToken.ts",
@@ -113,7 +113,7 @@
   },
   "overrides": {
     "path-to-regexp": "8.4.2",
-    "qs": "6.15.2",
+    "qs": "6.16.0",
     "fast-uri": "3.1.5",
     "shell-quote": "1.9.0",
     "js-yaml": "4.3.1",

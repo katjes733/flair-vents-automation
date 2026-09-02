@@ -21,9 +21,9 @@ import { useNotification } from "~/client/components/notification/useNotificatio
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { fromDisplayFlowRate } from "~/shared/types/airflow";
 import RepeatableManualVentField, {
-  isValidManualVentPosition,
   type ManualVentRow,
 } from "~/client/components/shared/RepeatableManualVentField";
+import { isValidManualVentPosition } from "~/client/components/shared/manualVentValidation";
 
 // A zone's Flair vent identity only ever arrives via "Sync with Flair" —
 // a Flair vent id is Flair's own opaque identifier, never something a

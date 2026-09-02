@@ -29,9 +29,9 @@ import {
 } from "~/shared/types/temperature";
 import { toDisplayFlowRate, fromDisplayFlowRate } from "~/shared/types/airflow";
 import RepeatableManualVentField, {
-  isValidManualVentPosition,
   type ManualVentRow,
 } from "~/client/components/shared/RepeatableManualVentField";
+import { isValidManualVentPosition } from "~/client/components/shared/manualVentValidation";
 import RepeatableFlairVentField, {
   type FlairVentRow,
 } from "~/client/components/shared/RepeatableFlairVentField";

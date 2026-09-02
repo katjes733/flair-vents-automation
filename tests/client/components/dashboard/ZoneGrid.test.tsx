@@ -12,11 +12,10 @@ vi.mock("~/client/api/zonesApi", async (importOriginal) => {
   return { ...actual, updateZone };
 });
 
-const {
-  default: ZoneGrid,
-  computeDropSide,
-  computeReorderedIndex,
-} = await import("~/client/components/dashboard/ZoneGrid");
+const { default: ZoneGrid } =
+  await import("~/client/components/dashboard/ZoneGrid");
+const { computeDropSide, computeReorderedIndex } =
+  await import("~/client/components/dashboard/zoneGridDragLogic");
 const { lightStatusPalette } = await import("~/client/theme/statusPalette");
 
 const theme = createTheme({
