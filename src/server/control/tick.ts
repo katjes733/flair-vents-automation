@@ -291,64 +291,75 @@ export async function runTick(
   // "Reconciliation & startup reconciliation". Per (zone, vent) pair —
   // two vents in the same zone reconcile independently. See "Multi-Vent
   // Zones".
-  const dueKeys = await deps.reconciliationQueue.dequeueDue(startedAtMs);
-  for (const key of dueKeys) {
-    const { zoneId, flairVentId } = parseReconciliationKey(key);
-    const zone = zones.find((z) => z.id === zoneId);
-    if (!zone) continue;
-    const ventReading = readings
-      .get(zoneId)
-      ?.vents.find((v) => v.flairVentId === flairVentId);
-    const reportedPosition = ventReading?.reportedPositionPct ?? null;
-    const priorVent = ventStateNow(zoneId, flairVentId);
-    const currentVents = currentVentsByZoneId.get(zoneId) ?? [];
-    const outcome = evaluateReconciliation({
-      targetPosition: zone.state.last_target_position ?? 0,
-      reportedPosition,
-      minStepDeltaPct: ctx.settings.min_step_delta_pct,
-      attemptsSoFar: priorVent?.reconcile_attempts ?? 0,
-      maxAttempts: ctx.settings.reconciliation_retry_count,
-      dueForCheck: true,
-    });
-    if (outcome.status === "reconciled") {
-      logVentReconciled(log, {
-        air_handler_id: airHandler.id,
-        zone_id: zoneId,
-        vent_id: flairVentId,
-        attempt: priorVent?.reconcile_attempts ?? 0,
-        reported_pct: reportedPosition ?? 0,
+  //
+  // Skipped entirely for a shadowed handler ("Shadow mode (dry run)"):
+  // no command was ever actually sent for Flair to have acted on, so
+  // there's nothing real to reconcile — evaluating it anyway would
+  // compare a never-dispatched target against Flair's own independently
+  // driven reported position, which will essentially never converge and
+  // would exhaust retries into a false "degraded" state. Left queued
+  // (not dequeued) until the handler goes live, at which point it's
+  // evaluated for real.
+  if (!dryRun) {
+    const dueKeys = await deps.reconciliationQueue.dequeueDue(startedAtMs);
+    for (const key of dueKeys) {
+      const { zoneId, flairVentId } = parseReconciliationKey(key);
+      const zone = zones.find((z) => z.id === zoneId);
+      if (!zone) continue;
+      const ventReading = readings
+        .get(zoneId)
+        ?.vents.find((v) => v.flairVentId === flairVentId);
+      const reportedPosition = ventReading?.reportedPositionPct ?? null;
+      const priorVent = ventStateNow(zoneId, flairVentId);
+      const currentVents = currentVentsByZoneId.get(zoneId) ?? [];
+      const outcome = evaluateReconciliation({
+        targetPosition: zone.state.last_target_position ?? 0,
+        reportedPosition,
+        minStepDeltaPct: ctx.settings.min_step_delta_pct,
+        attemptsSoFar: priorVent?.reconcile_attempts ?? 0,
+        maxAttempts: ctx.settings.reconciliation_retry_count,
+        dueForCheck: true,
       });
-      const vents = patchVentState(currentVents, flairVentId, {
-        reconcile_attempts: 0,
-        degraded: false,
-        degraded_since: null,
-      });
-      currentVentsByZoneId.set(zoneId, vents);
-      await deps.persistZoneState(zoneId, { vents });
-    } else if (outcome.status === "retry") {
-      await deps.reconciliationQueue.enqueue(
-        key,
-        startedAtMs + ACTUATION_DELAY_MS,
-      );
-      const vents = patchVentState(currentVents, flairVentId, {
-        reconcile_attempts: outcome.attempt,
-      });
-      currentVentsByZoneId.set(zoneId, vents);
-      await deps.persistZoneState(zoneId, { vents });
-    } else if (outcome.status === "degraded") {
-      logVentDegraded(log, {
-        air_handler_id: airHandler.id,
-        zone_id: zoneId,
-        vent_id: flairVentId,
-        reconcile_attempts: priorVent?.reconcile_attempts ?? 0,
-        last_reported_pct: reportedPosition,
-      });
-      const vents = patchVentState(currentVents, flairVentId, {
-        degraded: true,
-        degraded_since: toIso(startedAtMs),
-      });
-      currentVentsByZoneId.set(zoneId, vents);
-      await deps.persistZoneState(zoneId, { vents });
+      if (outcome.status === "reconciled") {
+        logVentReconciled(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zoneId,
+          vent_id: flairVentId,
+          attempt: priorVent?.reconcile_attempts ?? 0,
+          reported_pct: reportedPosition ?? 0,
+        });
+        const vents = patchVentState(currentVents, flairVentId, {
+          reconcile_attempts: 0,
+          degraded: false,
+          degraded_since: null,
+        });
+        currentVentsByZoneId.set(zoneId, vents);
+        await deps.persistZoneState(zoneId, { vents });
+      } else if (outcome.status === "retry") {
+        await deps.reconciliationQueue.enqueue(
+          key,
+          startedAtMs + ACTUATION_DELAY_MS,
+        );
+        const vents = patchVentState(currentVents, flairVentId, {
+          reconcile_attempts: outcome.attempt,
+        });
+        currentVentsByZoneId.set(zoneId, vents);
+        await deps.persistZoneState(zoneId, { vents });
+      } else if (outcome.status === "degraded") {
+        logVentDegraded(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zoneId,
+          vent_id: flairVentId,
+          reconcile_attempts: priorVent?.reconcile_attempts ?? 0,
+          last_reported_pct: reportedPosition,
+        });
+        const vents = patchVentState(currentVents, flairVentId, {
+          degraded: true,
+          degraded_since: toIso(startedAtMs),
+        });
+        currentVentsByZoneId.set(zoneId, vents);
+        await deps.persistZoneState(zoneId, { vents });
+      }
     }
   }
 
@@ -382,10 +393,21 @@ export async function runTick(
           })
         ) {
           mismatchesFound += 1;
-          await deps.reconciliationQueue.enqueue(
-            reconciliationKey(zone.id, ventReading.flairVentId),
-            startedAtMs,
-          );
+          // Detection/counting still runs while shadowed (real diagnostic
+          // signal — this is exactly the shadow-mode target-vs-reported
+          // comparison), but only a *live* handler's drift is real drift
+          // worth enqueueing a reconciliation for. A shadowed handler's
+          // `last_target_position` was never actually dispatched, so a
+          // "mismatch" against Flair's own independently reported
+          // position is expected, not a hardware problem — enqueueing it
+          // would exhaust retries into a false "degraded" state, exactly
+          // as the Step 3 sweep's own dryRun gate above avoids.
+          if (!dryRun) {
+            await deps.reconciliationQueue.enqueue(
+              reconciliationKey(zone.id, ventReading.flairVentId),
+              startedAtMs,
+            );
+          }
         }
       }
     }
