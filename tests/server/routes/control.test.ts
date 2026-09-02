@@ -17,6 +17,11 @@ vi.mock("~/server/util/services/settingsService", () => ({
   updateSettingsForInstallation,
 }));
 
+const { triggerImmediateTick } = vi.hoisted(() => ({
+  triggerImmediateTick: vi.fn(),
+}));
+vi.mock("~/server/control/scheduler", () => ({ triggerImmediateTick }));
+
 const { router } = await import("~/server/routes/control");
 
 function buildApp() {
@@ -35,6 +40,7 @@ beforeEach(() => {
     config: {},
     warnings: [],
   });
+  triggerImmediateTick.mockReset().mockResolvedValue(undefined);
 });
 
 describe("POST /api/v1/control/disarm", () => {
@@ -68,5 +74,13 @@ describe("POST /api/v1/control/rearm", () => {
     expect(updateSettingsForInstallation).toHaveBeenCalledWith("inst-1", {
       control_disarmed: false,
     });
+  });
+});
+
+describe("POST /api/v1/control/trigger-tick", () => {
+  it("runs an immediate tick cycle and returns 200", async () => {
+    const res = await request(buildApp()).post("/api/v1/control/trigger-tick");
+    expect(res.status).toBe(200);
+    expect(triggerImmediateTick).toHaveBeenCalledOnce();
   });
 });

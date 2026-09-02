@@ -43,14 +43,46 @@ function assertNoConfigIssues(zone: {
   const issues = validateZoneConfig({
     ventHardwareType: zone.ventHardwareType,
     flairRoomId: zone.flairRoomId,
-    flairVentIds: zone.config.flair_vent_ids,
-    assumedFixedPosition: zone.config.assumed_fixed_position,
+    flairVentIds: zone.config.flair_vents.map((v) => v.flair_vent_id),
+    manualVents: zone.config.manual_vents.map((v) => ({
+      position: v.position,
+      ductFlowRateLps: v.duct_flow_rate_lps,
+    })),
     minVentPosition: zone.config.min_vent_position,
     maxVentPosition: zone.config.max_vent_position,
     idleBaselinePosition: zone.config.idle_baseline_position,
   }).filter((i) => i.severity === "error");
   if (issues.length > 0) {
     throw new HttpError(issues.map((i) => i.message).join(" "), 400);
+  }
+}
+
+/**
+ * `zones.idx_zones_air_handler_name` is DB-unique (per air handler), but a
+ * raw constraint violation is an ugly 500/raw-SQL-error surfaced straight
+ * to the UI — mirrors `airHandlerService.ts`'s `assertNoFlairZoneConflict`,
+ * giving the same clean, named error instead. `excludeZoneId` lets an
+ * update check against every *other* zone without tripping on its own
+ * current name.
+ */
+async function assertNoNameConflict(
+  installationId: string,
+  airHandlerId: string,
+  name: string,
+  excludeZoneId?: string,
+): Promise<void> {
+  const zones = await getZonesForInstallation(installationId);
+  const conflict = zones.find(
+    (z) =>
+      z.id !== excludeZoneId &&
+      z.airHandlerId === airHandlerId &&
+      z.name === name,
+  );
+  if (conflict) {
+    throw new HttpError(
+      `A zone named "${name}" already exists on this air handler.`,
+      400,
+    );
   }
 }
 
@@ -70,9 +102,9 @@ async function assertNoVentIdConflict(
   const zones = await getZonesForInstallation(installationId);
   for (const other of zones) {
     if (other.id === excludeZoneId) continue;
-    const conflict = other.config.flair_vent_ids.find((id) =>
-      flairVentIds.includes(id),
-    );
+    const conflict = other.config.flair_vents
+      .map((v) => v.flair_vent_id)
+      .find((id) => flairVentIds.includes(id));
     if (conflict) {
       throw new HttpError(
         `flair_vent_id ${conflict} is already assigned to zone "${other.name}".`,
@@ -95,9 +127,14 @@ export async function createZoneForInstallation(params: {
     params.airHandlerId,
   );
   assertNoConfigIssues(params);
+  await assertNoNameConflict(
+    params.installationId,
+    params.airHandlerId,
+    params.name,
+  );
   await assertNoVentIdConflict(
     params.installationId,
-    params.config.flair_vent_ids,
+    params.config.flair_vents.map((v) => v.flair_vent_id),
   );
   return createZone(params);
 }
@@ -136,9 +173,17 @@ export async function updateZoneWithValidation(
   });
   await assertNoVentIdConflict(
     existing.installationId,
-    mergedConfig.flair_vent_ids,
+    mergedConfig.flair_vents.map((v) => v.flair_vent_id),
     zoneId,
   );
+  if (patch.name !== undefined || patch.airHandlerId !== undefined) {
+    await assertNoNameConflict(
+      existing.installationId,
+      patch.airHandlerId ?? existing.airHandlerId,
+      patch.name ?? existing.name,
+      zoneId,
+    );
+  }
   await updateZone(zoneId, {
     ...(patch.airHandlerId !== undefined && {
       airHandlerId: patch.airHandlerId,

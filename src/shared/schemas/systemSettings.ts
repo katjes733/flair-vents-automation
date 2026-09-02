@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { genuinePartial } from "~/shared/schemas/zodPartial";
 
 // Every default below is either (a) stated explicitly in the implementation
 // plan (cited in the comment) or (b) a placeholder I picked because the plan
@@ -183,6 +184,12 @@ export const systemSettingsConfigSchema = z.object({
   // actually authoritative after first boot.
   home_timezone: z.string().default("America/Phoenix"),
   display_temperature_unit: z.enum(["C", "F"]).default("F"),
+  // Per-browser-overridable display unit for airflow-rating fields
+  // (duct_flow_rate_lps) — same system-wide-default-with-per-browser-
+  // override pattern as display_temperature_unit, see the Settings page.
+  // "Lps" (the canonical stored unit) is the safe default absent any
+  // browser or system preference.
+  display_airflow_unit: z.enum(["Lps", "CFM", "M3h"]).default("Lps"),
 });
 
 export type SystemSettingsConfig = z.infer<typeof systemSettingsConfigSchema>;
@@ -190,3 +197,20 @@ export type SystemSettingsConfig = z.infer<typeof systemSettingsConfigSchema>;
 export function resolveSystemSettings(stored: unknown): SystemSettingsConfig {
   return systemSettingsConfigSchema.parse(stored ?? {});
 }
+
+/**
+ * A genuine partial of `systemSettingsConfigSchema` for PATCH request
+ * bodies — `.partial()` alone is NOT safe here for the identical reason
+ * `zoneConfigPartialSchema` exists (see that schema's own comment):
+ * `updateSettingsForInstallation` merges the patch onto the existing row
+ * (`{...existing, ...patch}`), so a `.partial()`-parsed patch that's been
+ * silently backfilled with every field's default would wipe every setting
+ * the caller never intended to touch — e.g. a minimal
+ * `{ display_temperature_unit: "F" }` PATCH (exactly what the Settings
+ * page's temperature-unit toggle sends) would otherwise reset
+ * `control_disarmed`, `live_air_handler_ids`, `zone_priority_order`, and
+ * everything else back to their schema defaults.
+ */
+export const systemSettingsConfigPartialSchema = genuinePartial(
+  systemSettingsConfigSchema,
+);

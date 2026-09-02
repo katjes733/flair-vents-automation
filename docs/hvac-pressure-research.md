@@ -28,6 +28,12 @@
   - [Practitioner/secondary numbers found — explicitly NOT primary-sourced](#practitionersecondary-numbers-found--explicitly-not-primary-sourced)
   - [Engineering inferences for this project (not stated by any source)](#engineering-inferences-for-this-project-not-stated-by-any-source)
   - [Open items / unconfirmed](#open-items--unconfirmed)
+  - [Register Size to Airflow Rating](#register-size-to-airflow-rating)
+    - [How this section was gathered](#how-this-section-was-gathered)
+    - [The four priority sizes — all found, all directly manufacturer-sourced](#the-four-priority-sizes--all-found-all-directly-manufacturer-sourced)
+    - [Full table: register size → CFM → L/s](#full-table-register-size--cfm--ls)
+    - [Method notes, per row](#method-notes-per-row)
+    - [What was deliberately not filled in](#what-was-deliberately-not-filled-in)
   - [Sources](#sources)
 
 ## This installation's actual unit: BIVA-60RCB-M20X and BOVA-60RTB-M20S
@@ -282,6 +288,50 @@ These are reasonable design conclusions for `topologyLimits.ts` given everything
 8. **Whether this house's air handler has an electric heat kit installed** is not recorded anywhere in this project's research. This matters for this specific unit: per [Computed result](#computed-result-does-high-stage-stay-in-band-across-the-published-esp-range), the cooling-mode High Stage tap (Tap 4) falls below the CFM/ton floor at ESP ≥ ~0.58 in. W.C. if a heat kit is installed (350 CFM/ton floor), but stays in-band across the full published range if not (300 CFM/ton floor). Worth a quick visual check of the air handler for an EHK-0xB module before finalizing any cooling-mode ESP limit.
 9. **Whether the physical SW6-1,2 dip switches inside the installed BIVA-60RCB-M20X are actually set to the documented "24K/36K 60K" position** (as opposed to the "48K" position, or another undocumented position) is unconfirmed from documents alone — see the note in [Which tap runs when Y1 and Y2 are jumpered](#which-tap-runs-when-y1-and-y2-are-jumpered). This would require opening the air handler and reading the physical switches, or asking the installer.
 
+## Register Size to Airflow Rating
+
+This section answers a different, narrower question than the rest of this document: not "how much duct closure can this house's blower tolerate," but **"what does a specific physical register size actually pass at full-open, according to a real manufacturer, so a user can pick a size from a dropdown instead of typing a raw CFM number they don't know."** It follows the same rule the rest of this document already follows: a number only goes in the table if it traces to a manufacturer spec/distributor product page that states it directly, or to a first-principles calculation from a stated free area and a cited typical face velocity. No forum rule-of-thumb, no interpolation between sizes, no invented number for a size no source covers.
+
+### How this section was gathered
+
+Web search plus direct fetch of manufacturer-distributor product spec pages for **TRUaire** (a RectorSeal-owned brand; one of the most widely-distributed U.S. residential grille/register lines, sold through Locke Supply, FaucetDepot, Hirsch Pipe & Supply, Baker Distributing, Geary Pacific, and others) — specifically the **104M** series (stamped steel, 4-way deflection, square sizes) and the **103M** series (stamped steel, 3-way deflection, rectangular sizes). Each product page publishes the register's **Effective Area** (the manufacturer's own free-area figure, in sq-in) and a **Flow Rate** CFM range side by side for the same SKU — this is a manufacturer-published spec, not a web-search-summarized guess. Every number in the table below was independently re-fetched from at least one live distributor product page and quoted verbatim, specifically because a first search-summary pass produced a plausible-looking but **unverifiable and ultimately contradicted** claim (a supposed "225 cfm at 1000 fpm" rating for the 12x6 register); the direct page fetch instead showed a published "70 to 225 cfm" range with no 1000-fpm figure anywhere on the page. That fabricated-looking number was discarded and is not used anywhere below — it's called out here so a future pass doesn't reintroduce it. One real, page-verified exception to that pattern exists and is kept: the 10x12 (103M1210) SKU's own distributor page states its rating as a single value, **"Air Flow Rating 410 CFM at 1000 FPM Velocity,"** not a range — that phrasing is quoted directly from that specific product page, not synthesized.
+
+Hart & Cooley's own engineering-data PDF for its 661/A661/672/673/674 register series was also located (`hartandcooley.com/literature/Engineering_Data-672_674_673_661_a661.pdf`) and is a legitimate second primary source for a future pass, but its performance tables are laid out as scanned/compressed PDF content that this pass's PDF-to-text extraction could not linearize into readable rows (unlike the pressure-research section above, no `pdftotext -layout`/`pdftoppm` render pass was run against it in this session) — so it is listed under Sources as located-but-not-yet-extracted, not used as a data source in the table below.
+
+### The four priority sizes — all found, all directly manufacturer-sourced
+
+**6x6, 8x8, 10x10, and 12x12 were all found**, all from the same manufacturer product line (TRUaire 104M), each with a directly published Effective Area and Flow Rate CFM range — none of the four required interpolation, guessing, or a first-principles fallback calculation.
+
+### Full table: register size → CFM → L/s
+
+CFM → L/s uses the conversion the rest of this project already standardizes on: **1 CFM = 0.4719 L/s**. "Rated max CFM" is the top of each SKU's own published Flow Rate range (or its single stated value, for the one SKU rated that way) — i.e., the closest thing each source publishes to "100% open, rated/maximum airflow capacity," which is what this table is asked to report.
+
+| Size (in) | Series / SKU | Effective (free) area | Published CFM range | Rated max CFM | Rated max, in L/s | Method | Confidence |
+|---|---|---|---|---|---|---|---|
+| **6x6** | TRUaire 104M 06X06 | 13 sq-in | 30–105 cfm | 105 | 49.6 L/s | Manufacturer spec (distributor product page) | High — priority size, page-verified |
+| **8x8** | TRUaire 104M 08X08 | 37 sq-in | 60–200 cfm | 200 | 94.4 L/s | Manufacturer spec (distributor product page) | High — priority size, page-verified |
+| **10x10** | TRUaire 104M 10X10 | 61 sq-in | 95–310 cfm | 310 | 146.3 L/s | Manufacturer spec (distributor product page) | High — priority size, page-verified |
+| **12x12** | TRUaire 104M 12X12 | 91 sq-in | 140–470 cfm | 470 | 221.8 L/s | Manufacturer spec (distributor product page) | High — priority size, page-verified |
+| 4x10 | TRUaire 103M 10X04 | 24 sq-in | 35–115 cfm | 115 | 54.3 L/s | Manufacturer spec (distributor product page) | High — page-verified |
+| 4x12 | TRUaire 103M 12X04 | 30 sq-in | 40–140 cfm | 140 | 66.1 L/s | Manufacturer spec (distributor product page) | High — page-verified |
+| 6x10 | TRUaire 103M 10X06 | 38 sq-in | 55–185 cfm | 185 | 87.3 L/s | Manufacturer spec (distributor product page) | High — page-verified |
+| 6x12 | TRUaire 103M 12X06 | 47 sq-in | 70–225 cfm | 225 | 106.2 L/s | Manufacturer spec (distributor product page) | High — page-verified |
+| 8x10 | TRUaire 103M 10X08 | not published | 295 cfm (single value, not a range) | 295 | 139.2 L/s | Manufacturer spec (distributor product page) — partial | Medium — CFM figure is page-verified, but no effective-area figure or range was found for this SKU on any page checked |
+| 8x12 | TRUaire 103M 12X08 | 55 sq-in | 95–320 cfm | 320 | 151.0 L/s | Manufacturer spec (distributor product page) | High — page-verified |
+| 10x12 | TRUaire 103M 12X10 (SKU 103M1210) | ~59 sq-in (this research's own back-calculation: 410 cfm ÷ 1000 fpm × 144, not manufacturer-published) | not a range — "410 CFM at 1000 FPM Velocity" | 410 | 193.5 L/s | Manufacturer spec (distributor product page), single-point rating | High for the CFM figure (page-verified verbatim); the area figure alongside it is this research's own arithmetic, not the source's |
+| 14x14 | TRUaire 104M 14X14 | 127 sq-in | 195–650 cfm | 650 | 306.7 L/s | Manufacturer spec (distributor product page) | High — page-verified |
+
+### Method notes, per row
+
+- Every row except 10x12 comes from a **Flow Rate range** published directly on the SKU's own distributor product page, alongside an **Effective Area** figure from the same page — both figures quoted, not computed, except where noted. Back-computing an implied face velocity from range and area (this research's own arithmetic, not stated by TRUaire) gives roughly ~210–330 fpm at the low end of each range and ~730–780 fpm at the high end for the 8x8-and-larger sizes (the 6x6's high end implies a higher ~1160 fpm, consistent with smaller registers losing proportionally more free area to frame/blade structure) — offered here only as a sanity check that these numbers sit in the same physically-reasonable band the task's own suggested fallback (~450–500 fpm) sits inside, not as a claim TRUaire states these velocities anywhere.
+- The **8x10** row is the one genuine gap in an otherwise clean manufacturer-sourced table: the only page found for this exact SKU (103M 10X08) states a flat "295 cfm Flow Rate" with no min value and no Effective Area figure, and no second page for the same SKU that included one was found in this pass. It's kept in the table (rather than marked "not found") because the CFM figure itself is real and page-verified — but the missing range/area is flagged explicitly rather than backfilled by interpolating between the 6x10 and 8x12 rows, which would not be a sourced number.
+- The **10x12** row's "410 CFM at 1000 FPM Velocity" phrasing is the one SKU in this table rated as a single design point rather than a range — quoted verbatim from its own distributor page, not reworded. Its "~59 sq-in" area is flagged in the table itself as this research's own division, done only to sanity-check it against the neighboring 8x8/10x10/12x12 area progression (61 and 91 sq-in on either side) — it lines up plausibly, but that check is not a manufacturer-published figure, and should not be read as one.
+- No first-principles (free-area × cited typical velocity) calculation was needed for any of the twelve sizes above — a direct manufacturer figure was found for all of them. The task's suggested fallback method (free area × ~450–500 ft/min) was therefore not exercised in this pass; it remains available for any size a future pass can't find a direct manufacturer table for.
+
+### What was deliberately not filled in
+
+No size on the requested list came back completely empty — all twelve (the four priority sizes plus the eight others) had at least a CFM figure traceable to a real manufacturer-distributor product page. The one partial gap is called out inline above (8x10's missing range/area), not silently filled. Sizes genuinely outside a 4–14 inch register range, or non-rectangular register shapes, were not researched in this pass and should be treated as "not found" if they come up later — nothing here should be read as covering them.
+
 ## Sources
 
 - [ACCA Manual Zr — Residential Zoning, First Edition, Version 1.10, ANSI Review Draft, 17 Nov 2017 (PDF)](https://higherlogicdownload.s3.amazonaws.com/ACCA/8e4cf5b4-e984-4971-bb79-7889082c7cf2/UploadedImages/Manual_Zr_Ver_1_10_review_draft_17Nov2017.pdf)
@@ -295,3 +345,16 @@ These are reasonable design conclusions for `topologyLimits.ts` given everything
 - [ANSI/ASHRAE Addendum t to ANSI/ASHRAE Standard 62.2-2022](https://www.ashrae.org/file%20library/technical%20resources/standards%20and%20guidelines/standards%20addenda/62_2_2022_t_20250630.pdf) (checked; concerns ventilation duct sizing, not zoning — see [Section 4](#4-acca-manual-d--manual-zr--ashrae--direct-numeric-guidance))
 - [Bosch IDS Premium Series Air Handler — Installation and Operating Instructions, BTC 762003302 C (10.2024) (PDF)](https://www.bosch-homecomfort.com/us/media/country_pool/documents/installation-manuals/bosch_ids_premium_air_handler_iom_10.2024.pdf) — the IOM for this house's actual air handler (BIVA-60RCB-M20X); source for the [This installation's actual unit](#this-installations-actual-unit-biva-60rcb-m20x-and-bova-60rtb-m20s) section
 - [Bosch IDS Heat Pump Premium Connected Series Condensing Unit — Installation and Operating Instructions, BTC 762003301 C (10.2024) (PDF)](https://assets.unilogcorp.com/267/ITEM/DOC/BOSCH_BOVA60RTBM20S_Instruction_Installation_Manual.pdf) — the IOM for this house's actual condenser (BOVA-60RTB-M20S)
+- [TRUaire 104M 06X06, distributor product spec page (FaucetDepot)](https://www.faucetdepot.com/product/56115/truaire+104m+06x06+4-way+wall-ceiling+register+6+x+6+in+30+to+105+cfm+steel+powder+coated+import) — source for the 6x6 row in [Register Size to Airflow Rating](#register-size-to-airflow-rating)
+- [TRUaire 104M 08X08, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1731) — source for the 8x8 row
+- [TRUaire 104M 10X10, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1732) — source for the 10x10 row
+- [TRUaire 104M 12X12, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1733) — source for the 12x12 row
+- [TRUaire 104M 14X14, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1734) — source for the 14x14 row
+- [TRUaire 103M 10X04, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1706) — source for the 4x10 row
+- [TRUaire 103M 12X04, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item/6093) — source for the 4x12 row
+- [TRUaire 103M 10X06, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1735) — source for the 6x10 row
+- [TRUaire 103M 12X06, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1736) — source for the 6x12 row
+- [TRUaire 103M 10X08, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L9988) — source for the 8x10 row (partial — no free-area or range figure found on this page; see [Method notes, per row](#method-notes-per-row))
+- [TRUaire 103M 12X08, distributor product spec page (Locke Supply)](https://www.lockesupply.com/Products/Item?prod=L1738) — source for the 8x12 row
+- [TRUaire 103M 12X10 (SKU 103M1210), distributor product spec page (Riley Sales)](https://www.rileysales.com/buy/product/12x10-sidewall-register-3-way-1-2-spacing-10-103m1210/CLENCc66da930f9a3d63586b91fa4cc51b1d5) — source for the 10x12 row's "410 CFM at 1000 FPM Velocity" quote
+- [Hart & Cooley — Engineering Data, 661/A661/672/673/674 Supply Register series (PDF)](https://hartandcooley.com/literature/Engineering_Data-672_674_673_661_a661.pdf) — located as a second candidate primary source for register CFM-vs-size data, but not used in the table above; its performance tables did not linearize to readable text in this pass's extraction (see [How this section was gathered](#how-this-section-was-gathered))

@@ -10,6 +10,7 @@ import Stack from "@mui/material/Stack";
 import { createAirHandler } from "~/client/api/airHandlersApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
+import FlairZoneSelect from "~/client/components/shared/FlairZoneSelect";
 
 interface AddAirHandlerDialogProps {
   open: boolean;
@@ -37,6 +38,20 @@ export default function AddAirHandlerDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset every field on the closed→open transition (not just on a
+  // successful create) — see the identical comment in AddZoneDialog.tsx,
+  // the same bug and fix, found first there.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setName("");
+      setTonnageTons("");
+      setFlairZoneId("");
+      setError(null);
+    }
+  }
+
   const handleSubmit = useCallback(async () => {
     if (!name.trim()) return;
     setSubmitting(true);
@@ -53,9 +68,6 @@ export default function AddAirHandlerDialog({
       showNotification(`"${name.trim()}" created.`, "success");
       onCreated();
       onClose();
-      setName("");
-      setTonnageTons("");
-      setFlairZoneId("");
     } catch (err) {
       setError(
         extractErrorMessage(err) ??
@@ -88,12 +100,7 @@ export default function AddAirHandlerDialog({
             onChange={(e) => setTonnageTons(e.target.value)}
             helperText="Required before this handler can be activated — the pressure safeguard's baseline."
           />
-          <TextField
-            label="Flair zone ID (optional)"
-            value={flairZoneId}
-            onChange={(e) => setFlairZoneId(e.target.value)}
-            helperText="Link to a real Flair zone now, or leave blank and link it later."
-          />
+          <FlairZoneSelect value={flairZoneId} onChange={setFlairZoneId} />
           {error && (
             <DialogContentText color="error">{error}</DialogContentText>
           )}

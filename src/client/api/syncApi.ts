@@ -71,10 +71,14 @@ export async function linkRoomToZone(
   airHandlerId: string,
   flairRoomId: string,
   zoneId: string,
+  // Required by the server only when the room has zero live vents (it
+  // then resolves to manual_fixed_vent) — see syncService.ts.
+  assumedFixedPosition?: number,
 ): Promise<Zone> {
   const { data } = await httpClient.post<Zone>(`/sync/${airHandlerId}/link`, {
     flair_room_id: flairRoomId,
     zone_id: zoneId,
+    assumed_fixed_position: assumedFixedPosition,
   });
   return data;
 }
@@ -83,10 +87,12 @@ export async function createZoneFromRoom(
   airHandlerId: string,
   flairRoomId: string,
   name?: string,
+  assumedFixedPosition?: number,
 ): Promise<Zone> {
   const { data } = await httpClient.post<Zone>(`/sync/${airHandlerId}/create`, {
     flair_room_id: flairRoomId,
     name,
+    assumed_fixed_position: assumedFixedPosition,
   });
   return data;
 }

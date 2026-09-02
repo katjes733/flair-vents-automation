@@ -21,17 +21,26 @@ import { useNotification } from "~/client/components/notification/useNotificatio
 interface GlobalStatusBarProps {
   controlDisarmed: boolean;
   onChanged: () => void;
+  // Rendered on the right of the one status row — the toolbar's "Add air
+  // handler"/"Add zone" actions, per the user's own request to reclaim the
+  // vertical space a separate toolbar row cost.
+  children?: React.ReactNode;
 }
 
 /**
  * The prominent, always-visible disarm control — deliberately here, not
  * buried in a settings page, since the motivating scenario is "get
  * everything safe, right now, without navigating." See "Manual disarm" in
- * the implementation plan.
+ * the implementation plan. One row, a 3-column grid (`1fr auto 1fr`) so
+ * the middle column stays genuinely centered regardless of how wide the
+ * two side columns' own content is: the disarm/resume button flush left,
+ * the status pill (+ its explanatory text when disarmed) centered in the
+ * middle, and the toolbar actions passed in as `children` flush right.
  */
 export default function GlobalStatusBar({
   controlDisarmed,
   onChanged,
+  children,
 }: GlobalStatusBarProps) {
   const { showNotification } = useNotification();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -69,39 +78,62 @@ export default function GlobalStatusBar({
         sx={{
           p: 2,
           mb: 2,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 2,
           bgcolor: controlDisarmed ? "warning.main" : "background.paper",
           color: controlDisarmed ? "warning.contrastText" : "text.primary",
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          {controlDisarmed ? (
-            <Chip label="Control Disarmed" color="default" size="small" />
-          ) : (
-            <Chip
-              label="Automatic Control Active"
-              color="success"
-              size="small"
-            />
-          )}
-          {controlDisarmed && (
-            <Typography variant="body2">
-              Every vent is holding its idle baseline instead of being actively
-              controlled.
-            </Typography>
-          )}
-        </Box>
-        <Button
-          variant={controlDisarmed ? "contained" : "outlined"}
-          color={controlDisarmed ? "inherit" : "error"}
-          size="small"
-          onClick={() => setConfirmOpen(true)}
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            gap: 2,
+          }}
         >
-          {controlDisarmed ? "Resume Automatic Control" : "Disarm Control"}
-        </Button>
+          <Box sx={{ justifySelf: "start" }}>
+            <Button
+              variant={controlDisarmed ? "contained" : "outlined"}
+              color={controlDisarmed ? "inherit" : "error"}
+              size="small"
+              onClick={() => setConfirmOpen(true)}
+            >
+              {controlDisarmed ? "Resume Automatic Control" : "Disarm Control"}
+            </Button>
+          </Box>
+          <Box
+            sx={{
+              justifySelf: "center",
+              display: "flex",
+              alignItems: "center",
+              gap: 1.5,
+            }}
+          >
+            {controlDisarmed ? (
+              <Chip label="Control Disarmed" color="default" size="small" />
+            ) : (
+              <Chip
+                label="Automatic Control Active"
+                color="success"
+                size="small"
+              />
+            )}
+            {controlDisarmed && (
+              <Typography variant="body2">
+                Every vent is holding its idle baseline instead of being
+                actively controlled.
+              </Typography>
+            )}
+          </Box>
+          <Box
+            sx={{
+              justifySelf: "end",
+              display: "flex",
+              gap: 1,
+            }}
+          >
+            {children}
+          </Box>
+        </Box>
       </Paper>
 
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>

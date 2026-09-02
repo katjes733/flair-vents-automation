@@ -12,7 +12,10 @@ function zoneConfig(overrides = {}) {
     ventHardwareType: "flair_smart_vent" as const,
     flairRoomId: null,
     flairVentIds: ["vent-1"],
-    assumedFixedPosition: undefined,
+    manualVents: [] as Array<{
+      position: number;
+      ductFlowRateLps: number | undefined;
+    }>,
     minVentPosition: 0,
     maxVentPosition: 100,
     idleBaselinePosition: 100,
@@ -25,33 +28,81 @@ describe("validateZoneConfig", () => {
     expect(validateZoneConfig(zoneConfig())).toEqual([]);
   });
 
-  it("rejects flair_room_id on a non-smart-vent zone", () => {
+  // Regression coverage for a real house-specific correction: earlier,
+  // this rule rejected flair_room_id on a manual_fixed_vent zone,
+  // reasoning that a manual vent has no reason to track live Flair room
+  // data. That's wrong for a room whose vent is a plain, non-Flair
+  // vent but whose temperature/occupancy still comes from a real,
+  // Flair-tracked remote sensor — flair_room_id only ever anchors
+  // sensor data, independent of the vent's own hardware, so no vent
+  // hardware type should be rejected for having one linked.
+  it("allows flair_room_id on a manual_fixed_vent zone — a real vent Flair doesn't control, with a Flair-tracked sensor", () => {
     const issues = validateZoneConfig(
       zoneConfig({
         ventHardwareType: "manual_fixed_vent",
         flairRoomId: "room-1",
-        assumedFixedPosition: 50,
+        manualVents: [{ position: 50, ductFlowRateLps: undefined }],
+        flairVentIds: [],
       }),
     );
     expect(
-      issues.some((i) => i.code === "flair_room_requires_smart_vent"),
-    ).toBe(true);
+      issues.some(
+        (i) => i.code === "flair_room_requires_smart_vent_or_no_vent",
+      ),
+    ).toBe(false);
   });
 
-  it("requires assumed_fixed_position for manual_fixed_vent", () => {
+  it("allows flair_room_id on a no_vent zone — a sensored, vent-less Flair room", () => {
+    const issues = validateZoneConfig(
+      zoneConfig({
+        ventHardwareType: "no_vent",
+        flairRoomId: "room-1",
+        flairVentIds: [],
+      }),
+    );
+    expect(
+      issues.some(
+        (i) => i.code === "flair_room_requires_smart_vent_or_no_vent",
+      ),
+    ).toBe(false);
+  });
+
+  it("requires at least one manual vent for manual_fixed_vent", () => {
     const issues = validateZoneConfig(
       zoneConfig({ ventHardwareType: "manual_fixed_vent" }),
     );
-    expect(
-      issues.some((i) => i.code === "assumed_fixed_position_required"),
-    ).toBe(true);
+    expect(issues.some((i) => i.code === "manual_vents_required")).toBe(true);
   });
 
-  it("rejects assumed_fixed_position on any other type", () => {
-    const issues = validateZoneConfig(zoneConfig({ assumedFixedPosition: 50 }));
-    expect(
-      issues.some((i) => i.code === "assumed_fixed_position_not_applicable"),
-    ).toBe(true);
+  it("rejects manual_vents on any other type", () => {
+    const issues = validateZoneConfig(
+      zoneConfig({
+        manualVents: [{ position: 50, ductFlowRateLps: undefined }],
+      }),
+    );
+    expect(issues.some((i) => i.code === "manual_vents_not_applicable")).toBe(
+      true,
+    );
+  });
+
+  // Regression coverage for modeling a real gap: a manual_fixed_vent zone
+  // can have more than one physical vent, each at a genuinely different
+  // position (a real house confirmed both its bathrooms and its Den back
+  // each have 2), which the app previously had no way to represent at all.
+  it("allows more than one manual vent for a manual_fixed_vent zone", () => {
+    const issues = validateZoneConfig(
+      zoneConfig({
+        ventHardwareType: "manual_fixed_vent",
+        manualVents: [
+          { position: 75, ductFlowRateLps: undefined },
+          { position: 25, ductFlowRateLps: 40 },
+        ],
+      }),
+    );
+    expect(issues.some((i) => i.code === "manual_vents_required")).toBe(false);
+    expect(issues.some((i) => i.code === "manual_vents_not_applicable")).toBe(
+      false,
+    );
   });
 
   it("rejects min exceeding max", () => {

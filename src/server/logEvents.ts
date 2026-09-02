@@ -65,7 +65,12 @@ export function logContentionResolved(
   log: Logger,
   fields: ContentionResolvedFields,
 ): void {
-  log.info(fields, "Contention resolved");
+  // debug, not info: fully duplicated by "Control tick decision"'s own
+  // `contention` field whenever this fires (identical reductions/
+  // insufficient) — this event only still exists to feed the
+  // Contention/allocation Grafana panel's own narrower LogQL query. See
+  // "Logging, Redaction & Observability" in the implementation plan.
+  log.debug(fields, "Contention resolved");
 }
 
 export interface PressureSafeguardEvaluatedFields {
@@ -101,7 +106,11 @@ export function logDrivingSetpointComputed(
   log: Logger,
   fields: DrivingSetpointComputedFields,
 ): void {
-  log.info(fields, "Driving setpoint computed");
+  // debug, not info: fires unconditionally every tick and its fields are
+  // duplicated verbatim by "Control tick decision"'s own `driving_zone`/
+  // `setpoint_push` fields — kept only to feed the Driving zone + pushed
+  // setpoint Grafana panel's own narrower LogQL query.
+  log.debug(fields, "Driving setpoint computed");
 }
 
 export interface VentCommandDispatchedFields {
@@ -283,15 +292,25 @@ export function logControlTickCompleted(
   log: Logger,
   fields: ControlTickCompletedFields,
 ): void {
-  log.info(fields, "Control tick completed");
+  // debug, not info: every field here (duration_ms, zone/command counts)
+  // is directly present in or trivially derivable from "Control tick
+  // decision", which is logged immediately after this at info — kept only
+  // to feed the Service Health tick-duration Grafana panel's own cheaper,
+  // narrower LogQL query.
+  log.debug(fields, "Control tick completed");
 }
 
 // The exhaustive per-tick record — see "Comprehensive tick decision
 // record". No fixed field shape here (the record's own type lives in
 // control/tickDecision.ts) since this is deliberately exhaustive rather
-// than a fixed dashboard-facing shape.
+// than a fixed dashboard-facing shape. Logged at info, not debug — this
+// is the single consolidated "what did the system just decide, and why"
+// view for a tick, and needs to survive at the app's normal operating
+// log level (info) for issue investigation, not just when LOG_LEVEL is
+// bumped to debug (which also floods the stream with per-zone/per-vent
+// routine noise and pino-http's own request logging).
 export function logControlTickDecision(log: Logger, decision: unknown): void {
-  log.debug({ decision }, "Control tick decision");
+  log.info({ decision }, "Control tick decision");
 }
 
 export interface StartupReconciliationCompletedFields {

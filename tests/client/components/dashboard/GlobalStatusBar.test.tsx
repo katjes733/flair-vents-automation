@@ -22,14 +22,20 @@ const { default: GlobalStatusBar } =
 
 const theme = createTheme();
 
-function renderBar(controlDisarmed: boolean, onChanged = vi.fn()) {
+function renderBar(
+  controlDisarmed: boolean,
+  onChanged = vi.fn(),
+  children?: React.ReactNode,
+) {
   return render(
     <ThemeProvider theme={theme}>
       <NotificationProvider>
         <GlobalStatusBar
           controlDisarmed={controlDisarmed}
           onChanged={onChanged}
-        />
+        >
+          {children}
+        </GlobalStatusBar>
       </NotificationProvider>
     </ThemeProvider>,
   );
@@ -88,5 +94,16 @@ describe("GlobalStatusBar", () => {
     await vi.waitFor(() => {
       expect(rearmControl).toHaveBeenCalledWith("Martin");
     });
+  });
+
+  // Regression coverage for the layout change moving the toolbar's own
+  // "Add air handler"/"Add zone" buttons onto the status pill's row —
+  // GlobalStatusBar now renders them as `children`.
+  it("renders toolbar actions passed as children alongside the status pill", () => {
+    renderBar(false, vi.fn(), <button>Add zone</button>);
+    expect(screen.getByText("Automatic Control Active")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add zone" }),
+    ).toBeInTheDocument();
   });
 });

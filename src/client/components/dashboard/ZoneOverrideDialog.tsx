@@ -12,6 +12,8 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import { createOverride, type HoldType } from "~/client/api/overridesApi";
 import { getStoredActor, setStoredActor } from "~/client/api/controlApi";
 import { useNotification } from "~/client/components/notification/useNotification";
+import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
+import { fromDisplayAbsolute } from "~/shared/types/temperature";
 
 const HOLD_TYPE_LABELS: Record<HoldType, string> = {
   "2h": "2 hours",
@@ -36,11 +38,26 @@ export default function ZoneOverrideDialog({
   onCreated,
 }: ZoneOverrideDialogProps) {
   const { showNotification } = useNotification();
+  const { temperatureUnit } = useDisplayUnit();
   const [kind, setKind] = useState<"setpoint" | "position">("position");
   const [value, setValue] = useState("");
   const [holdType, setHoldType] = useState<HoldType>("2h");
   const [actor, setActor] = useState(getStoredActor);
   const [submitting, setSubmitting] = useState(false);
+
+  // Reset on the closed→open transition — same bug/fix as AddZoneDialog.tsx
+  // and AddAirHandlerDialog.tsx. `actor` is deliberately excluded: it's
+  // meant to persist per-browser across overrides (see `getStoredActor`),
+  // not reset with the rest of the form.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setKind("position");
+      setValue("");
+      setHoldType("2h");
+    }
+  }
 
   const handleSubmit = useCallback(async () => {
     const numericValue = Number(value);
@@ -51,7 +68,10 @@ export default function ZoneOverrideDialog({
       await createOverride({
         kind,
         zone_id: zoneId,
-        value: numericValue,
+        value:
+          kind === "setpoint"
+            ? fromDisplayAbsolute(numericValue, temperatureUnit)
+            : numericValue,
         hold_type: holdType,
         actor: actor.trim(),
       });
@@ -70,6 +90,7 @@ export default function ZoneOverrideDialog({
     onClose,
     onCreated,
     showNotification,
+    temperatureUnit,
     value,
     zoneId,
     zoneName,
@@ -91,7 +112,11 @@ export default function ZoneOverrideDialog({
             <ToggleButton value="setpoint">Setpoint</ToggleButton>
           </ToggleButtonGroup>
           <TextField
-            label={kind === "position" ? "Position (0–100%)" : "Setpoint (°C)"}
+            label={
+              kind === "position"
+                ? "Position (0–100%)"
+                : `Setpoint (°${temperatureUnit})`
+            }
             type="number"
             value={value}
             onChange={(e) => setValue(e.target.value)}

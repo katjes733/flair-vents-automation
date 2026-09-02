@@ -30,3 +30,12 @@ export async function disarmControl(actor: string): Promise<void> {
 export async function rearmControl(actor: string): Promise<void> {
   await httpClient.post("/control/rearm", { actor });
 }
+
+// Runs one immediate control-loop cycle server-side — called right after a
+// Sync Engine import/link so the new zone's reading/classification shows
+// up without waiting for the next scheduled tick (up to a full tick
+// interval away). Coalesced server-side with the scheduled loop, so this
+// never runs a second cycle concurrently with an in-flight one.
+export async function triggerTick(): Promise<void> {
+  await httpClient.post("/control/trigger-tick");
+}

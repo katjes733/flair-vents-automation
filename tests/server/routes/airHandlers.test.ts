@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
+import { HttpError } from "~/server/util/httpError";
 
 const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
   getOrCreateDefaultInstallation: vi.fn(),
@@ -19,20 +20,38 @@ vi.mock("~/server/util/routes/airHandler", () => ({
   getAirHandlerById,
 }));
 
-const { createAirHandlerForInstallation, updateAirHandlerWithValidation } =
-  vi.hoisted(() => ({
-    createAirHandlerForInstallation: vi.fn(),
-    updateAirHandlerWithValidation: vi.fn(),
-  }));
+const {
+  createAirHandlerForInstallation,
+  updateAirHandlerWithValidation,
+  deleteAirHandlerWithValidation,
+} = vi.hoisted(() => ({
+  createAirHandlerForInstallation: vi.fn(),
+  updateAirHandlerWithValidation: vi.fn(),
+  deleteAirHandlerWithValidation: vi.fn(),
+}));
 vi.mock("~/server/util/services/airHandlerService", () => ({
   createAirHandlerForInstallation,
   updateAirHandlerWithValidation,
+  deleteAirHandlerWithValidation,
 }));
 
 const { getCachedTickDecision } = vi.hoisted(() => ({
   getCachedTickDecision: vi.fn(),
 }));
 vi.mock("~/server/control/tickDecision", () => ({ getCachedTickDecision }));
+
+const { getFlairClient, fetchZones } = vi.hoisted(() => ({
+  getFlairClient: vi.fn(),
+  fetchZones: vi.fn(),
+}));
+vi.mock("~/server/control/scheduler", () => ({ getFlairClient }));
+
+const { ensureFlairStructureLinked } = vi.hoisted(() => ({
+  ensureFlairStructureLinked: vi.fn(),
+}));
+vi.mock("~/server/util/services/installationService", () => ({
+  ensureFlairStructureLinked,
+}));
 
 const { router } = await import("~/server/routes/airHandlers");
 
@@ -52,7 +71,11 @@ beforeEach(() => {
   getAirHandlerById.mockReset();
   createAirHandlerForInstallation.mockReset();
   updateAirHandlerWithValidation.mockReset();
+  deleteAirHandlerWithValidation.mockReset();
   getCachedTickDecision.mockReset();
+  getFlairClient.mockReset();
+  fetchZones.mockReset();
+  ensureFlairStructureLinked.mockReset();
 });
 
 describe("GET /api/v1/air-handlers", () => {
@@ -61,6 +84,59 @@ describe("GET /api/v1/air-handlers", () => {
     const res = await request(buildApp()).get("/api/v1/air-handlers");
     expect(res.status).toBe(200);
     expect(res.body).toEqual([{ id: "ah-1" }]);
+  });
+});
+
+describe("GET /api/v1/air-handlers/flair-zones", () => {
+  beforeEach(() => {
+    getFlairClient.mockReturnValue({ fetchZones });
+    getOrCreateDefaultInstallation.mockResolvedValue({
+      id: "inst-1",
+      flairStructureId: null,
+    });
+  });
+
+  it("400s when auto-linking finds no Flair structure on the account", async () => {
+    ensureFlairStructureLinked.mockRejectedValue(
+      new HttpError("No Flair structures found on this account.", 400),
+    );
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/flair-zones",
+    );
+    expect(res.status).toBe(400);
+    expect(fetchZones).not.toHaveBeenCalled();
+  });
+
+  it("marks a zone already assigned to another air handler, by name", async () => {
+    ensureFlairStructureLinked.mockResolvedValue({
+      id: "inst-1",
+      flairStructureId: "s1",
+    });
+    fetchZones.mockResolvedValue([
+      { id: "fz-1", structureId: "s1", name: "Upstairs", thermostatId: null },
+      { id: "fz-2", structureId: "s1", name: "Downstairs", thermostatId: null },
+    ]);
+    getAirHandlersForInstallation.mockResolvedValue([
+      { id: "ah-1", name: "Main Floor", flairZoneId: "fz-2" },
+    ]);
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/flair-zones",
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      {
+        id: "fz-1",
+        name: "Upstairs",
+        assignedAirHandlerId: null,
+        assignedAirHandlerName: null,
+      },
+      {
+        id: "fz-2",
+        name: "Downstairs",
+        assignedAirHandlerId: "ah-1",
+        assignedAirHandlerName: "Main Floor",
+      },
+    ]);
   });
 });
 
@@ -99,6 +175,23 @@ describe("PATCH /api/v1/air-handlers/:id", () => {
       .send({ active: true });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: "ah-1", active: true });
+  });
+});
+
+describe("DELETE /api/v1/air-handlers/:id", () => {
+  it("deletes and returns 204", async () => {
+    deleteAirHandlerWithValidation.mockResolvedValue(undefined);
+    const res = await request(buildApp()).delete("/api/v1/air-handlers/ah-1");
+    expect(res.status).toBe(204);
+    expect(deleteAirHandlerWithValidation).toHaveBeenCalledWith("ah-1");
+  });
+
+  it("propagates a 409 when zones still reference it", async () => {
+    deleteAirHandlerWithValidation.mockRejectedValue(
+      new HttpError("still has zone(s): Bedroom", 409),
+    );
+    const res = await request(buildApp()).delete("/api/v1/air-handlers/ah-1");
+    expect(res.status).toBe(409);
   });
 });
 

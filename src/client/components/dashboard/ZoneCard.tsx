@@ -5,7 +5,11 @@ import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
 import LinearProgress from "@mui/material/LinearProgress";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
+import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import { isZoneDegraded, type Zone } from "~/client/api/zonesApi";
 import type { ZoneTickDecisionRecord } from "~/client/api/airHandlersApi";
 import type { ManualOverride } from "~/client/api/overridesApi";
@@ -13,6 +17,8 @@ import { revokeOverride } from "~/client/api/overridesApi";
 import { DiagnosticOnly } from "~/client/components/shared/DiagnosticOnly";
 import { useTheme } from "@mui/material/styles";
 import { useNotification } from "~/client/components/notification/useNotification";
+import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
+import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
 import ZoneOverrideDialog from "~/client/components/dashboard/ZoneOverrideDialog";
 
 interface ZoneCardProps {
@@ -21,6 +27,14 @@ interface ZoneCardProps {
   activeOverride: ManualOverride | undefined;
   onChanged: () => void;
   onEdit: (zone: Zone) => void;
+  // Reorder affordance, rendered inline in the card's own header — not a
+  // separate row, per the point of the feature (more cards visible, not
+  // fewer). Omitted entirely (no props passed) when the caller doesn't
+  // support reordering, e.g. in tests that only exercise the card itself.
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
 const CLASSIFICATION_LABELS: Record<string, string> = {
@@ -37,8 +51,14 @@ export default function ZoneCard({
   activeOverride,
   onChanged,
   onEdit,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp,
+  canMoveDown,
 }: ZoneCardProps) {
+  const reorderable = onMoveUp !== undefined || onMoveDown !== undefined;
   const theme = useTheme();
+  const { temperatureUnit } = useDisplayUnit();
   const { showNotification } = useNotification();
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
   const isControllable = zone.ventHardwareType === "flair_smart_vent";
@@ -73,11 +93,41 @@ export default function ZoneCard({
             alignItems: "center",
             justifyContent: "space-between",
             mb: 1,
+            gap: 0.5,
           }}
         >
-          <Typography variant="subtitle1" fontWeight={600}>
-            {zone.name}
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
+            {reorderable && (
+              <>
+                <DragIndicatorIcon
+                  fontSize="small"
+                  aria-hidden
+                  sx={{ color: "text.disabled", cursor: "grab" }}
+                />
+                <IconButton
+                  size="small"
+                  aria-label={`Move ${zone.name} up`}
+                  disabled={!canMoveUp}
+                  onClick={onMoveUp}
+                  sx={{ p: 0.25 }}
+                >
+                  <ArrowUpwardIcon fontSize="inherit" />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  aria-label={`Move ${zone.name} down`}
+                  disabled={!canMoveDown}
+                  onClick={onMoveDown}
+                  sx={{ p: 0.25 }}
+                >
+                  <ArrowDownwardIcon fontSize="inherit" />
+                </IconButton>
+              </>
+            )}
+            <Typography variant="subtitle1" fontWeight={600}>
+              {zone.name}
+            </Typography>
+          </Box>
           <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
             {isZoneDegraded(zone.state) && (
               <Chip
@@ -119,11 +169,24 @@ export default function ZoneCard({
           </Box>
         </Box>
 
-        {!isControllable && (
+        {!isControllable && zone.ventHardwareType === "manual_fixed_vent" && (
+          <Box>
+            {zone.config.manual_vents.length > 1 ? (
+              zone.config.manual_vents.map((v, i) => (
+                <Typography key={i} variant="body2" color="text.secondary">
+                  {`Manual fixed vent (Vent ${i + 1}): ${v.position}%`}
+                </Typography>
+              ))
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                {`Manual fixed vent (${zone.config.manual_vents[0]?.position ?? "?"}%)`}
+              </Typography>
+            )}
+          </Box>
+        )}
+        {!isControllable && zone.ventHardwareType === "no_vent" && (
           <Typography variant="body2" color="text.secondary">
-            {zone.ventHardwareType === "manual_fixed_vent"
-              ? `Manual fixed vent (${zone.config.assumed_fixed_position ?? "?"}%)`
-              : "No vent — readings only"}
+            No vent — readings only
           </Typography>
         )}
 
@@ -133,7 +196,7 @@ export default function ZoneCard({
           >
             <Typography variant="h5">
               {zone.state.last_reading_value !== null
-                ? `${zone.state.last_reading_value.toFixed(1)}°C`
+                ? `${toDisplayAbsolute(asAbsoluteTemp(zone.state.last_reading_value), temperatureUnit).toFixed(1)}°${temperatureUnit}`
                 : "—"}
             </Typography>
             {classification && (
@@ -152,7 +215,7 @@ export default function ZoneCard({
 
         {isControllable && tickRecord && tickRecord.vents.length > 0 && (
           <Box sx={{ mt: 1.5 }}>
-            {tickRecord.vents.map((v) => (
+            {tickRecord.vents.map((v, i) => (
               <Box key={v.flair_vent_id} sx={{ mb: 0.5 }}>
                 <Box
                   sx={{
@@ -163,7 +226,7 @@ export default function ZoneCard({
                 >
                   <Typography variant="caption" color="text.secondary">
                     {tickRecord.vents.length > 1
-                      ? `Vent position (${v.flair_vent_id})`
+                      ? `Vent position (${v.name || `Vent ${i + 1}`})`
                       : "Vent position"}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">

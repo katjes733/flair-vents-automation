@@ -24,9 +24,11 @@ interface NavItem {
 
 // One array drives both the page title lookup and the nav menu, so they
 // can't drift apart — same convention as wake-on-lan's NavMenu. Phase 2's
-// schedule/settings pages add entries here when they land; Phase 1 is
-// dashboard-only.
-const NAV_ITEMS: NavItem[] = [{ path: "/", label: "Dashboard" }];
+// schedule page adds an entry here when it lands.
+const NAV_ITEMS: NavItem[] = [
+  { path: "/", label: "Dashboard" },
+  { path: "/settings", label: "Settings" },
+];
 
 const PAGE_TITLES: Record<string, string> = Object.fromEntries(
   NAV_ITEMS.map((item) => [item.path, item.label]),

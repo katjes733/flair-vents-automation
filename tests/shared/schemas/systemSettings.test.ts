@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { resolveSystemSettings } from "~/shared/schemas/systemSettings";
+import {
+  resolveSystemSettings,
+  systemSettingsConfigPartialSchema,
+} from "~/shared/schemas/systemSettings";
 
 describe("resolveSystemSettings", () => {
   it("resolves every field with a default against an empty config, with zero backfill", () => {
@@ -27,6 +30,7 @@ describe("resolveSystemSettings", () => {
     expect(settings.away_native_zone_ids).toEqual([]);
     expect(settings.home_timezone).toBe("America/Phoenix");
     expect(settings.display_temperature_unit).toBe("F");
+    expect(settings.display_airflow_unit).toBe("Lps");
   });
 
   it("resolves against null the same as against an empty object", () => {
@@ -47,6 +51,31 @@ describe("resolveSystemSettings", () => {
   it("rejects an out-of-range token budget alert threshold", () => {
     expect(() =>
       resolveSystemSettings({ token_budget_alert_threshold_pct: 150 }),
+    ).toThrow();
+  });
+});
+
+describe("systemSettingsConfigPartialSchema", () => {
+  // Regression coverage for the same class of bug found in
+  // zoneConfigSchema.partial() (see zoneConfig.test.ts): a minimal PATCH
+  // like `{ display_temperature_unit: "F" }` — exactly what the Settings
+  // page's temperature-unit toggle sends — must not get every other field
+  // silently backfilled with its own default once parsed, since that
+  // fully-defaulted object then gets merged onto the existing row in
+  // updateSettingsForInstallation, wiping real settings like
+  // control_disarmed back to false.
+  it("leaves every omitted field genuinely absent, not defaulted", () => {
+    const result = systemSettingsConfigPartialSchema.parse({
+      display_temperature_unit: "F",
+    });
+    expect(result).toEqual({ display_temperature_unit: "F" });
+  });
+
+  it("still rejects an out-of-range value for a field that is present", () => {
+    expect(() =>
+      systemSettingsConfigPartialSchema.parse({
+        token_budget_alert_threshold_pct: 150,
+      }),
     ).toThrow();
   });
 });

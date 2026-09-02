@@ -129,7 +129,7 @@ function parseIsoOrNull(iso: string | null): number | null {
 }
 
 // One room-scoped reading (temperature/occupancy) plus one entry per
-// zone.config.flair_vent_ids member, same order — see "Multi-Vent Zones".
+// zone.config.flair_vents member, same order — see "Multi-Vent Zones".
 interface ZoneReadingBundle {
   room: ZoneRoomReading;
   vents: ZoneVentReading[];
@@ -236,12 +236,16 @@ export async function runTick(
       const occupancyReading = room
         ? (snapshot.occupancyReadingByRoomId.get(room.id) ?? null)
         : null;
-      const vents = zone.config.flair_vent_ids.map((flairVentId) => {
-        const vent = snapshot.ventsById.get(flairVentId) ?? null;
+      const vents = zone.config.flair_vents.map(({ flair_vent_id }) => {
+        const vent = snapshot.ventsById.get(flair_vent_id) ?? null;
         const ventReading = vent
           ? (snapshot.ventReadingsByVentId.get(vent.id) ?? null)
           : null;
-        return ingestZoneVentReading({ flairVentId, vent, ventReading });
+        return ingestZoneVentReading({
+          flairVentId: flair_vent_id,
+          vent,
+          ventReading,
+        });
       });
       return [
         zone.id,
@@ -878,10 +882,25 @@ export async function runTick(
       maxVentPosition: zone.config.max_vent_position,
       idleBaselinePosition: zone.config.idle_baseline_position,
       thermalLoadFlags: zone.config.thermal_load_flags,
-      flowRateLps:
-        zone.config.duct_flow_rate_lps ??
-        ctx.settings.default_zone_flow_rate_lps,
-      assumedFixedPosition: zone.config.assumed_fixed_position ?? null,
+      // Sum of each vent's own rating (falling back to the standard
+      // default per vent left blank) — the ganged position still means
+      // every vent in the zone is at the same commanded %, so this is
+      // exactly the same aggregate contribution the old single combined
+      // duct_flow_rate_lps value represented, just entered per vent
+      // instead of pre-summed by hand. 0 for manual_fixed_vent/no_vent
+      // (flair_vents is always empty for those types) — harmless, since
+      // this field is never read for either.
+      flowRateLps: zone.config.flair_vents.reduce(
+        (sum, v) =>
+          sum +
+          (v.duct_flow_rate_lps ?? ctx.settings.default_zone_flow_rate_lps),
+        0,
+      ),
+      manualVents: zone.config.manual_vents.map((v) => ({
+        position: v.position,
+        flowRateLps:
+          v.duct_flow_rate_lps ?? ctx.settings.default_zone_flow_rate_lps,
+      })),
       calibratedTemp: reading.calibratedTemp ?? asAbsoluteTemp(0),
       resolvedSetpoint: target.setpoint,
       tolerance: target.tolerance,
@@ -944,8 +963,18 @@ export async function runTick(
   const aggregateOpenLps = pipelineInputs
     .filter((z) => contributesToPressure(z.ventHardwareType))
     .reduce((sum, z) => {
+      if (z.degraded) return sum;
+      if (z.ventHardwareType === "manual_fixed_vent") {
+        return (
+          sum +
+          z.manualVents.reduce(
+            (vSum, v) => vSum + (v.position / 100) * v.flowRateLps,
+            0,
+          )
+        );
+      }
       const pos = pipelineResult.commandedPositions[z.zoneId] ?? 0;
-      return z.degraded ? sum : sum + (pos / 100) * z.flowRateLps;
+      return sum + (pos / 100) * z.flowRateLps;
     }, 0);
   logPressureSafeguardEvaluated(log, {
     air_handler_id: airHandler.id,
@@ -1300,6 +1329,7 @@ export async function runTick(
     string,
     "dispatched" | "suppressed_step_delta"
   >();
+  const zoneDispatchedThisTickByZoneId = new Map<string, boolean>();
   for (const zone of zones) {
     if (!isControllable(zone.ventHardwareType)) continue;
     const target = finalPositions[zone.id];
@@ -1361,9 +1391,25 @@ export async function runTick(
         );
       }
     }
+    zoneDispatchedThisTickByZoneId.set(zone.id, zoneDispatchedThisTick);
+  }
 
-    // --- Step 15: persist zone state ------------------------------------
+  // --- Step 15: persist zone state ------------------------------------
+  // Runs for every zone, not just controllable ones with a target and
+  // live vent readings (the loop above's own dispatch-specific gates) —
+  // a no_vent zone still needs its reading/classification/staleness/
+  // spike/occupancy persisted (see "Zone Hardware & Sensor Type Matrix":
+  // classification applies "iff sensored", independent of vent type)
+  // even though it has nothing to dispatch. Previously this lived inside
+  // the dispatch loop above, so a no_vent zone's state was never
+  // persisted past its initial creation — found live: a sensored,
+  // vent-less imported zone showed no reading in the UI.
+  for (const zone of zones) {
     const reading = readings.get(zone.id)!.room;
+    const vents = currentVentsByZoneId.get(zone.id) ?? zone.state.vents;
+    const target = finalPositions[zone.id] ?? zone.state.last_target_position;
+    const zoneDispatchedThisTick =
+      zoneDispatchedThisTickByZoneId.get(zone.id) ?? false;
     await deps.persistZoneState(zone.id, {
       last_target_position: target,
       last_commanded_at:
@@ -1424,6 +1470,7 @@ export async function runTick(
           pipelineResult.classifications[zone.id] ?? "unclassified_no_sensor",
         occupied: occupiedByZone.get(zone.id) ?? false,
         spiking: zoneSpike.get(zone.id)?.spiking ?? false,
+        resolved_setpoint: targetsByZone.get(zone.id)?.setpoint ?? null,
         desired_position_pct:
           pipelineResult.commandedPositions[zone.id] ?? null,
         post_contention_position_pct:
@@ -1431,6 +1478,7 @@ export async function runTick(
         vents: (readings.get(zone.id)?.vents ?? []).map(
           (v): VentTickDecision => ({
             flair_vent_id: v.flairVentId,
+            name: v.name,
             commanded_position_pct: finalPositions[zone.id] ?? null,
             reported_position_pct: v.reportedPositionPct,
             dispatch_decision:
@@ -1461,10 +1509,17 @@ export async function runTick(
       pushed_value: pushedValue,
       pushed_value_c: pushedValue,
       thermostat_reading: snapshot.thermostatState?.ambientTemperatureC ?? null,
+      thermostat_current_setpoint:
+        snapshot.thermostatState?.targetTemperatureC ?? null,
       would_write: wouldWrite && !dryRun && !controlDisarmed,
       demanding_zone_count: demandingZoneCount,
     },
-    narrative: `${hvac.state}, tracking ${drivingSelection.zoneId ?? "no zone"} (${selectionReason}). ${commandsDispatched} command(s) dispatched.`,
+    narrative: `${hvac.state}, tracking ${
+      drivingSelection.zoneId
+        ? (zones.find((z) => z.id === drivingSelection.zoneId)?.name ??
+          drivingSelection.zoneId)
+        : "no zone"
+    } (${selectionReason}). ${commandsDispatched} command(s) dispatched.`,
   };
 
   logControlTickCompleted(log, {
@@ -1533,11 +1588,18 @@ function buildFaultDecision(
       classification: "unclassified_no_sensor",
       occupied: false,
       spiking: false,
+      // The fail-safe path bypasses target resolution entirely — nothing
+      // was actually compared against anything this tick.
+      resolved_setpoint: null,
       desired_position_pct: 100,
       post_contention_position_pct: 100,
       vents: isControllable(zone.ventHardwareType)
-        ? zone.config.flair_vent_ids.map((flairVentId) => ({
+        ? zone.config.flair_vents.map(({ flair_vent_id: flairVentId }) => ({
             flair_vent_id: flairVentId,
+            // No live Flair snapshot is fetched on this path (the fault
+            // trigger short-circuits before ingestion) — the client falls
+            // back to an ordinal label for an empty name.
+            name: "",
             commanded_position_pct: 100,
             reported_position_pct: null,
             dispatch_decision: "dispatched" as const,

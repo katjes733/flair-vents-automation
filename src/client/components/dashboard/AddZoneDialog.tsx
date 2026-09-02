@@ -10,17 +10,31 @@ import Stack from "@mui/material/Stack";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Checkbox from "@mui/material/Checkbox";
 import DialogContentText from "@mui/material/DialogContentText";
-import { createZone, type VentHardwareType } from "~/client/api/zonesApi";
+import {
+  createZone,
+  VENT_HARDWARE_TYPE_LABELS,
+  type VentHardwareType,
+} from "~/client/api/zonesApi";
 import type { AirHandler } from "~/client/api/airHandlersApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
-import RepeatableTextField from "~/client/components/shared/RepeatableTextField";
+import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
+import { fromDisplayFlowRate } from "~/shared/types/airflow";
+import RepeatableManualVentField, {
+  isValidManualVentPosition,
+  type ManualVentRow,
+} from "~/client/components/shared/RepeatableManualVentField";
 
-const HARDWARE_TYPE_LABELS: Record<VentHardwareType, string> = {
-  flair_smart_vent: "Flair smart vent",
-  manual_fixed_vent: "Manual fixed vent",
-  no_vent: "No vent (sensor only)",
-};
+// A zone's Flair vent identity only ever arrives via "Sync with Flair" —
+// a Flair vent id is Flair's own opaque identifier, never something a
+// user would type from memory (see RepeatableFlairVentField's own
+// comment). So unlike ZoneDetailDialog (which still supports an
+// already-linked flair_smart_vent zone), a manually-created zone can
+// only ever start out as manual_fixed_vent or no_vent.
+const MANUALLY_CREATABLE_VENT_HARDWARE_TYPES: VentHardwareType[] = [
+  "manual_fixed_vent",
+  "no_vent",
+];
 
 interface AddZoneDialogProps {
   open: boolean;
@@ -36,20 +50,45 @@ export default function AddZoneDialog({
   onCreated,
 }: AddZoneDialogProps) {
   const { showNotification } = useNotification();
+  const { airflowUnit } = useDisplayUnit();
   const [name, setName] = useState("");
   const [airHandlerId, setAirHandlerId] = useState(airHandlers[0]?.id ?? "");
   const [ventHardwareType, setVentHardwareType] =
-    useState<VentHardwareType>("flair_smart_vent");
-  const [flairRoomId, setFlairRoomId] = useState("");
-  const [flairVentIds, setFlairVentIds] = useState<string[]>([""]);
-  const [assumedFixedPosition, setAssumedFixedPosition] = useState("");
+    useState<VentHardwareType>("manual_fixed_vent");
+  const [manualVents, setManualVents] = useState<ManualVentRow[]>([
+    { position: "", ductFlowRateLps: "" },
+  ]);
   const [hasTemperatureSensor, setHasTemperatureSensor] = useState(true);
   const [hasOccupancySensor, setHasOccupancySensor] = useState(false);
-  const [ductFlowRateLps, setDuctFlowRateLps] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const nonBlankVentIds = flairVentIds.map((v) => v.trim()).filter(Boolean);
+  // Reset every field on the closed→open transition (not just on a
+  // successful create) — this dialog stays mounted between opens, so
+  // without this a cancelled or failed attempt's input, or a previous
+  // successful one's leftover state, would still be there next time it's
+  // opened. Adjusting state during render on a prop change, mirroring the
+  // "seeded" pattern the edit dialogs already use, rather than a
+  // useEffect keyed on `open` — that would also need `airHandlers` in its
+  // dependency array to pick a live default, which would wipe in-progress
+  // input on every background zones-list refresh while the dialog is open.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setName("");
+      setAirHandlerId(airHandlers[0]?.id ?? "");
+      setVentHardwareType("manual_fixed_vent");
+      setManualVents([{ position: "", ductFlowRateLps: "" }]);
+      setHasTemperatureSensor(true);
+      setHasOccupancySensor(false);
+      setError(null);
+    }
+  }
+
+  const manualVentsValid =
+    manualVents.length > 0 &&
+    manualVents.every((v) => isValidManualVentPosition(v.position));
 
   const handleSubmit = useCallback(async () => {
     if (!name.trim() || !airHandlerId) return;
@@ -58,34 +97,35 @@ export default function AddZoneDialog({
     try {
       await createZone({
         air_handler_id: airHandlerId,
-        flair_room_id:
-          ventHardwareType === "flair_smart_vent" && flairRoomId.trim()
-            ? flairRoomId.trim()
-            : null,
+        // A manually-created zone never starts out Flair-linked — see
+        // MANUALLY_CREATABLE_VENT_HARDWARE_TYPES above; linking a Flair
+        // room happens later, via "Sync with Flair".
+        flair_room_id: null,
         name: name.trim(),
         vent_hardware_type: ventHardwareType,
         config: {
           has_temperature_sensor: hasTemperatureSensor,
           has_occupancy_sensor: hasOccupancySensor,
-          flair_vent_ids:
-            ventHardwareType === "flair_smart_vent" ? nonBlankVentIds : [],
-          ...(ventHardwareType === "manual_fixed_vent" &&
-          assumedFixedPosition.trim()
-            ? { assumed_fixed_position: Number(assumedFixedPosition) }
-            : {}),
-          ...(ductFlowRateLps.trim()
-            ? { duct_flow_rate_lps: Number(ductFlowRateLps) }
-            : {}),
+          flair_vents: [],
+          manual_vents:
+            ventHardwareType === "manual_fixed_vent"
+              ? manualVents.map((v) => ({
+                  position: Number(v.position),
+                  ...(v.ductFlowRateLps.trim()
+                    ? {
+                        duct_flow_rate_lps: fromDisplayFlowRate(
+                          Number(v.ductFlowRateLps),
+                          airflowUnit,
+                        ),
+                      }
+                    : {}),
+                }))
+              : [],
         },
       });
       showNotification(`Zone "${name.trim()}" created.`, "success");
       onCreated();
       onClose();
-      setName("");
-      setFlairRoomId("");
-      setFlairVentIds([""]);
-      setAssumedFixedPosition("");
-      setDuctFlowRateLps("");
     } catch (err) {
       setError(
         extractErrorMessage(err) ??
@@ -96,13 +136,11 @@ export default function AddZoneDialog({
     }
   }, [
     airHandlerId,
-    assumedFixedPosition,
-    ductFlowRateLps,
-    flairRoomId,
+    airflowUnit,
     hasOccupancySensor,
     hasTemperatureSensor,
+    manualVents,
     name,
-    nonBlankVentIds,
     onClose,
     onCreated,
     showNotification,
@@ -139,38 +177,22 @@ export default function AddZoneDialog({
             onChange={(e) =>
               setVentHardwareType(e.target.value as VentHardwareType)
             }
+            helperText={
+              'Flair smart vents can only be added via "Sync with Flair," once a zone is linked to a real Flair room.'
+            }
           >
-            {Object.entries(HARDWARE_TYPE_LABELS).map(([type, label]) => (
+            {MANUALLY_CREATABLE_VENT_HARDWARE_TYPES.map((type) => (
               <MenuItem key={type} value={type}>
-                {label}
+                {VENT_HARDWARE_TYPE_LABELS[type]}
               </MenuItem>
             ))}
           </TextField>
 
-          {ventHardwareType === "flair_smart_vent" && (
-            <>
-              <TextField
-                label="Flair room ID (optional)"
-                value={flairRoomId}
-                onChange={(e) => setFlairRoomId(e.target.value)}
-                helperText="Link to a real Flair room now, or leave blank and link it later."
-              />
-              <RepeatableTextField
-                label="Flair vent ID"
-                addLabel="Add another vent"
-                values={flairVentIds}
-                onChange={setFlairVentIds}
-              />
-            </>
-          )}
-
           {ventHardwareType === "manual_fixed_vent" && (
-            <TextField
-              label="Fixed position (0–100%)"
-              type="number"
-              value={assumedFixedPosition}
-              onChange={(e) => setAssumedFixedPosition(e.target.value)}
-              helperText="Required for a manual fixed vent."
+            <RepeatableManualVentField
+              values={manualVents}
+              onChange={setManualVents}
+              airflowUnit={airflowUnit}
             />
           )}
 
@@ -192,13 +214,6 @@ export default function AddZoneDialog({
             }
             label="Has occupancy sensor"
           />
-          <TextField
-            label="Duct airflow rating, L/s (optional)"
-            type="number"
-            value={ductFlowRateLps}
-            onChange={(e) => setDuctFlowRateLps(e.target.value)}
-            helperText="Falls back to a standard-duct default if left blank."
-          />
           {error && (
             <DialogContentText color="error">{error}</DialogContentText>
           )}
@@ -211,10 +226,7 @@ export default function AddZoneDialog({
           disabled={
             !name.trim() ||
             !airHandlerId ||
-            (ventHardwareType === "manual_fixed_vent" &&
-              !assumedFixedPosition.trim()) ||
-            (ventHardwareType === "flair_smart_vent" &&
-              nonBlankVentIds.length === 0) ||
+            (ventHardwareType === "manual_fixed_vent" && !manualVentsValid) ||
             submitting
           }
           onClick={handleSubmit}

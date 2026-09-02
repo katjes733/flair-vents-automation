@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
 import Typography from "@mui/material/Typography";
@@ -18,6 +18,7 @@ import GlobalStatusBar from "~/client/components/dashboard/GlobalStatusBar";
 import AirHandlerStatusCard from "~/client/components/dashboard/AirHandlerStatusCard";
 import ZoneGrid from "~/client/components/dashboard/ZoneGrid";
 import AddAirHandlerDialog from "~/client/components/dashboard/AddAirHandlerDialog";
+import EditAirHandlerDialog from "~/client/components/dashboard/EditAirHandlerDialog";
 import AddZoneDialog from "~/client/components/dashboard/AddZoneDialog";
 import ZoneDetailDialog from "~/client/components/dashboard/ZoneDetailDialog";
 import TickDecisionInspector from "~/client/components/dashboard/TickDecisionInspector";
@@ -45,17 +46,35 @@ export default function DashboardPage() {
   const [addAirHandlerOpen, setAddAirHandlerOpen] = useState(false);
   const [addZoneOpen, setAddZoneOpen] = useState(false);
   const [editingZone, setEditingZone] = useState<Zone | null>(null);
+  const [editingAirHandler, setEditingAirHandler] = useState<AirHandler | null>(
+    null,
+  );
   const [syncingAirHandlerId, setSyncingAirHandlerId] = useState<string | null>(
     null,
   );
 
+  // Guards against a real, observed race: an editing action (e.g. saving
+  // a zone) triggers its own immediate loadAll() on top of the recurring
+  // 15s poll, and nothing stops the two from overlapping. Without this,
+  // whichever call's response happens to arrive *last* wins the setState
+  // calls below regardless of which one was *started* last — so a poll
+  // already in flight when you hit Save can resolve after your own
+  // post-save refresh and silently overwrite it with pre-save data, which
+  // then only self-corrects on the next clean poll. `loadAllSeqRef` is
+  // bumped at the start of every call; a call only commits its results if
+  // it's still the most recently *started* one by the time its data
+  // arrives — an older call finishing late is simply discarded.
+  const loadAllSeqRef = useRef(0);
+
   const loadAll = useCallback(async () => {
+    const seq = ++loadAllSeqRef.current;
     const [handlers, zoneList, overrideList, settings] = await Promise.all([
       fetchAirHandlers(),
       fetchZones(),
       fetchOverrides(),
       fetchSettings(),
     ]);
+    if (seq !== loadAllSeqRef.current) return;
     setAirHandlers(handlers);
     setZones(zoneList);
     setOverrides(overrideList);
@@ -65,6 +84,7 @@ export default function DashboardPage() {
     const decisions = await Promise.all(
       handlers.map((h) => fetchAirHandlerTickDecision(h.id)),
     );
+    if (seq !== loadAllSeqRef.current) return;
     setDecisionsByAirHandlerId(
       new Map(handlers.map((h, i) => [h.id, decisions[i]])),
     );
@@ -88,12 +108,21 @@ export default function DashboardPage() {
   const activeOverridesByZoneId = new Map(
     overrides.filter((o) => o.active).map((o) => [o.zoneId, o]),
   );
+  // Every air handler's own tickRecordsByZoneId is scoped to its own
+  // zones below, but ZoneDetailDialog is rendered once, globally, keyed by
+  // editingZone rather than by air handler — this merges across every
+  // handler's decision so the dialog can resolve editingZone's own record
+  // regardless of which air handler it belongs to (each zone id is unique
+  // across the whole installation, so merging is safe).
+  const editingZoneTickRecord = editingZone
+    ? Array.from(decisionsByAirHandlerId.values())
+        .flatMap((d) => d?.zones ?? [])
+        .find((z) => z.zone_id === editingZone.id)
+    : undefined;
 
   return (
     <Container maxWidth="lg" sx={{ pb: 4 }}>
-      <GlobalStatusBar controlDisarmed={controlDisarmed} onChanged={loadAll} />
-
-      <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, mb: 2 }}>
+      <GlobalStatusBar controlDisarmed={controlDisarmed} onChanged={loadAll}>
         <Button
           size="small"
           startIcon={<AddIcon />}
@@ -109,7 +138,7 @@ export default function DashboardPage() {
         >
           Add zone
         </Button>
-      </Box>
+      </GlobalStatusBar>
 
       {airHandlers.length === 0 && (
         <Typography color="text.secondary">
@@ -127,7 +156,17 @@ export default function DashboardPage() {
         );
         return (
           <Box key={airHandler.id} sx={{ mb: 4 }}>
-            <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 0.5 }}>
+            <AirHandlerStatusCard
+              airHandler={airHandler}
+              decision={decision}
+              isLive={liveAirHandlerIds.has(airHandler.id)}
+            >
+              <Button
+                size="small"
+                onClick={() => setEditingAirHandler(airHandler)}
+              >
+                Edit
+              </Button>
               <Button
                 size="small"
                 disabled={!airHandler.flairZoneId}
@@ -135,12 +174,7 @@ export default function DashboardPage() {
               >
                 Sync with Flair
               </Button>
-            </Box>
-            <AirHandlerStatusCard
-              airHandler={airHandler}
-              decision={decision}
-              isLive={liveAirHandlerIds.has(airHandler.id)}
-            />
+            </AirHandlerStatusCard>
             <DiagnosticOnly>
               <TickDecisionInspector decision={decision} />
             </DiagnosticOnly>
@@ -160,6 +194,13 @@ export default function DashboardPage() {
         onClose={() => setAddAirHandlerOpen(false)}
         onCreated={loadAll}
       />
+      <EditAirHandlerDialog
+        open={editingAirHandler !== null}
+        airHandler={editingAirHandler}
+        onClose={() => setEditingAirHandler(null)}
+        onSaved={loadAll}
+        onDeleted={loadAll}
+      />
       <AddZoneDialog
         open={addZoneOpen}
         airHandlers={airHandlers}
@@ -169,8 +210,10 @@ export default function DashboardPage() {
       <ZoneDetailDialog
         open={editingZone !== null}
         zone={editingZone}
+        tickRecord={editingZoneTickRecord}
         onClose={() => setEditingZone(null)}
         onSaved={loadAll}
+        onDeleted={loadAll}
       />
       {syncingAirHandlerId && (
         <SyncZonesDialog

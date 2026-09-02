@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
+import {
+  fetchAirHandlerSnapshot,
+  fetchSyncCandidates,
+} from "~/server/util/flair/resources";
 import { FakeFlairClient } from "../../../helpers/fakeFlairClient";
 
 describe("fetchAirHandlerSnapshot", () => {
@@ -63,6 +66,7 @@ describe("fetchAirHandlerSnapshot", () => {
       {
         id: "vent-a",
         roomId: "room-a",
+        name: "Vent A",
         percentOpen: 50,
         inactive: false,
         voltage: null,
@@ -71,6 +75,7 @@ describe("fetchAirHandlerSnapshot", () => {
       {
         id: "vent-b",
         roomId: "room-b",
+        name: "Vent B",
         percentOpen: 30,
         inactive: false,
         voltage: null,
@@ -109,5 +114,73 @@ describe("fetchAirHandlerSnapshot", () => {
     return fetchAirHandlerSnapshot(client, "s1", "zone-a").then((snapshot) => {
       expect(snapshot.thermostatState).toBeNull();
     });
+  });
+});
+
+describe("fetchSyncCandidates", () => {
+  // Regression test: a room with zero vents/pucks but a remote sensor
+  // (an Ecobee SmartSensor) does carry a usable temperature reading —
+  // confirmed live, Flair rolls it up onto the room's own
+  // current-temperature-c. hasTemperatureSensor previously derived from
+  // hasVents/hasPucks alone, which incorrectly marked exactly this kind
+  // of room as unsensored and blocked it from ever being imported (see
+  // "Flair Sync Engine").
+  it("marks a vent/puck-less room with a remote sensor as having a temperature sensor", async () => {
+    const client = new FakeFlairClient();
+    client.setZones([
+      { id: "zone-a", structureId: "s1", name: "Upstairs", thermostatId: null },
+    ]);
+    client.setRooms([
+      {
+        id: "room-sensor-only",
+        zoneId: "zone-a",
+        structureId: "s1",
+        name: "Den back",
+        currentTemperatureC: 22.3,
+        setpointC: null,
+        active: true,
+        hasVents: false,
+        hasPucks: false,
+        hasRemoteSensors: true,
+      },
+    ]);
+    client.setVents([]);
+
+    const candidates = await fetchSyncCandidates(client, "s1", "zone-a");
+    expect(candidates).toEqual([
+      {
+        flairRoomId: "room-sensor-only",
+        name: "Den back",
+        liveVentIds: [],
+        hasTemperatureSensor: true,
+        hasOccupancySensor: true,
+      },
+    ]);
+  });
+
+  it("marks a room with none of vents/pucks/remote-sensors as unsensored", async () => {
+    const client = new FakeFlairClient();
+    client.setZones([
+      { id: "zone-a", structureId: "s1", name: "Upstairs", thermostatId: null },
+    ]);
+    client.setRooms([
+      {
+        id: "room-bare",
+        zoneId: "zone-a",
+        structureId: "s1",
+        name: "Unused Closet",
+        currentTemperatureC: null,
+        setpointC: null,
+        active: true,
+        hasVents: false,
+        hasPucks: false,
+        hasRemoteSensors: false,
+      },
+    ]);
+    client.setVents([]);
+
+    const candidates = await fetchSyncCandidates(client, "s1", "zone-a");
+    expect(candidates[0].hasTemperatureSensor).toBe(false);
+    expect(candidates[0].hasOccupancySensor).toBe(false);
   });
 });

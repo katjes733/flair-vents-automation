@@ -3,11 +3,43 @@ import { httpClient } from "~/client/api/httpClient";
 export type VentHardwareType =
   "flair_smart_vent" | "manual_fixed_vent" | "no_vent";
 
+// Shared between AddZoneDialog (creation) and ZoneDetailDialog (editing —
+// a zone's hardware type is changeable after the fact, not fixed at
+// creation, per "Zone Hardware & Sensor Type Matrix"'s retrofit-conversion
+// path).
+export const VENT_HARDWARE_TYPE_LABELS: Record<VentHardwareType, string> = {
+  flair_smart_vent: "Flair smart vent",
+  manual_fixed_vent: "Manual fixed vent",
+  // Deliberately not "No vent (sensor only)" — has_temperature_sensor/
+  // has_occupancy_sensor are independent, freely-set config fields for
+  // every vent hardware type (see zoneConfigSchema); a no_vent zone may
+  // or may not actually have a sensor, so the label shouldn't claim it
+  // does.
+  no_vent: "No vent",
+};
+
+// One physical manual vent — its own fixed position and (optionally) its
+// own duct rating. See zoneConfigSchema's own comment on manual_vents.
+export interface ManualVent {
+  position: number;
+  duct_flow_rate_lps?: number;
+}
+
+// One physical Flair-controlled smart vent — its own identity and
+// (optionally) its own duct rating. See zoneConfigSchema's own comment on
+// flair_vents.
+export interface FlairVentConfig {
+  flair_vent_id: string;
+  duct_flow_rate_lps?: number;
+}
+
 export interface ZoneConfig {
   has_temperature_sensor: boolean;
   has_occupancy_sensor: boolean;
-  assumed_fixed_position?: number;
-  duct_flow_rate_lps?: number;
+  // Every physical manual vent in this zone — required to have at least
+  // one entry for a manual_fixed_vent zone, empty for every other type.
+  // See "Multi-Vent Manual Zones" and zoneConfigSchema's own comment.
+  manual_vents: ManualVent[];
   thermal_load_flags: string[];
   idle_baseline_position: number;
   comfort_tolerance?: number;
@@ -15,12 +47,19 @@ export interface ZoneConfig {
   min_vent_position: number;
   max_vent_position: number;
   // The zone's Flair vents to actuate — separate from flair_room_id,
-  // which anchors room-scoped sensor data only. See "Multi-Vent Zones" in
-  // the implementation plan.
-  flair_vent_ids: string[];
+  // which anchors room-scoped sensor data only. Every vent is still
+  // commanded to the same ganged target position, but each now carries
+  // its own optional duct rating rather than one shared zone-level
+  // number — see "Multi-Vent Zones" and "Multi-Vent Manual Zones".
+  flair_vents: FlairVentConfig[];
+  // The zone's user-arranged position within its air handler's dashboard
+  // grid — a pure display concern, unrelated to zone_priority_order (the
+  // control loop's contention-resolution priority). See "Reorderable
+  // Zone Cards" in the implementation plan.
+  display_order: number;
 }
 
-// Per-vent outcomes — one entry per config.flair_vent_ids member. See
+// Per-vent outcomes — one entry per config.flair_vents member. See
 // "Multi-Vent Zones".
 export interface VentRuntimeState {
   flair_vent_id: string;

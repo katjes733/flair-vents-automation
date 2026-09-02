@@ -10,38 +10,38 @@ const TONNAGE_MIN = 0.5;
 const TONNAGE_MAX = 25;
 
 /**
- * `flair_room_id` non-null requires `flair_smart_vent` (the spec's
- * "always a manually-added local zone" invariant for
- * manual_fixed_vent/no_vent — the retrofit-conversion flow is the one
- * sanctioned exception, applied one layer up, not here); `flair_vent_ids`
- * non-empty requires `flair_smart_vent`, and a `flair_smart_vent` zone
- * requires at least one vent id — see "Multi-Vent Zones"; assumed_fixed_position
- * required iff manual_fixed_vent, rejected on other types; min/max_vent_position
- * ordering; idle_baseline_position within [min,max] rejected, never silently
- * clamped — see "Config-time validation".
+ * `flair_room_id` is allowed regardless of `vent_hardware_type`. Earlier
+ * versions of this rule restricted it to `flair_smart_vent`/`no_vent` on
+ * the theory that a `manual_fixed_vent` zone is "always a manually-added
+ * local zone" with no reason to track live Flair room data — that
+ * invariant turned out to be wrong for a real, common case: a room can
+ * have a plain, non-Flair-controlled vent while still carrying a live
+ * Flair-tracked sensor (temperature/occupancy via a remote sensor) for
+ * that same room. `flair_room_id` only ever anchors sensor data — it has
+ * no bearing on whether the vent itself is smart-controlled — so there's
+ * no cross-field conflict to reject here for any vent hardware type.
+ * `flair_vent_ids` (now `flair_vents`) non-empty requires
+ * `flair_smart_vent`, and a `flair_smart_vent` zone requires at least one
+ * vent — see "Multi-Vent Zones"/"Multi-Vent Manual Zones" (each vent now
+ * carries its own optional duct rating, but the id-presence rule itself
+ * is unchanged); `manual_vents` requires at least one entry iff
+ * manual_fixed_vent, rejected (must be empty) on other types — see
+ * "Multi-Vent Manual Zones"; the old zone-level `duct_flow_rate_lps`
+ * field no longer exists at all (retired once every vent-having type
+ * moved to a per-vent rating, with nothing left to apply it to);
+ * min/max_vent_position ordering; idle_baseline_position within [min,max]
+ * rejected, never silently clamped — see "Config-time validation".
  */
 export function validateZoneConfig(zone: {
   ventHardwareType: VentHardwareType;
   flairRoomId: string | null;
   flairVentIds: string[];
-  assumedFixedPosition: number | undefined;
+  manualVents: Array<{ position: number; ductFlowRateLps: number | undefined }>;
   minVentPosition: number;
   maxVentPosition: number;
   idleBaselinePosition: number;
 }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-
-  if (
-    zone.flairRoomId !== null &&
-    zone.ventHardwareType !== "flair_smart_vent"
-  ) {
-    issues.push({
-      code: "flair_room_requires_smart_vent",
-      severity: "error",
-      message:
-        "A zone linked to a Flair room must be vent_hardware_type flair_smart_vent.",
-    });
-  }
 
   if (zone.ventHardwareType === "flair_smart_vent") {
     if (zone.flairVentIds.length === 0) {
@@ -60,20 +60,18 @@ export function validateZoneConfig(zone: {
   }
 
   if (zone.ventHardwareType === "manual_fixed_vent") {
-    if (zone.assumedFixedPosition === undefined) {
+    if (zone.manualVents.length === 0) {
       issues.push({
-        code: "assumed_fixed_position_required",
+        code: "manual_vents_required",
         severity: "error",
-        message:
-          "assumed_fixed_position is required for a manual_fixed_vent zone.",
+        message: "A manual_fixed_vent zone requires at least one manual vent.",
       });
     }
-  } else if (zone.assumedFixedPosition !== undefined) {
+  } else if (zone.manualVents.length > 0) {
     issues.push({
-      code: "assumed_fixed_position_not_applicable",
+      code: "manual_vents_not_applicable",
       severity: "error",
-      message:
-        "assumed_fixed_position only applies to manual_fixed_vent zones.",
+      message: "manual_vents only applies to manual_fixed_vent zones.",
     });
   }
 

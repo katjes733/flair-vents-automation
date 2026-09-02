@@ -31,6 +31,7 @@ function vent(overrides: Partial<FlairVent> = {}): FlairVent {
   return {
     id: "vent-1",
     roomId: "room-1",
+    name: "Living Room Vent",
     percentOpen: 50,
     inactive: false,
     voltage: null,
@@ -107,14 +108,15 @@ describe("ingestZoneRoomReading", () => {
 });
 
 describe("ingestZoneVentReading", () => {
-  it("passes through the vent's reported position and duct temperature", () => {
+  it("passes through the vent's reported position, duct temperature, and name", () => {
     const result = ingestZoneVentReading({
       flairVentId: "vent-1",
-      vent: vent({ percentOpen: 73 }),
+      vent: vent({ percentOpen: 73, name: "Den Front" }),
       ventReading: ventReading({ ductTemperatureC: 12.5 }),
     });
     expect(result.reportedPositionPct).toBe(73);
     expect(result.ductTemperatureC).toBe(12.5);
+    expect(result.name).toBe("Den Front");
   });
 
   it("handles a vent id with no vent/reading at all (not yet visible in this tick's snapshot)", () => {
@@ -125,5 +127,6 @@ describe("ingestZoneVentReading", () => {
     });
     expect(result.reportedPositionPct).toBeNull();
     expect(result.ductTemperatureC).toBeNull();
+    expect(result.name).toBe("");
   });
 });

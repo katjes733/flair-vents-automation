@@ -28,6 +28,13 @@ vi.mock("~/server/util/alerting", () => ({ createRedisAlertingClient }));
 const { getFlairClient } = vi.hoisted(() => ({ getFlairClient: vi.fn() }));
 vi.mock("~/server/control/scheduler", () => ({ getFlairClient }));
 
+const { ensureFlairStructureLinked } = vi.hoisted(() => ({
+  ensureFlairStructureLinked: vi.fn(),
+}));
+vi.mock("~/server/util/services/installationService", () => ({
+  ensureFlairStructureLinked,
+}));
+
 const { fetchSyncCandidates } = vi.hoisted(() => ({
   fetchSyncCandidates: vi.fn(),
 }));
@@ -56,6 +63,9 @@ function buildApp() {
 
 beforeEach(() => {
   getOrCreateDefaultInstallation
+    .mockReset()
+    .mockResolvedValue({ id: "inst-1", flairStructureId: "s1" });
+  ensureFlairStructureLinked
     .mockReset()
     .mockResolvedValue({ id: "inst-1", flairStructureId: "s1" });
   getAirHandlerById
@@ -139,6 +149,30 @@ describe("POST /api/v1/sync/:airHandlerId/link", () => {
       }),
     );
   });
+
+  it("passes assumed_fixed_position through for a vent-less room", async () => {
+    fetchSyncCandidates.mockResolvedValue([
+      {
+        flairRoomId: "room-1",
+        name: "Office",
+        liveVentIds: [],
+        hasTemperatureSensor: true,
+        hasOccupancySensor: false,
+      },
+    ]);
+    linkRoomToZone.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+    });
+    const res = await request(buildApp()).post("/api/v1/sync/ah-1/link").send({
+      flair_room_id: "room-1",
+      zone_id: "11111111-1111-4111-8111-111111111111",
+      assumed_fixed_position: 30,
+    });
+    expect(res.status).toBe(200);
+    expect(linkRoomToZone).toHaveBeenCalledWith(
+      expect.objectContaining({ assumedFixedPosition: 30 }),
+    );
+  });
 });
 
 describe("POST /api/v1/sync/:airHandlerId/create", () => {
@@ -159,6 +193,26 @@ describe("POST /api/v1/sync/:airHandlerId/create", () => {
     expect(res.status).toBe(201);
     expect(createZoneFromRoom).toHaveBeenCalledWith(
       expect.objectContaining({ airHandlerId: "ah-1" }),
+    );
+  });
+
+  it("passes assumed_fixed_position through for a vent-less room", async () => {
+    fetchSyncCandidates.mockResolvedValue([
+      {
+        flairRoomId: "room-1",
+        name: "Office",
+        liveVentIds: [],
+        hasTemperatureSensor: true,
+        hasOccupancySensor: false,
+      },
+    ]);
+    createZoneFromRoom.mockResolvedValue({ id: "z1" });
+    const res = await request(buildApp())
+      .post("/api/v1/sync/ah-1/create")
+      .send({ flair_room_id: "room-1", assumed_fixed_position: 40 });
+    expect(res.status).toBe(201);
+    expect(createZoneFromRoom).toHaveBeenCalledWith(
+      expect.objectContaining({ assumedFixedPosition: 40 }),
     );
   });
 });

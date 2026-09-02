@@ -67,6 +67,39 @@ export function getFlairClient(installationId: string): FlairApiClient {
  * mechanism": more air handlers under the same account is a within-tick
  * concern, not a horizontal-scaling one.
  */
+// Coalesces every caller of a tick cycle — the scheduled loop below and
+// any explicit `triggerImmediateTick()` call (e.g. right after a Sync
+// Engine import, so a newly-added zone shows a real reading immediately
+// instead of waiting up to a full tick interval) — onto the SAME in-flight
+// `runAllHandlers()` promise, so two cycles can never run concurrently
+// against the same vents. A caller that arrives while a cycle is already
+// running simply awaits that cycle's own completion rather than starting
+// a second, overlapping one.
+let inFlightCycle: Promise<void> | null = null;
+
+function runAllHandlersCoalesced(): Promise<void> {
+  if (!inFlightCycle) {
+    inFlightCycle = runAllHandlers().finally(() => {
+      inFlightCycle = null;
+    });
+  }
+  return inFlightCycle;
+}
+
+/**
+ * An explicit, user-triggered "tick now" — not part of the recurring
+ * schedule, so it runs regardless of `CONTROL_LOOP_ENABLED` (a distinct
+ * concern: disabling the background loop, not disabling ticking
+ * altogether). Every real-hardware safety gate (`DRY_RUN`,
+ * `live_air_handler_ids`, `control_disarmed`) still applies exactly as it
+ * does on a scheduled tick, since this runs the identical `runAllHandlers`
+ * path — this only changes *when* a cycle runs, never *what* it's allowed
+ * to do once it does.
+ */
+export async function triggerImmediateTick(): Promise<void> {
+  await runAllHandlersCoalesced();
+}
+
 export async function runAllHandlers(): Promise<void> {
   const installation = await getOrCreateDefaultInstallation();
   if (!installation.flairStructureId) {
@@ -229,7 +262,7 @@ export async function runStartupReconciliationForInstallation(): Promise<void> {
 
     const zoneInputs = controllableZones.map((zone) => ({
       zoneId: zone.id,
-      vents: zone.config.flair_vent_ids.map((flairVentId) => ({
+      vents: zone.config.flair_vents.map(({ flair_vent_id: flairVentId }) => ({
         flairVentId,
         reportedPosition:
           snapshot.ventsById.get(flairVentId)?.percentOpen ?? null,
@@ -250,7 +283,7 @@ export async function runStartupReconciliationForInstallation(): Promise<void> {
       const seeded = result.seedLastCommandedTarget.get(zone.id);
       if (seeded === undefined) continue;
       let vents = zone.state.vents;
-      for (const flairVentId of zone.config.flair_vent_ids) {
+      for (const { flair_vent_id: flairVentId } of zone.config.flair_vents) {
         const reportedPosition =
           snapshot.ventsById.get(flairVentId)?.percentOpen ?? null;
         vents = patchVentState(vents, flairVentId, {
@@ -310,7 +343,7 @@ export function startControlLoop(): ControlLoopHandle {
       }, watchdogMs);
     });
 
-    await Promise.race([runAllHandlers(), watchdog]);
+    await Promise.race([runAllHandlersCoalesced(), watchdog]);
     if (timedOut) {
       log.error(
         { watchdog_seconds: settings.tick_watchdog_seconds },

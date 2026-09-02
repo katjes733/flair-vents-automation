@@ -13,6 +13,7 @@ import {
   linkRoomToZone,
   createZoneFromRoom,
 } from "~/server/util/services/syncService";
+import { ensureFlairStructureLinked } from "~/server/util/services/installationService";
 
 export const router = express.Router();
 
@@ -33,17 +34,15 @@ async function resolveSyncScope(airHandlerId: string) {
       400,
     );
   }
-  const installation = await getOrCreateDefaultInstallation();
-  if (!installation.flairStructureId) {
-    throw new HttpError(
-      "No Flair structure linked yet — nothing to sync.",
-      400,
-    );
-  }
+  const rawInstallation = await getOrCreateDefaultInstallation();
+  const installation = await ensureFlairStructureLinked(
+    rawInstallation,
+    getFlairClient(rawInstallation.id),
+  );
   return {
     installationId: installation.id,
     airHandlerId,
-    structureId: installation.flairStructureId,
+    structureId: installation.flairStructureId as string,
     flairZoneId: airHandler.flairZoneId,
   };
 }
@@ -64,6 +63,10 @@ router.post("/:airHandlerId/run", async (req, res) => {
 const linkRequestSchema = z.object({
   flair_room_id: z.string().min(1),
   zone_id: z.string().uuid(),
+  // Required by the service layer only when the room resolves to
+  // manual_fixed_vent (zero live vents) — see syncService.ts's
+  // resolveImportedVentHardwareType.
+  assumed_fixed_position: z.number().min(0).max(100).optional(),
 });
 
 router.post(
@@ -85,7 +88,11 @@ router.post(
         400,
       );
     }
-    const zone = await linkRoomToZone({ zoneId: req.body.zone_id, room });
+    const zone = await linkRoomToZone({
+      zoneId: req.body.zone_id,
+      room,
+      assumedFixedPosition: req.body.assumed_fixed_position,
+    });
     res.status(200).json(zone);
   },
 );
@@ -93,6 +100,7 @@ router.post(
 const createRequestSchema = z.object({
   flair_room_id: z.string().min(1),
   name: z.string().min(1).max(255).optional(),
+  assumed_fixed_position: z.number().min(0).max(100).optional(),
 });
 
 router.post(
@@ -119,6 +127,7 @@ router.post(
       airHandlerId: scope.airHandlerId,
       room,
       name: req.body.name,
+      assumedFixedPosition: req.body.assumed_fixed_position,
     });
     res.status(201).json(zone);
   },

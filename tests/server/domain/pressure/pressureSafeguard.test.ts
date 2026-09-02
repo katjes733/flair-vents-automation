@@ -56,6 +56,27 @@ describe("computeAggregate", () => {
     expect(result.aggregateOpenLps).toBe(30);
   });
 
+  // Regression coverage for "Multi-Vent Manual Zones": a manual_fixed_vent
+  // zone's vents can each sit at a genuinely different position — the
+  // aggregate must sum each vent's own contribution, not just multiply one
+  // shared position by a combined flow rate.
+  it("sums each manual vent's own contribution when manualVents is given", () => {
+    const result = computeAggregate(
+      [
+        zone({
+          zoneId: "manual",
+          ventHardwareType: "manual_fixed_vent",
+          manualVents: [
+            { position: 75, flowRateLps: 40 },
+            { position: 25, flowRateLps: 20 },
+          ],
+        }),
+      ],
+      1000,
+    );
+    expect(result.aggregateOpenLps).toBe(0.75 * 40 + 0.25 * 20);
+  });
+
   it("fully excludes degraded vents, even though they occupy a real position", () => {
     const result = computeAggregate(
       [

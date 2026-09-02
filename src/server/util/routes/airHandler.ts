@@ -101,3 +101,8 @@ export async function updateAirHandler(
     ...touch(),
   });
 }
+
+export async function deleteAirHandler(id: string): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("AirHandler");
+  await repo.delete(id);
+}

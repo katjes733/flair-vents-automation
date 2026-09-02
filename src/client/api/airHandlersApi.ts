@@ -51,9 +51,16 @@ export async function updateAirHandler(
   return data;
 }
 
-// One entry per zone.config.flair_vent_ids member. See "Multi-Vent Zones".
+export async function deleteAirHandler(id: string): Promise<void> {
+  await httpClient.delete(`/air-handlers/${id}`);
+}
+
+// One entry per zone.config.flair_vents member. See "Multi-Vent Zones".
 export interface VentTickDecisionRecord {
   flair_vent_id: string;
+  // The vent's own Flair-app nickname (e.g. "Den Front") — "" when not
+  // yet visible in the latest snapshot or never named in Flair.
+  name: string;
   commanded_position_pct: number | null;
   reported_position_pct: number | null;
   dispatch_decision: string;
@@ -67,6 +74,11 @@ export interface ZoneTickDecisionRecord {
   classification: string;
   occupied: boolean;
   spiking: boolean;
+  // The zone's own resolved target this tick — Celsius, always (see
+  // "Temperature units"); convert via toDisplayAbsolute before rendering.
+  // Null when no real target was resolved this tick (unsensored zone, or
+  // the emergency fail-safe's short-circuit path).
+  resolved_setpoint: number | null;
   desired_position_pct: number | null;
   post_contention_position_pct: number | null;
   vents: VentTickDecisionRecord[];
@@ -97,6 +109,10 @@ export interface AirHandlerTickDecision {
     pushed_value: number | null;
     pushed_value_c: number | null;
     thermostat_reading: number | null;
+    // Ecobee's own actual, currently-held setpoint — read-only, never
+    // written by this app. Distinct from `pushed_value` (what this app
+    // would push if live).
+    thermostat_current_setpoint: number | null;
     would_write: boolean;
     demanding_zone_count: number;
   } | null;
@@ -105,6 +121,24 @@ export interface AirHandlerTickDecision {
 
 export async function fetchAirHandlers(): Promise<AirHandler[]> {
   const { data } = await httpClient.get<AirHandler[]>("/air-handlers");
+  return data;
+}
+
+// A real Flair zone, by name — not just an id you'd have to already know.
+// `assignedAirHandlerId` is set when another air handler already claims
+// this zone (`flair_zone_id` is unique, one Flair zone backs one air
+// handler at most). See "Flair Zone Picker" in the implementation plan.
+export interface FlairZoneOption {
+  id: string;
+  name: string;
+  assignedAirHandlerId: string | null;
+  assignedAirHandlerName: string | null;
+}
+
+export async function fetchAvailableFlairZones(): Promise<FlairZoneOption[]> {
+  const { data } = await httpClient.get<FlairZoneOption[]>(
+    "/air-handlers/flair-zones",
+  );
   return data;
 }
 

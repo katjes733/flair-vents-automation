@@ -53,7 +53,7 @@ function makeZone(params: {
   flairRoomId: string;
   // Defaults to this fixture file's own room-N/vent-N naming convention —
   // every existing call site follows it, so this keeps the diff for
-  // adding flair_vent_ids minimal. Pass explicitly for a multi-vent zone.
+  // adding flair_vents minimal. Pass explicitly for a multi-vent zone.
   flairVentIds?: string[];
   state?: Partial<ZoneRuntimeState>;
 }): ZoneData {
@@ -67,9 +67,9 @@ function makeZone(params: {
     config: resolveZoneConfig({
       has_temperature_sensor: true,
       idle_baseline_position: 100,
-      flair_vent_ids: params.flairVentIds ?? [
-        params.flairRoomId.replace("room", "vent"),
-      ],
+      flair_vents: (
+        params.flairVentIds ?? [params.flairRoomId.replace("room", "vent")]
+      ).map((flair_vent_id) => ({ flair_vent_id })),
     }),
     state: { ...EMPTY_ZONE_RUNTIME_STATE, ...params.state },
   };
@@ -178,6 +178,7 @@ function setupFlairFixture(
     rooms.map((r) => ({
       id: r.ventId,
       roomId: r.roomId,
+      name: r.ventId,
       percentOpen: r.percentOpen,
       inactive: false,
       voltage: null,
@@ -236,6 +237,52 @@ describe("runTick — no contention", () => {
         .map((c) => c.ventId)
         .sort(),
     ).toEqual(["vent-1", "vent-2"]);
+  });
+
+  // Regression test: the narrative previously interpolated the tracked
+  // zone's raw id (e.g. a UUID) directly rather than its name — confirmed
+  // live via a screenshot showing "tracking 0b10ae8e-756a-..." on the
+  // dashboard. `makeZone()`'s own fixture sets `name` equal to `id`, which
+  // can't distinguish the two, so this test builds a zone directly with a
+  // UUID-shaped id and a distinct, human-readable name.
+  it("names the tracked zone by name in the narrative, not its raw id", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 25,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones: ZoneData[] = [
+      {
+        id: "0b10ae8e-756a-494c-ad1e-d5a9e92715dd",
+        installationId: "inst-1",
+        airHandlerId: "ah-1",
+        flairRoomId: "room-1",
+        name: "Den back",
+        ventHardwareType: "flair_smart_vent",
+        config: resolveZoneConfig({
+          has_temperature_sensor: true,
+          flair_vents: [{ flair_vent_id: "vent-1" }],
+        }),
+        state: { ...EMPTY_ZONE_RUNTIME_STATE },
+      },
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      makeCtx(),
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.narrative).toContain("Den back");
+    expect(decision.narrative).not.toContain(
+      "0b10ae8e-756a-494c-ad1e-d5a9e92715dd",
+    );
   });
 });
 
@@ -339,7 +386,7 @@ describe("runTick — mixed vent hardware types", () => {
         ventHardwareType: "manual_fixed_vent",
         config: resolveZoneConfig({
           has_temperature_sensor: false,
-          assumed_fixed_position: 40,
+          manual_vents: [{ position: 40 }],
         }),
         state: { ...EMPTY_ZONE_RUNTIME_STATE },
       },
@@ -377,6 +424,81 @@ describe("runTick — mixed vent hardware types", () => {
     // The manual vent's fixed position is real airflow the pressure math
     // must still account for — never zero, never excluded like no_vent.
     expect(decision.pressure?.aggregate_open_lps).toBeGreaterThan(0);
+  });
+
+  // Regression test: a no_vent zone linked to a real, sensored Flair room
+  // (imported via the Sync Engine — see "Flair Sync Engine") previously
+  // never had its reading/classification persisted at all, because Step
+  // 15's persistZoneState call lived inside the vent-dispatch loop, which
+  // `continue`d past every no_vent zone before ever reaching it. Found
+  // live: an imported sensored, vent-less zone showed no reading in the
+  // UI, tick after tick.
+  it("persists a real reading and classification for a no_vent zone with a sensored room", async () => {
+    const client = new FakeFlairClient();
+    client.setZones([
+      {
+        id: FLAIR_ZONE_ID,
+        structureId: STRUCTURE_ID,
+        name: "Upstairs",
+        thermostatId: "therm-1",
+      },
+    ]);
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "cool",
+      mode: "cool",
+      ambientTemperatureC: 23,
+      targetTemperatureC: 21,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: false,
+      writtenConfirmed: false,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    client.setRooms([
+      {
+        id: "room-sensor-only",
+        zoneId: FLAIR_ZONE_ID,
+        structureId: STRUCTURE_ID,
+        name: "Den back",
+        currentTemperatureC: 25,
+        setpointC: null,
+        active: true,
+        hasVents: false,
+        hasPucks: false,
+        hasRemoteSensors: true,
+      },
+    ]);
+    client.setVents([]);
+
+    const zones: ZoneData[] = [
+      {
+        id: "z-no-vent",
+        installationId: "inst-1",
+        airHandlerId: "ah-1",
+        flairRoomId: "room-sensor-only",
+        name: "Den back",
+        ventHardwareType: "no_vent",
+        config: resolveZoneConfig({ has_temperature_sensor: true }),
+        state: { ...EMPTY_ZONE_RUNTIME_STATE },
+      },
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      makeCtx(),
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(
+      decision.zones.find((z) => z.zone_id === "z-no-vent")?.classification,
+    ).toBe("demanding");
+    expect(persisted.get("z-no-vent")?.last_reading_value).toBe(25);
+    expect(persisted.get("z-no-vent")?.last_classification).toBe("demanding");
   });
 });
 
@@ -918,6 +1040,7 @@ describe("runTick — unknown call confidence", () => {
       {
         id: "vent-1",
         roomId: "room-1",
+        name: "vent-1",
         percentOpen: 50,
         inactive: false,
         voltage: null,

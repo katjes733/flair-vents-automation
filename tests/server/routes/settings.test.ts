@@ -71,4 +71,28 @@ describe("PATCH /api/v1/settings", () => {
     expect(res.body.config.home_timezone).toBe("America/Denver");
     expect(res.body.warnings).toEqual([]);
   });
+
+  // Regression test: a genuinely minimal patch (just the Settings page's
+  // temperature-unit toggle, the same shape the reorder feature's
+  // display_order patch exposed for zoneConfigSchema) previously reached
+  // the service layer with every other setting silently reintroduced at
+  // its Zod default — systemSettingsConfigSchema.partial() alone doesn't
+  // suppress .default() for an omitted key. Asserting on exactly what
+  // reaches updateSettingsForInstallation — not just the response status
+  // — is what actually exercises the fix
+  // (systemSettingsConfigPartialSchema), since the service call itself is
+  // mocked here.
+  it("passes only the given field through, not every field at its default", async () => {
+    updateSettingsForInstallation.mockResolvedValue({
+      config: resolveSystemSettings({ display_temperature_unit: "F" }),
+      warnings: [],
+    });
+    const res = await request(buildApp())
+      .patch("/api/v1/settings")
+      .send({ display_temperature_unit: "F" });
+    expect(res.status).toBe(200);
+    expect(updateSettingsForInstallation).toHaveBeenCalledWith("inst-1", {
+      display_temperature_unit: "F",
+    });
+  });
 });

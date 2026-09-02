@@ -194,6 +194,7 @@ function setFixture(
     rooms.map((r) => ({
       id: r.ventId,
       roomId: r.roomId,
+      name: r.ventId,
       percentOpen: 50,
       inactive: false,
       voltage: null,

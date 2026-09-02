@@ -3,9 +3,15 @@ import type { VentHardwareType } from "~/shared/schemas/zoneConfig";
 export interface PressureZoneInput {
   zoneId: string;
   ventHardwareType: VentHardwareType;
-  position: number; // commanded position for smart vents, assumed_fixed_position for manual vents
+  position: number; // commanded position for smart vents; ignored for manual_fixed_vent when manualVents is given
   flowRateLps: number;
   degraded: boolean;
+  // manual_fixed_vent only — each vent's own position and resolved duct
+  // rating. When given (non-empty), the aggregate sums each vent's own
+  // contribution instead of using position/flowRateLps directly, since a
+  // manual zone's vents can each sit at a genuinely different position.
+  // See "Multi-Vent Manual Zones".
+  manualVents?: Array<{ position: number; flowRateLps: number }>;
 }
 
 export interface PressureAggregate {
@@ -18,8 +24,8 @@ export interface PressureAggregate {
  * Flow-rate-weighted aggregate open airflow. no_vent zones are excluded
  * (no register); degraded vents are fully excluded too — a monitored
  * optimism tradeoff, flagged by a warn-level log at the call site, not
- * here. manual_fixed_vent zones count at their assumed_fixed_position.
- * See "Pressure safeguard".
+ * here. manual_fixed_vent zones count at each of their own vents' fixed
+ * position (see manualVents on PressureZoneInput). See "Pressure safeguard".
  */
 export function computeAggregate(
   zones: PressureZoneInput[],
@@ -31,7 +37,13 @@ export function computeAggregate(
   const perZoneContributionLps: Record<string, number> = {};
   let aggregateOpenLps = 0;
   for (const zone of contributing) {
-    const contribution = (zone.position / 100) * zone.flowRateLps;
+    const contribution =
+      zone.ventHardwareType === "manual_fixed_vent" && zone.manualVents
+        ? zone.manualVents.reduce(
+            (sum, v) => sum + (v.position / 100) * v.flowRateLps,
+            0,
+          )
+        : (zone.position / 100) * zone.flowRateLps;
     perZoneContributionLps[zone.zoneId] = contribution;
     aggregateOpenLps += contribution;
   }

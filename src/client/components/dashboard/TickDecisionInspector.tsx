@@ -12,6 +12,9 @@ import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";
 import type { AirHandlerTickDecision } from "~/client/api/airHandlersApi";
+import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
+import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
+import { toDisplayFlowRate, AIRFLOW_UNIT_LABELS } from "~/shared/types/airflow";
 
 interface TickDecisionInspectorProps {
   decision: AirHandlerTickDecision | null;
@@ -26,7 +29,13 @@ interface TickDecisionInspectorProps {
 export default function TickDecisionInspector({
   decision,
 }: TickDecisionInspectorProps) {
+  const { temperatureUnit, airflowUnit } = useDisplayUnit();
   if (!decision) return null;
+
+  const displayTemp = (celsius: number | null) =>
+    celsius === null
+      ? "—"
+      : toDisplayAbsolute(asAbsoluteTemp(celsius), temperatureUnit).toFixed(1);
 
   return (
     <Accordion
@@ -49,6 +58,7 @@ export default function TickDecisionInspector({
                 <TableCell>Zone</TableCell>
                 <TableCell>Vent</TableCell>
                 <TableCell>Classification</TableCell>
+                <TableCell align="right">Target</TableCell>
                 <TableCell align="right">Desired</TableCell>
                 <TableCell align="right">Post-contention</TableCell>
                 <TableCell align="right">Commanded</TableCell>
@@ -59,11 +69,18 @@ export default function TickDecisionInspector({
             <TableBody>
               {decision.zones.flatMap((z) =>
                 z.vents.length > 0 ? (
-                  z.vents.map((v) => (
+                  z.vents.map((v, i) => (
                     <TableRow key={`${z.zone_id}:${v.flair_vent_id}`}>
                       <TableCell>{z.name}</TableCell>
-                      <TableCell>{v.flair_vent_id}</TableCell>
+                      <TableCell>
+                        {z.vents.length > 1 ? v.name || `Vent ${i + 1}` : "—"}
+                      </TableCell>
                       <TableCell>{z.classification}</TableCell>
+                      <TableCell align="right">
+                        {z.resolved_setpoint !== null
+                          ? `${displayTemp(z.resolved_setpoint)}°${temperatureUnit}`
+                          : "—"}
+                      </TableCell>
                       <TableCell align="right">
                         {z.desired_position_pct ?? "—"}
                       </TableCell>
@@ -87,6 +104,11 @@ export default function TickDecisionInspector({
                     <TableCell>{z.name}</TableCell>
                     <TableCell>—</TableCell>
                     <TableCell>{z.classification}</TableCell>
+                    <TableCell align="right">
+                      {z.resolved_setpoint !== null
+                        ? `${displayTemp(z.resolved_setpoint)}°${temperatureUnit}`
+                        : "—"}
+                    </TableCell>
                     <TableCell align="right">
                       {z.desired_position_pct ?? "—"}
                     </TableCell>
@@ -114,9 +136,17 @@ export default function TickDecisionInspector({
                 Pressure
               </Typography>
               <Typography variant="body2">
-                {decision.pressure.aggregate_open_lps.toFixed(0)} L/s (
+                {toDisplayFlowRate(
+                  decision.pressure.aggregate_open_lps,
+                  airflowUnit,
+                ).toFixed(0)}{" "}
+                {AIRFLOW_UNIT_LABELS[airflowUnit]} (
                 {decision.pressure.aggregate_open_pct.toFixed(0)}%) · floor{" "}
-                {decision.pressure.floor_lps.toFixed(0)} L/s
+                {toDisplayFlowRate(
+                  decision.pressure.floor_lps,
+                  airflowUnit,
+                ).toFixed(0)}{" "}
+                {AIRFLOW_UNIT_LABELS[airflowUnit]}
                 {decision.pressure.clamped && " · CLAMPED"}
               </Typography>
             </Box>
@@ -148,12 +178,14 @@ export default function TickDecisionInspector({
                 Setpoint push
               </Typography>
               <Typography variant="body2">
-                {decision.setpoint_push.pushed_value?.toFixed(1) ?? "—"}°C
+                {displayTemp(decision.setpoint_push.pushed_value)}°
+                {temperatureUnit}
                 {decision.setpoint_push.would_write
                   ? " (written)"
                   : " (not written)"}
                 {" · thermostat "}
-                {decision.setpoint_push.thermostat_reading?.toFixed(1) ?? "—"}°C
+                {displayTemp(decision.setpoint_push.thermostat_reading)}°
+                {temperatureUnit}
                 {" · "}
                 {decision.setpoint_push.demanding_zone_count} demanding
               </Typography>

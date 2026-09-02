@@ -71,6 +71,12 @@ export interface FlairRoom {
 export interface FlairVent {
   id: string;
   roomId: string;
+  // The user-set nickname from Flair's own app (e.g. "Den Front") —
+  // confirmed live on `attributes.name`, the same convention every other
+  // named resource (structures/zones/rooms/remote-sensors) already uses.
+  // Not documented in the original Phase 0 pass since vents weren't
+  // checked for a name attribute at the time.
+  name: string;
   percentOpen: number;
   inactive: boolean;
   voltage: number | null;
@@ -387,6 +393,7 @@ export class FlairApiClient implements FlairClient {
     return body.data.map((d) => ({
       id: d.id,
       roomId: d.relationships?.room?.data?.id ?? "",
+      name: String(d.attributes.name ?? ""),
       percentOpen: Number(d.attributes["percent-open"] ?? 0),
       inactive: Boolean(d.attributes.inactive ?? false),
       voltage: (d.attributes.voltage as number | undefined) ?? null,

@@ -15,7 +15,7 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     idleBaselinePosition: 100,
     thermalLoadFlags: [],
     flowRateLps: 47,
-    assumedFixedPosition: null,
+    manualVents: [],
     calibratedTemp: asAbsoluteTemp(25),
     resolvedSetpoint: asAbsoluteTemp(21),
     tolerance: null,
@@ -179,12 +179,12 @@ describe("computeZoneCommands — manual position override", () => {
 });
 
 describe("computeZoneCommands — mixed vent hardware", () => {
-  it("manual vents count in pressure math at their assumed position; no_vent is excluded", () => {
+  it("manual vents count in pressure math at their own position; no_vent is excluded", () => {
     const zones = [
       zone({
         zoneId: "manual",
         ventHardwareType: "manual_fixed_vent",
-        assumedFixedPosition: 50,
+        manualVents: [{ position: 50, flowRateLps: 47 }],
       }),
       zone({ zoneId: "novent", ventHardwareType: "no_vent" }),
     ];
@@ -197,6 +197,178 @@ describe("computeZoneCommands — mixed vent hardware", () => {
     });
     expect(result.commandedPositions["manual"]).toBe(50);
     expect(result.commandedPositions["novent"]).toBeUndefined();
+  });
+
+  // Regression coverage for "Multi-Vent Manual Zones": a manual_fixed_vent
+  // zone's vents can each sit at a genuinely different position with a
+  // different rating — the aggregate must sum each vent's own real
+  // contribution (0.75*40 + 0.25*20 = 35), not a plain average position
+  // times a combined flow rate, which would happen to agree here only by
+  // coincidence of the exact math chosen — asserted via the floor-clamp
+  // threshold since the raw aggregate isn't itself part of the return
+  // value.
+  it("sums each manual vent's own position/rating for the pressure aggregate, not an average", () => {
+    const zones = [
+      zone({
+        zoneId: "manual",
+        ventHardwareType: "manual_fixed_vent",
+        manualVents: [
+          { position: 75, flowRateLps: 40 },
+          { position: 25, flowRateLps: 20 },
+        ],
+      }),
+    ];
+    const belowThreshold = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 34,
+    });
+    expect(belowThreshold.insufficientFloor).toBe(false);
+
+    const aboveThreshold = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 36,
+    });
+    // No flair_smart_vent zone exists to reopen — the aggregate genuinely
+    // can't reach a floor above its real (35) total.
+    expect(aboveThreshold.insufficientFloor).toBe(true);
+  });
+
+  // Regression coverage: the pressure-floor clamp used to be able to
+  // "reopen" a manual_fixed_vent zone the same way it reopens an
+  // adjustable flair_smart_vent — nonsensical, since nothing can actually
+  // dispatch a new position to a vent someone set by hand. A
+  // manual_fixed_vent zone must never appear as a reopen candidate, even
+  // when it has real room to open further (position below its own max).
+  it("never reopens a manual_fixed_vent zone to help meet the pressure floor", () => {
+    const zones = [
+      zone({
+        zoneId: "manual",
+        ventHardwareType: "manual_fixed_vent",
+        manualVents: [{ position: 10, flowRateLps: 47 }],
+        maxVentPosition: 100,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 10000, // unreachable — forces the clamp to look for candidates
+    });
+    // The manual zone's own commanded position (informational only) is
+    // untouched by the clamp; there was simply nothing eligible to reopen.
+    expect(result.commandedPositions["manual"]).toBe(10);
+    expect(result.insufficientFloor).toBe(true);
+  });
+});
+
+describe("computeZoneCommands — classification for zones with no position math", () => {
+  // Regression test: a no_vent/manual_fixed_vent zone has nothing to
+  // position, but its comfort classification still applies "iff
+  // sensored" per the Zone Hardware & Sensor Type Matrix — found live,
+  // via a sensored, vent-less imported zone showing no reading/
+  // classification in the UI at all. Previously these types were `continue`d
+  // out of the loop before classification ever ran, so `classifications`
+  // had no entry for them whatsoever.
+  it("classifies a demanding no_vent zone despite having no vent to command", () => {
+    const zones = [
+      zone({
+        zoneId: "novent",
+        ventHardwareType: "no_vent",
+        calibratedTemp: asAbsoluteTemp(25),
+        resolvedSetpoint: asAbsoluteTemp(21),
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["novent"]).toBe("demanding");
+    expect(result.commandedPositions["novent"]).toBeUndefined();
+  });
+
+  it("classifies a satisfied manual_fixed_vent zone despite having a fixed position", () => {
+    const zones = [
+      zone({
+        zoneId: "manual",
+        ventHardwareType: "manual_fixed_vent",
+        manualVents: [{ position: 50, flowRateLps: 47 }],
+        calibratedTemp: asAbsoluteTemp(21),
+        resolvedSetpoint: asAbsoluteTemp(21),
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["manual"]).toBe("satisfied");
+    expect(result.commandedPositions["manual"]).toBe(50);
+  });
+
+  it("classifies an unsensored no_vent zone as unclassified_no_sensor, not silently omitted", () => {
+    const zones = [
+      zone({
+        zoneId: "novent",
+        ventHardwareType: "no_vent",
+        hasTemperatureSensor: false,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["novent"]).toBe("unclassified_no_sensor");
+  });
+
+  it("marks a no_vent zone with no resolved setpoint as inactive", () => {
+    const zones = [
+      zone({
+        zoneId: "novent",
+        ventHardwareType: "no_vent",
+        resolvedSetpoint: null,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["novent"]).toBe("inactive");
+  });
+
+  it("marks a stale-reading no_vent zone as unclassified_no_sensor", () => {
+    const zones = [
+      zone({
+        zoneId: "novent",
+        ventHardwareType: "no_vent",
+        staleReading: true,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["novent"]).toBe("unclassified_no_sensor");
   });
 });
 

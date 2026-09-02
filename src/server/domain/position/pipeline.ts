@@ -29,8 +29,11 @@ export interface PipelineZoneInput {
   maxVentPosition: number;
   idleBaselinePosition: number;
   thermalLoadFlags: ThermalLoadFlag[];
-  flowRateLps: number;
-  assumedFixedPosition: number | null; // manual_fixed_vent only
+  flowRateLps: number; // flair_smart_vent only — see manualVents below
+  // manual_fixed_vent only — each vent's own fixed position and resolved
+  // (default-applied) duct rating. A zone can have more than one, each at
+  // a genuinely different position — see "Multi-Vent Manual Zones".
+  manualVents: Array<{ position: number; flowRateLps: number }>;
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp | null; // null = "inactive" — no target this tick
   tolerance: TempDelta | null;
@@ -50,6 +53,34 @@ export interface PipelineResult {
   contention: ContentionResult | null;
   pressureFloorClamped: boolean;
   insufficientFloor: boolean;
+}
+
+/**
+ * Flow-weighted average across a manual_fixed_vent zone's own vents — the
+ * one representation that keeps a purely-informational single "position"
+ * mathematically consistent with the real per-vent aggregate contribution
+ * (sum of position/100 * flowRateLps for each vent) it's derived from,
+ * rather than a plain average that could disagree with it. Defensive
+ * zero-division guard only — validateConfig requires at least one vent for
+ * a manual_fixed_vent zone, so an empty array shouldn't reach here in
+ * practice.
+ */
+function weightedManualVentPosition(
+  vents: Array<{ position: number; flowRateLps: number }>,
+): number {
+  const totalFlowRateLps = vents.reduce((sum, v) => sum + v.flowRateLps, 0);
+  if (totalFlowRateLps <= 0) return 0;
+  return (
+    vents.reduce((sum, v) => sum + v.position * v.flowRateLps, 0) /
+    totalFlowRateLps
+  );
+}
+
+/** Sum of each vent's own contribution — see weightedManualVentPosition. */
+function manualVentAggregateLps(
+  vents: Array<{ position: number; flowRateLps: number }>,
+): number {
+  return vents.reduce((sum, v) => sum + (v.position / 100) * v.flowRateLps, 0);
 }
 
 function bucketFor(
@@ -107,12 +138,49 @@ export function computeZoneCommands(params: {
   const demanding: DemandingZone[] = [];
   const nonDemandingSmartVent: Record<string, number> = {};
 
+  // Comfort classification for a zone with nothing to position — a
+  // no_vent/manual_fixed_vent zone has no Step 1-3 math to run (there's no
+  // vent to command), but its tolerance/satisfied-demanding classification
+  // still applies "iff sensored", independent of vent hardware type (see
+  // the Zone Hardware & Sensor Type Matrix) — it's what driving-zone
+  // eligibility (gated on hasTemperatureSensor alone, not vent type — see
+  // control/tick.ts's candidate filter) and the dashboard's own reading
+  // display depend on. Mirrors the smart-vent path's own
+  // inactive/stale/classifyZone precedence exactly, just without the
+  // position math that follows it there.
+  function classifyNonPositionZone(
+    zone: PipelineZoneInput,
+  ): ZoneClassification | "inactive" {
+    if (zone.resolvedSetpoint === null) return "inactive";
+    if (zone.staleReading) return "unclassified_no_sensor";
+    return classifyZone({
+      hasTemperatureSensor: zone.hasTemperatureSensor,
+      state: callActive
+        ? (params.state as "COOLING_CALL" | "HEATING_CALL")
+        : "COOLING_CALL", // arbitrary while idle; classification is diagnostic only
+      calibratedTemp: zone.calibratedTemp,
+      resolvedSetpoint: zone.resolvedSetpoint,
+      tolerance: zone.tolerance,
+    });
+  }
+
   for (const zone of params.zones) {
     if (zone.ventHardwareType === "no_vent") {
+      classifications[zone.zoneId] = classifyNonPositionZone(zone);
       continue;
     }
     if (zone.ventHardwareType === "manual_fixed_vent") {
-      commandedPositions[zone.zoneId] = zone.assumedFixedPosition ?? 0;
+      classifications[zone.zoneId] = classifyNonPositionZone(zone);
+      // A single "position" here is purely informational (feeds
+      // desired_position_pct/post_contention_position_pct in the tick
+      // decision record) — the real, individually-meaningful positions
+      // live in zone.manualVents and are what the UI actually displays.
+      // Flow-weighted so it stays consistent with how the pressure
+      // aggregate below actually contributes for this zone, rather than
+      // a plain average that could disagree with it.
+      commandedPositions[zone.zoneId] = weightedManualVentPosition(
+        zone.manualVents,
+      );
       continue;
     }
 
@@ -270,12 +338,21 @@ export function computeZoneCommands(params: {
     (z) => z.ventHardwareType !== "no_vent",
   );
   const currentAggregateLps = contributing.reduce((sum, z) => {
+    if (z.degraded) return sum;
+    if (z.ventHardwareType === "manual_fixed_vent") {
+      return sum + manualVentAggregateLps(z.manualVents);
+    }
     const position = commandedPositions[z.zoneId] ?? 0;
-    return z.degraded ? sum : sum + (position / 100) * z.flowRateLps;
+    return sum + (position / 100) * z.flowRateLps;
   }, 0);
 
+  // manual_fixed_vent zones contribute to the aggregate above (a real,
+  // fixed vent still consumes airflow budget) but are never reopen
+  // candidates here — unlike a flair_smart_vent, there's no software
+  // dispatch path that could actually act on a "reopen this further"
+  // decision for a physical vent someone set by hand.
   const rankedHighestPriorityFirst = [...contributing]
-    .filter((z) => !z.degraded)
+    .filter((z) => z.ventHardwareType === "flair_smart_vent" && !z.degraded)
     .sort((a, b) => a.priorityRank - b.priorityRank)
     .map((z) => ({
       zoneId: z.zoneId,

@@ -20,7 +20,7 @@ import type {
 // than one flat object, because a zone's comfort temperature/occupancy is
 // genuinely room-scoped (read exclusively from FlairRoom, never any vent)
 // while position/duct-temperature are genuinely per-vent — a zone can now
-// have more than one vent (zone.config.flair_vent_ids). Doing this split
+// have more than one vent (zone.config.flair_vents). Doing this split
 // at the ingestion boundary, not deeper in the control loop, is what
 // prevents every downstream consumer from having to guess which vent's
 // reading "represents" the zone. See "Multi-Vent Zones".
@@ -45,6 +45,9 @@ export interface ZoneRoomReading {
 
 export interface ZoneVentReading {
   flairVentId: string;
+  // The vent's own Flair-app nickname (e.g. "Den Front") — "" when the
+  // vent isn't visible in this tick's snapshot yet, or was never named.
+  name: string;
   reportedPositionPct: number | null;
   ductTemperatureC: number | null;
   ductReadingCreatedAt: string | null;
@@ -93,6 +96,7 @@ export function ingestZoneVentReading(params: {
 }): ZoneVentReading {
   return {
     flairVentId: params.flairVentId,
+    name: params.vent?.name ?? "",
     reportedPositionPct: params.vent?.percentOpen ?? null,
     ductTemperatureC: params.ventReading?.ductTemperatureC ?? null,
     ductReadingCreatedAt: params.ventReading?.createdAt ?? null,

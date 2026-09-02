@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   ventHardwareTypeSchema,
   zoneConfigSchema,
+  zoneConfigPartialSchema,
 } from "~/shared/schemas/zoneConfig";
 
 // Serves both the Express validateBody middleware and the React
@@ -23,7 +24,7 @@ export const updateZoneRequestSchema = z.object({
   air_handler_id: z.string().uuid().optional(),
   name: z.string().min(1).max(255).optional(),
   vent_hardware_type: ventHardwareTypeSchema.optional(),
-  config: zoneConfigSchema.partial().optional(),
+  config: zoneConfigPartialSchema.optional(),
 });
 
 export type UpdateZoneRequest = z.infer<typeof updateZoneRequestSchema>;

@@ -11,7 +11,7 @@ export interface AirHandlerSnapshot {
   thermostatState: FlairThermostatState | null;
   roomsById: Map<string, FlairRoom>;
   // Keyed by the vent's own id, not by room — a zone's vents are an
-  // explicit, app-owned list (zone.config.flair_vent_ids), not derived
+  // explicit, app-owned list (zone.config.flair_vents), not derived
   // from room membership, since a Flair room can have more than one vent.
   // See "Multi-Vent Zones" in the implementation plan.
   ventsById: Map<string, FlairVent>;
@@ -79,10 +79,13 @@ export interface SyncCandidateRoom {
   name: string;
   liveVentIds: string[];
   // Derived from the room's own vents/pucks/remote-sensors relationship
-  // array lengths, per docs/flair-api-schema.md — either device carries
-  // an onboard temp sensor; only a remote-sensor carries occupancy (this
-  // app's ingest never reads occupancy from a vent/puck). See "Flair
-  // Sync Engine".
+  // array lengths, per docs/flair-api-schema.md — a vent, puck, or
+  // remote sensor (Ecobee SmartSensor) all carry a temperature reading,
+  // confirmed live: a vent/puck-less room's `current-temperature-c`
+  // matches its remote sensor's own `temperature-c` exactly, so Flair
+  // already rolls it up onto the room resource regardless of source.
+  // Only a remote-sensor carries occupancy (this app's ingest never
+  // reads occupancy from a vent/puck). See "Flair Sync Engine".
   hasTemperatureSensor: boolean;
   hasOccupancySensor: boolean;
 }
@@ -116,7 +119,7 @@ export async function fetchSyncCandidates(
     flairRoomId: r.id,
     name: r.name,
     liveVentIds: ventIdsByRoomId.get(r.id) ?? [],
-    hasTemperatureSensor: r.hasVents || r.hasPucks,
+    hasTemperatureSensor: r.hasVents || r.hasPucks || r.hasRemoteSensors,
     hasOccupancySensor: r.hasRemoteSensors,
   }));
 }

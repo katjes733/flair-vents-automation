@@ -1,6 +1,6 @@
 // Per-vent outcomes — genuinely per-vent, not per-zone, since one vent can
 // stall while its sibling reconciles fine. One entry per zone.config
-// .flair_vent_ids member. See "Multi-Vent Zones" in the implementation
+// .flair_vents member. See "Multi-Vent Zones" in the implementation
 // plan for why these specific four fields (and no others) moved out of
 // ZoneRuntimeState: they're the fields whose zone-level-scalar treatment
 // would let a healthy vent mask a stuck sibling's own last-reported
@@ -22,11 +22,11 @@ export interface VentRuntimeState {
 export interface ZoneRuntimeState {
   // Ramp-continuity state — stays zone-level (not per-vent) because the
   // position pipeline only ever produces one target per zone; every vent
-  // in flair_vent_ids is commanded toward this same value. See "Multi-Vent
+  // in flair_vents is commanded toward this same value. See "Multi-Vent
   // Zones".
   last_target_position: number | null;
   last_commanded_at: string | null; // ISO instant
-  // One entry per zone.config.flair_vent_ids member, same order. Empty for
+  // One entry per zone.config.flair_vents member, same order. Empty for
   // manual_fixed_vent/no_vent zones (nothing to reconcile).
   vents: VentRuntimeState[];
   last_reading_value: number | null; // calibrated Celsius
