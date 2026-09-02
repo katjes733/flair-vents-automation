@@ -28,6 +28,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard" },
   { path: "/settings", label: "Settings" },
+  { path: "/system-parameters", label: "System Parameters" },
 ];
 
 const PAGE_TITLES: Record<string, string> = Object.fromEntries(

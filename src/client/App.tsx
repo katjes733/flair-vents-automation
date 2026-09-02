@@ -8,6 +8,7 @@ import Footer from "~/client/components/layout/Footer";
 import { NotificationProvider } from "~/client/components/notification/NotificationContext";
 import DashboardPage from "~/client/components/dashboard/DashboardPage";
 import SettingsPage from "~/client/components/settings/SettingsPage";
+import SystemParametersPage from "~/client/components/settings/SystemParametersPage";
 
 function App() {
   return (
@@ -20,6 +21,10 @@ function App() {
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route
+                  path="/system-parameters"
+                  element={<SystemParametersPage />}
+                />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </MainContainer>
