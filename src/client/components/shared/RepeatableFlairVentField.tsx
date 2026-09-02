@@ -96,10 +96,7 @@ export default function RepeatableFlairVentField({
               // other controls plus gaps leave exactly this much room) —
               // any nickname longer than this still wraps onto a second
               // line rather than growing the dialog.
-              <Typography
-                variant="body2"
-                sx={{ width: 106, flexShrink: 0 }}
-              >
+              <Typography variant="body2" sx={{ width: 106, flexShrink: 0 }}>
                 {nickname || `Vent ${index + 1}`}
               </Typography>
             )}

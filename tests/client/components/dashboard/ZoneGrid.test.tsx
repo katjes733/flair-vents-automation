@@ -99,6 +99,7 @@ describe("ZoneGrid", () => {
                   classification: "demanding",
                   occupied: false,
                   spiking: false,
+                  resolved_setpoint: null,
                   desired_position_pct: 60,
                   post_contention_position_pct: 60,
                   vents: [

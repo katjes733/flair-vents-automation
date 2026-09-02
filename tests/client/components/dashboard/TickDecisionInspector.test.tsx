@@ -42,6 +42,7 @@ describe("TickDecisionInspector", () => {
           classification: "demanding",
           occupied: false,
           spiking: false,
+          resolved_setpoint: null,
           desired_position_pct: 60,
           post_contention_position_pct: 60,
           vents: [
@@ -72,6 +73,7 @@ describe("TickDecisionInspector", () => {
         pushed_value: 20.5,
         pushed_value_c: 20.5,
         thermostat_reading: 22,
+        thermostat_current_setpoint: 21,
         would_write: true,
         demanding_zone_count: 1,
       },
@@ -111,6 +113,7 @@ describe("TickDecisionInspector", () => {
           classification: "demanding",
           occupied: false,
           spiking: false,
+          resolved_setpoint: null,
           desired_position_pct: 100,
           post_contention_position_pct: 100,
           vents: [
@@ -179,6 +182,7 @@ describe("TickDecisionInspector", () => {
           classification: "demanding",
           occupied: false,
           spiking: false,
+          resolved_setpoint: null,
           desired_position_pct: 100,
           post_contention_position_pct: 100,
           vents: [

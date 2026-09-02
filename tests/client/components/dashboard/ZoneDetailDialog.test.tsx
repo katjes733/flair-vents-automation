@@ -323,7 +323,7 @@ describe("ZoneDetailDialog", () => {
   // vents to flair_smart_vent zones (see "Multi-Vent Manual Zones"): each
   // vent carries its own id and (optional) rating rather than one shared
   // zone-level combined number.
-  it("seeds each flair vent's own id and rating, and submits an edited rating", async () => {
+  it("seeds each flair vent's own rating (id is read-only, ordinal-labeled) and submits an edited rating", async () => {
     renderDialog(
       makeZone({
         config: {
@@ -335,9 +335,10 @@ describe("ZoneDetailDialog", () => {
         },
       }),
     );
-    expect(screen.getByLabelText("Flair vent ID 1")).toHaveValue("vent-a");
+    expect(screen.getByText("Vent 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Rating 1, L/s")).toHaveValue(94.4);
-    expect(screen.getByLabelText("Flair vent ID 2")).toHaveValue("vent-b");
+    expect(screen.getByText("Vent 2")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Flair vent ID 1")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Rating 2, L/s"), {
       target: { value: "50" },
@@ -403,7 +404,7 @@ describe("ZoneDetailDialog", () => {
   // Regression coverage for "use the nickname over the raw id" — mirrors
   // how ZoneCard/TickDecisionInspector already prefer a vent's real Flair
   // nickname over its opaque id everywhere else it's shown.
-  it("labels a flair vent's id field with its real nickname when the latest tick decision knows one", () => {
+  it("displays a flair vent's real nickname as read-only text when the latest tick decision knows one", () => {
     renderDialog(
       makeZone({
         config: {
@@ -421,6 +422,7 @@ describe("ZoneDetailDialog", () => {
         classification: "demanding",
         occupied: false,
         spiking: false,
+        resolved_setpoint: null,
         desired_position_pct: 100,
         post_contention_position_pct: 100,
         reason: "",
@@ -436,9 +438,10 @@ describe("ZoneDetailDialog", () => {
         ],
       },
     );
+    expect(screen.getByText("Den Center South")).toBeInTheDocument();
     expect(
-      screen.getByRole("textbox", { name: "Den Center South" }),
-    ).toHaveValue("vent-a");
+      screen.queryByRole("textbox", { name: "Den Center South" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Flair vent ID 1")).not.toBeInTheDocument();
   });
 

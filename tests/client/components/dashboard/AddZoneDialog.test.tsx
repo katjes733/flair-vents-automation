@@ -53,35 +53,32 @@ describe("AddZoneDialog", () => {
     createZone.mockReset().mockResolvedValue({ id: "z1" });
   });
 
-  it("requires a fixed position for a manual_fixed_vent, not for a smart vent", async () => {
+  // A zone's Flair vent identity only ever arrives via "Sync with Flair" —
+  // see MANUALLY_CREATABLE_VENT_HARDWARE_TYPES in AddZoneDialog.tsx — so
+  // this dialog defaults to (and only ever offers) manual_fixed_vent/
+  // no_vent, never flair_smart_vent.
+  it("requires a fixed position for the default manual_fixed_vent type, not for no_vent, and never offers Flair smart vent", async () => {
     const user = userEvent.setup();
     renderDialog();
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Office" },
     });
-    fireEvent.change(screen.getByLabelText("Flair vent ID 1"), {
-      target: { value: "vent-1" },
-    });
-    // Default hardware type is flair_smart_vent — Create should be enabled
-    // once a name and at least one vent id are entered.
-    expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
-
-    // MUI's <TextField select> renders a listbox, not a native <select> —
-    // interact with it the way a user actually would: open it, then pick
-    // the option. getByRole("combobox") resolves reliably here;
-    // getByLabelText does not, for reasons specific to how MUI wires up
-    // the label association on this element.
-    await user.click(
-      screen.getByRole("combobox", { name: "Vent hardware type" }),
-    );
-    await user.click(
-      await screen.findByRole("option", { name: "Manual fixed vent" }),
-    );
+    // Default hardware type is manual_fixed_vent — Create stays disabled
+    // until a valid position is entered.
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
-
     fireEvent.change(screen.getByLabelText("Position 1"), {
       target: { value: "40" },
     });
+    expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Vent hardware type" }),
+    );
+    expect(
+      screen.queryByRole("option", { name: "Flair smart vent" }),
+    ).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: "No vent" }));
+    expect(screen.queryByLabelText("Position 1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
   });
 
@@ -96,13 +93,6 @@ describe("AddZoneDialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Guest Bath" },
     });
-
-    await user.click(
-      screen.getByRole("combobox", { name: "Vent hardware type" }),
-    );
-    await user.click(
-      await screen.findByRole("option", { name: "Manual fixed vent" }),
-    );
     expect(screen.getByLabelText("Position 1")).toHaveValue(null);
 
     fireEvent.change(screen.getByLabelText("Position 1"), {
@@ -126,89 +116,54 @@ describe("AddZoneDialog", () => {
     });
   });
 
-  it("does not show a manual-vent position field for a flair_smart_vent zone", () => {
+  it("does not show a manual-vent position field for a no_vent zone", async () => {
+    const user = userEvent.setup();
     renderDialog();
+    await user.click(
+      screen.getByRole("combobox", { name: "Vent hardware type" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "No vent" }));
     expect(screen.queryByLabelText(/Position 1/)).not.toBeInTheDocument();
   });
 
-  it("submits the expected payload for a smart vent with a Flair room id", async () => {
+  it("submits a no_vent zone with no flair_room_id and no vents", async () => {
     const onCreated = vi.fn();
+    const user = userEvent.setup();
     renderDialog(onCreated);
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Office" },
     });
-    fireEvent.change(screen.getByLabelText("Flair room ID (optional)"), {
-      target: { value: "room-123" },
-    });
-    fireEvent.change(screen.getByLabelText("Flair vent ID 1"), {
-      target: { value: "vent-1" },
-    });
+    await user.click(
+      screen.getByRole("combobox", { name: "Vent hardware type" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "No vent" }));
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await vi.waitFor(() => {
       expect(createZone).toHaveBeenCalledWith(
         expect.objectContaining({
           air_handler_id: "ah-1",
           name: "Office",
-          vent_hardware_type: "flair_smart_vent",
-          flair_room_id: "room-123",
+          vent_hardware_type: "no_vent",
+          flair_room_id: null,
           config: expect.objectContaining({
-            flair_vents: [{ flair_vent_id: "vent-1" }],
+            flair_vents: [],
+            manual_vents: [],
           }),
         }),
       );
       expect(onCreated).toHaveBeenCalled();
     });
-  });
-
-  // Regression coverage for extending per-vent duct ratings from manual
-  // vents to flair_smart_vent zones (see "Multi-Vent Manual Zones").
-  it("submits a flair vent's own id and rating", async () => {
-    const onCreated = vi.fn();
-    renderDialog(onCreated);
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Den Front" },
-    });
-    fireEvent.change(screen.getByLabelText("Flair vent ID 1"), {
-      target: { value: "vent-a" },
-    });
-    fireEvent.change(screen.getByLabelText("Rating 1, L/s"), {
-      target: { value: "94.4" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await vi.waitFor(() => {
-      expect(createZone).toHaveBeenCalledWith(
-        expect.objectContaining({
-          vent_hardware_type: "flair_smart_vent",
-          config: expect.objectContaining({
-            flair_vents: [
-              { flair_vent_id: "vent-a", duct_flow_rate_lps: 94.4 },
-            ],
-          }),
-        }),
-      );
-      expect(onCreated).toHaveBeenCalled();
-    });
-  });
-
-  // Regression coverage: unlike manual vents, a Flair vent's id is Flair's
-  // own opaque identifier — not something a user would type from memory —
-  // so this dialog deliberately offers no way to add a second row for a
-  // flair_smart_vent zone. See RepeatableFlairVentField's own comment.
-  it("does not offer 'Add another vent' for a flair_smart_vent zone", () => {
-    renderDialog();
-    expect(
-      screen.queryByRole("button", { name: "Add another vent" }),
-    ).not.toBeInTheDocument();
   });
 
   // Regression coverage for the "pick a vent size" ergonomics improvement
   // (see docs/hvac-pressure-research.md's "Register Size to Airflow
-  // Rating") — applies identically to manual and flair vents.
+  // Rating") — shared between manual and flair vents, exercised here via
+  // the only vent type this dialog can create.
   it("autofills a vent's airflow rating from a picked size, still overridable", async () => {
     const user = userEvent.setup();
     renderDialog();
-    fireEvent.change(screen.getByLabelText("Flair vent ID 1"), {
-      target: { value: "vent-a" },
+    fireEvent.change(screen.getByLabelText("Position 1"), {
+      target: { value: "75" },
     });
     await user.click(screen.getByRole("combobox", { name: "Vent size" }));
     await user.click(await screen.findByRole("option", { name: "12x12" }));
@@ -228,8 +183,8 @@ describe("AddZoneDialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Office" },
     });
-    fireEvent.change(screen.getByLabelText("Flair vent ID 1"), {
-      target: { value: "vent-1" },
+    fireEvent.change(screen.getByLabelText("Position 1"), {
+      target: { value: "75" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await screen.findByText("Zone name already in use");
@@ -268,8 +223,8 @@ describe("AddZoneDialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Luke Bathroom" },
     });
-    fireEvent.change(screen.getByLabelText("Flair vent ID 1"), {
-      target: { value: "vent-1" },
+    fireEvent.change(screen.getByLabelText("Position 1"), {
+      target: { value: "75" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await screen.findByText(/already exists on this air handler/);
@@ -279,7 +234,7 @@ describe("AddZoneDialog", () => {
     rerenderOpen(true);
 
     expect(screen.getByLabelText("Name")).toHaveValue("");
-    expect(screen.getByLabelText("Flair vent ID 1")).toHaveValue("");
+    expect(screen.getByLabelText("Position 1")).toHaveValue(null);
     expect(
       screen.queryByText(/already exists on this air handler/),
     ).not.toBeInTheDocument();

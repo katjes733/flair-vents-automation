@@ -92,9 +92,7 @@ export default function AirHandlerStatusCard({
                 <Typography variant="caption" color="text.secondary">
                   Ecobee (live)
                 </Typography>
-                <Box
-                  sx={{ display: "flex", alignItems: "baseline", gap: 1 }}
-                >
+                <Box sx={{ display: "flex", alignItems: "baseline", gap: 1 }}>
                   <Typography variant="h5">
                     {decision.setpoint_push.thermostat_reading !== null
                       ? `${toDisplayAbsolute(asAbsoluteTemp(decision.setpoint_push.thermostat_reading), temperatureUnit).toFixed(1)}°${temperatureUnit}`
@@ -119,8 +117,7 @@ export default function AirHandlerStatusCard({
                     </Typography>
                     <Typography variant="body2">
                       {`${toDisplayAbsolute(asAbsoluteTemp(decision.setpoint_push.pushed_value), temperatureUnit).toFixed(1)}°${temperatureUnit}`}
-                      {!decision.setpoint_push.would_write &&
-                        " (not written)"}
+                      {!decision.setpoint_push.would_write && " (not written)"}
                     </Typography>
                   </>
                 )}
