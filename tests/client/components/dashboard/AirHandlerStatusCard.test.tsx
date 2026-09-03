@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { DiagnosticModeContext } from "~/client/theme/diagnosticModeContextValue";
+import { NotificationProvider } from "~/client/components/notification/NotificationContext";
 import type {
   AirHandler,
   AirHandlerTickDecision,
@@ -70,38 +71,51 @@ function makeDecision(
 
 function renderCard({
   decision = null as AirHandlerTickDecision | null,
-  isLive = true,
+  isPromoted = true,
+  globalDryRun = false,
   diagnosticMode = false,
+  onTogglePromoted = vi.fn().mockResolvedValue(undefined),
+  children,
 }: {
   decision?: AirHandlerTickDecision | null;
-  isLive?: boolean;
+  isPromoted?: boolean;
+  globalDryRun?: boolean;
   diagnosticMode?: boolean;
+  onTogglePromoted?: () => Promise<void>;
+  children?: React.ReactNode;
 } = {}) {
-  return render(
+  const utils = render(
     <ThemeProvider theme={theme}>
-      <DiagnosticModeContext.Provider
-        value={{ diagnosticMode, toggle: () => {} }}
-      >
-        <AirHandlerStatusCard
-          airHandler={AIR_HANDLER}
-          decision={decision}
-          isLive={isLive}
-        />
-      </DiagnosticModeContext.Provider>
+      <NotificationProvider>
+        <DiagnosticModeContext.Provider
+          value={{ diagnosticMode, toggle: () => {} }}
+        >
+          <AirHandlerStatusCard
+            airHandler={AIR_HANDLER}
+            decision={decision}
+            isPromoted={isPromoted}
+            globalDryRun={globalDryRun}
+            onTogglePromoted={onTogglePromoted}
+          >
+            {children}
+          </AirHandlerStatusCard>
+        </DiagnosticModeContext.Provider>
+      </NotificationProvider>
     </ThemeProvider>,
   );
+  return { ...utils, onTogglePromoted };
 }
 
 describe("AirHandlerStatusCard", () => {
   it("renders toolbar actions passed as children alongside the status pills", () => {
-    render(
-      <ThemeProvider theme={theme}>
-        <AirHandlerStatusCard airHandler={AIR_HANDLER} decision={null} isLive>
+    renderCard({
+      children: (
+        <>
           <button>Edit</button>
           <button>Sync with Flair</button>
-        </AirHandlerStatusCard>
-      </ThemeProvider>,
-    );
+        </>
+      ),
+    });
     expect(screen.getByText("Upstairs")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(
@@ -110,15 +124,7 @@ describe("AirHandlerStatusCard", () => {
   });
 
   it("renders without children just fine (no toolbar actions passed)", () => {
-    render(
-      <ThemeProvider theme={theme}>
-        <AirHandlerStatusCard
-          airHandler={AIR_HANDLER}
-          decision={null}
-          isLive={false}
-        />
-      </ThemeProvider>,
-    );
+    renderCard({ isPromoted: false });
     expect(screen.getByText("Upstairs")).toBeInTheDocument();
     expect(screen.getByText("Shadow Mode")).toBeInTheDocument();
   });
@@ -133,13 +139,137 @@ describe("AirHandlerStatusCard", () => {
     expect(screen.queryByText("Cooling")).not.toBeInTheDocument();
   });
 
-  it("shows the Shadow Mode chip only when the air handler isn't live, regardless of decision state", () => {
-    renderCard({ decision: makeDecision(), isLive: false });
-    expect(screen.getByText("Shadow Mode")).toBeInTheDocument();
+  describe("the promotion badge's three states", () => {
+    it('shows "Shadow Mode" when not promoted, regardless of decision.dry_run', () => {
+      renderCard({
+        isPromoted: false,
+        decision: makeDecision({ dry_run: false }),
+      });
+      expect(screen.getByText("Shadow Mode")).toBeInTheDocument();
+    });
 
-    cleanup();
-    renderCard({ decision: makeDecision(), isLive: true });
-    expect(screen.queryByText("Shadow Mode")).not.toBeInTheDocument();
+    it('shows "Promoted — DRY_RUN still on" when promoted but no tick decision exists yet', () => {
+      renderCard({ isPromoted: true, decision: null });
+      expect(
+        screen.getByText("Promoted — DRY_RUN still on"),
+      ).toBeInTheDocument();
+    });
+
+    it('shows "Promoted — DRY_RUN still on" when promoted but the real effective dry_run is still true — this is the exact confusion the badge exists to prevent', () => {
+      renderCard({
+        isPromoted: true,
+        decision: makeDecision({ dry_run: true }),
+      });
+      expect(
+        screen.getByText("Promoted — DRY_RUN still on"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Live")).not.toBeInTheDocument();
+    });
+
+    it('shows "Live" only when promoted AND decision.dry_run is genuinely false', () => {
+      renderCard({
+        isPromoted: true,
+        decision: makeDecision({ dry_run: false }),
+      });
+      expect(screen.getByText("Live")).toBeInTheDocument();
+    });
+  });
+
+  describe("the badge tooltip — closing the gap between the global DRY_RUN state and a not-yet-promoted handler's own decision.dry_run (which is always true either way)", () => {
+    it("resolves both contributing facts even for a not-promoted handler, whose own decision.dry_run can't reveal the real global value", async () => {
+      renderCard({ isPromoted: false, globalDryRun: false, decision: null });
+      fireEvent.mouseOver(screen.getByText("Shadow Mode"));
+      expect(
+        await screen.findByText(
+          "DRY_RUN (global, redeploy-gated): off · Promoted (live_air_handler_ids): no",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("reflects globalDryRun: true accurately", async () => {
+      renderCard({ isPromoted: true, globalDryRun: true, decision: null });
+      fireEvent.mouseOver(screen.getByText("Promoted — DRY_RUN still on"));
+      expect(
+        await screen.findByText(
+          "DRY_RUN (global, redeploy-gated): on · Promoted (live_air_handler_ids): yes",
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("the promote/demote confirm dialog", () => {
+    it("clicking the badge while not promoted opens a dialog explaining DRY_RUN still gates real dispatch", () => {
+      renderCard({ isPromoted: false, decision: null });
+      fireEvent.click(screen.getByText("Shadow Mode"));
+      expect(
+        screen.getByText("Add Upstairs to live control?"),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/DRY_RUN is also disabled/)).toBeInTheDocument();
+    });
+
+    it("clicking the badge while promoted opens a dialog explaining it falls back to shadow mode", () => {
+      renderCard({
+        isPromoted: true,
+        decision: makeDecision({ dry_run: false }),
+      });
+      fireEvent.click(screen.getByText("Live"));
+      expect(
+        screen.getByText("Remove Upstairs from live control?"),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/fall back to shadow mode/)).toBeInTheDocument();
+    });
+
+    it("Cancel closes the dialog without calling onTogglePromoted", async () => {
+      const { onTogglePromoted } = renderCard({ isPromoted: false });
+      fireEvent.click(screen.getByText("Shadow Mode"));
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await vi.waitFor(() => {
+        expect(
+          screen.queryByText("Add Upstairs to live control?"),
+        ).not.toBeInTheDocument();
+      });
+      expect(onTogglePromoted).not.toHaveBeenCalled();
+    });
+
+    it("Confirm calls onTogglePromoted, shows a success notification, and closes the dialog", async () => {
+      const onTogglePromoted = vi.fn().mockResolvedValue(undefined);
+      renderCard({ isPromoted: false, onTogglePromoted });
+      fireEvent.click(screen.getByText("Shadow Mode"));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+      await screen.findByText("Upstairs added to live control.");
+      expect(onTogglePromoted).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(
+          screen.queryByText("Add Upstairs to live control?"),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows the removal wording on successful demote", async () => {
+      const onTogglePromoted = vi.fn().mockResolvedValue(undefined);
+      renderCard({
+        isPromoted: true,
+        decision: makeDecision({ dry_run: false }),
+        onTogglePromoted,
+      });
+      fireEvent.click(screen.getByText("Live"));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+      await screen.findByText("Upstairs removed from live control.");
+    });
+
+    it("shows an error notification and keeps the dialog open when onTogglePromoted rejects", async () => {
+      const onTogglePromoted = vi.fn().mockRejectedValue(new Error("network"));
+      renderCard({ isPromoted: false, onTogglePromoted });
+      fireEvent.click(screen.getByText("Shadow Mode"));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+      await screen.findByText("That didn't go through — try again.");
+      expect(
+        screen.getByText("Add Upstairs to live control?"),
+      ).toBeInTheDocument();
+    });
   });
 
   it.each([

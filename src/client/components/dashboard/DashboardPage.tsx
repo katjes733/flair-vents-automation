@@ -13,7 +13,7 @@ import {
 } from "~/client/api/airHandlersApi";
 import { fetchZones, type Zone } from "~/client/api/zonesApi";
 import { fetchOverrides, type ManualOverride } from "~/client/api/overridesApi";
-import { fetchSettings } from "~/client/api/settingsApi";
+import { fetchSettings, updateSettings } from "~/client/api/settingsApi";
 import GlobalStatusBar from "~/client/components/dashboard/GlobalStatusBar";
 import AirHandlerStatusCard from "~/client/components/dashboard/AirHandlerStatusCard";
 import ZoneGrid from "~/client/components/dashboard/ZoneGrid";
@@ -38,6 +38,10 @@ export default function DashboardPage() {
     Map<string, AirHandlerTickDecision | null>
   >(new Map());
   const [controlDisarmed, setControlDisarmed] = useState(false);
+  // The real, global DRY_RUN env var value — read-only, see settingsApi's
+  // own comment. Defaults true (matching the app's own fail-closed
+  // default) until the first real fetch lands.
+  const [globalDryRun, setGlobalDryRun] = useState(true);
   const [liveAirHandlerIds, setLiveAirHandlerIds] = useState<Set<string>>(
     new Set(),
   );
@@ -80,6 +84,7 @@ export default function DashboardPage() {
     setOverrides(overrideList);
     setControlDisarmed(settings.control_disarmed);
     setLiveAirHandlerIds(new Set(settings.live_air_handler_ids));
+    setGlobalDryRun(settings.dry_run);
 
     const decisions = await Promise.all(
       handlers.map((h) => fetchAirHandlerTickDecision(h.id)),
@@ -96,6 +101,22 @@ export default function DashboardPage() {
     const interval = setInterval(loadAll, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [loadAll]);
+
+  // Adds/removes one air handler from live_air_handler_ids, preserving
+  // every other handler's own membership — AirHandlerStatusCard only knows
+  // its own promoted/not-promoted slice, this is where the full array
+  // actually lives. See "Manual disarm" / the DRY_RUN vs. live_air_handler_ids
+  // split for why this is a separate lever from the global DRY_RUN env var.
+  const handleTogglePromoted = useCallback(
+    async (airHandlerId: string) => {
+      const next = liveAirHandlerIds.has(airHandlerId)
+        ? [...liveAirHandlerIds].filter((id) => id !== airHandlerId)
+        : [...liveAirHandlerIds, airHandlerId];
+      await updateSettings({ live_air_handler_ids: next });
+      await loadAll();
+    },
+    [liveAirHandlerIds, loadAll],
+  );
 
   if (loading) {
     return (
@@ -159,7 +180,9 @@ export default function DashboardPage() {
             <AirHandlerStatusCard
               airHandler={airHandler}
               decision={decision}
-              isLive={liveAirHandlerIds.has(airHandler.id)}
+              isPromoted={liveAirHandlerIds.has(airHandler.id)}
+              globalDryRun={globalDryRun}
+              onTogglePromoted={() => handleTogglePromoted(airHandler.id)}
             >
               <Button
                 size="small"

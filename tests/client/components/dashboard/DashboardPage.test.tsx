@@ -25,7 +25,10 @@ const { fetchZones, updateZone } = vi.hoisted(() => ({
   updateZone: vi.fn(),
 }));
 const { fetchOverrides } = vi.hoisted(() => ({ fetchOverrides: vi.fn() }));
-const { fetchSettings } = vi.hoisted(() => ({ fetchSettings: vi.fn() }));
+const { fetchSettings, updateSettings } = vi.hoisted(() => ({
+  fetchSettings: vi.fn(),
+  updateSettings: vi.fn(),
+}));
 
 vi.mock("~/client/api/airHandlersApi", async (importOriginal) => {
   const actual =
@@ -49,7 +52,7 @@ vi.mock("~/client/api/overridesApi", async (importOriginal) => {
 vi.mock("~/client/api/settingsApi", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("~/client/api/settingsApi")>();
-  return { ...actual, fetchSettings };
+  return { ...actual, fetchSettings, updateSettings };
 });
 
 const { default: DashboardPage } =
@@ -132,6 +135,7 @@ describe("DashboardPage", () => {
       control_disarmed: false,
       live_air_handler_ids: [],
     });
+    updateSettings.mockReset().mockResolvedValue({ config: {}, warnings: [] });
   });
 
   it("shows a message and a disabled 'Add zone' button when there are no air handlers yet", async () => {
@@ -150,6 +154,61 @@ describe("DashboardPage", () => {
     await screen.findByText("Upstairs");
     expect(screen.getByText("Bedroom")).toBeInTheDocument();
     expect(fetchAirHandlerTickDecision).toHaveBeenCalledWith("ah-1");
+  });
+
+  it("promoting an air handler PATCHes live_air_handler_ids with just that id added, preserving any others already live", async () => {
+    fetchAirHandlers.mockResolvedValue([
+      AIR_HANDLER,
+      { ...AIR_HANDLER, id: "ah-2", name: "Downstairs" },
+    ]);
+    fetchZones.mockResolvedValue([]);
+    fetchSettings.mockResolvedValue({
+      control_disarmed: false,
+      live_air_handler_ids: ["ah-2"],
+    });
+    renderDashboard();
+
+    await screen.findByText("Upstairs");
+    fireEvent.click(screen.getByText("Shadow Mode"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText("Upstairs added to live control.");
+    expect(updateSettings).toHaveBeenCalledWith({
+      live_air_handler_ids: ["ah-2", "ah-1"],
+    });
+  });
+
+  it("demoting an air handler PATCHes live_air_handler_ids with just that id removed", async () => {
+    fetchAirHandlers.mockResolvedValue([AIR_HANDLER]);
+    fetchZones.mockResolvedValue([]);
+    fetchSettings.mockResolvedValue({
+      control_disarmed: false,
+      live_air_handler_ids: ["ah-1"],
+    });
+    fetchAirHandlerTickDecision.mockResolvedValue({
+      air_handler_id: "ah-1",
+      tick_at: "2026-09-02T12:00:00.000Z",
+      duration_ms: 1,
+      dry_run: false,
+      control_disarmed: false,
+      equipment_fault_active: false,
+      hvac_state: "IDLE",
+      call_confidence: "reported",
+      zones: [],
+      contention: null,
+      pressure: null,
+      driving_zone: null,
+      setpoint_push: null,
+      narrative: "",
+    });
+    renderDashboard();
+
+    await screen.findByText("Live");
+    fireEvent.click(screen.getByText("Live"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText("Upstairs removed from live control.");
+    expect(updateSettings).toHaveBeenCalledWith({ live_air_handler_ids: [] });
   });
 
   it("opens the Add air handler dialog from the toolbar button", async () => {

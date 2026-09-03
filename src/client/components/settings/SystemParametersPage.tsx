@@ -17,6 +17,7 @@ import Switch from "@mui/material/Switch";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { fetchSettings, updateSettings } from "~/client/api/settingsApi";
 import type { SystemSettings } from "~/client/api/settingsApi";
+import type { SystemSettingsConfig } from "~/shared/schemas/systemSettings";
 import { fetchZones } from "~/client/api/zonesApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
@@ -51,7 +52,10 @@ function resolveStoredShowAdvanced(): boolean {
   }
 }
 
-function buildDraft(config: SystemSettings, units: DisplayUnits): DraftValues {
+function buildDraft(
+  config: SystemSettingsConfig,
+  units: DisplayUnits,
+): DraftValues {
   const draft: DraftValues = {};
   for (const group of SYSTEM_PARAMETER_GROUPS) {
     for (const field of group.fields) {
@@ -294,7 +298,15 @@ export default function SystemParametersPage() {
     setSaving(true);
     try {
       const result = await updateSettings(patch);
-      setSavedConfig(result.config);
+      // The PATCH response never carries `dry_run` (env-only, only the
+      // GET route appends it) — preserve whatever value the last real
+      // fetch established rather than losing it on every save. Fails
+      // closed (assumes DRY_RUN on) in the defensive case there's
+      // somehow no prior value yet.
+      setSavedConfig((prev) => ({
+        ...result.config,
+        dry_run: prev?.dry_run ?? true,
+      }));
       setDraft(buildDraft(result.config, units));
       setPriorityOrder(result.config.zone_priority_order);
       setWarnings(result.warnings);

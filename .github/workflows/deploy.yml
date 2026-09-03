@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, qnap, linux]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t 192.168.2.106:5000/flair-vents-automation:latest .
+
+      - name: Push image to local registry
+        run: |
+          docker push 192.168.2.106:5000/flair-vents-automation:latest
+
+      - name: Stop and remove existing container
+        run: |
+          docker stop flair-vents-automation || true
+          docker rm flair-vents-automation || true
+
+      - name: Start new container
+        run: |
+          LOKI_PIPELINE='- json:
+              expressions:
+                service: service
+                air_handler_id: air_handler_id
+          - labels:
+              service:
+              air_handler_id:'
+          docker run -d \
+            --name flair-vents-automation \
+            --network tesla-macvlan \
+            --ip <CONFIRM_STATIC_IP> \
+            --restart unless-stopped \
+            --log-driver loki \
+            --log-opt loki-url="http://192.168.2.103:3100/loki/api/v1/push" \
+            --log-opt loki-batch-size="400" \
+            --log-opt loki-retries="3" \
+            --log-opt loki-timeout="2s" \
+            --log-opt keep-file="true" \
+            --log-opt "loki-pipeline-stages=${LOKI_PIPELINE}" \
+            -v /share/Container/container-data/flair-vents-automation/certs:/app/ssl:ro \
+            -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
+            -e NODE_ENV=production \
+            -e PORT=3001 \
+            -e DB_HOST="${{ secrets.DB_HOST }}" \
+            -e DB_PORT="${{ secrets.DB_PORT }}" \
+            -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+            -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            -e DB_NAME="${{ secrets.DB_NAME }}" \
+            -e DB_SCHEMA="${{ secrets.DB_SCHEMA }}" \
+            -e DB_SSL=true \
+            -e DB_SSL_CA_PATH=/app/db-certs/ca.crt \
+            -e REDIS_HOST="${{ secrets.REDIS_HOST }}" \
+            -e REDIS_PORT="${{ secrets.REDIS_PORT }}" \
+            -e REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            -e REDIS_KEY_PREFIX=fva: \
+            -e TOKEN_ENCRYPTION_KEY="${{ secrets.TOKEN_ENCRYPTION_KEY }}" \
+            -e FLAIR_CLIENT_ID="${{ secrets.FLAIR_CLIENT_ID }}" \
+            -e FLAIR_CLIENT_SECRET="${{ secrets.FLAIR_CLIENT_SECRET }}" \
+            -e FLAIR_API_BASE_URL=https://api.flair.co \
+            -e FLAIR_GRANT_MODE=client_credentials \
+            -e SMTP_HOST="${{ secrets.SMTP_HOST }}" \
+            -e SMTP_PORT="${{ secrets.SMTP_PORT }}" \
+            -e SMTP_SENDER_EMAIL="${{ secrets.SMTP_SENDER_EMAIL }}" \
+            -e SMTP_SENDER_PASSWORD="${{ secrets.SMTP_SENDER_PASSWORD }}" \
+            -e RECIPIENT_EMAIL="${{ secrets.RECIPIENT_EMAIL }}" \
+            -e SSL_ENABLED=true \
+            -e SSL_KEY_PATH=ssl/key.pem \
+            -e SSL_CERT_PATH=ssl/cert.pem \
+            -e ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
+            -e CONTROL_LOOP_ENABLED=true \
+            -e LOG_LEVEL=info \
+            192.168.2.106:5000/flair-vents-automation:latest

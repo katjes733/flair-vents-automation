@@ -32,7 +32,11 @@ const log = logger.child({ service: "control-loop" });
 // Fails closed, per "Environment & Dev Modes": unset, missing, or anything
 // other than the literal string "false" means shadow mode. A missing env
 // var must never be what lets a container start moving real vents.
-function isDryRunEnv(): boolean {
+// Exported so routes/settings.ts can surface this one read-only fact
+// alongside the DB-backed config — see "Stage 14 follow-up: DRY_RUN
+// visibility" — without duplicating the fail-closed parsing rule a second
+// time somewhere else.
+export function isDryRunEnv(): boolean {
   return process.env.DRY_RUN !== "false";
 }
 
