@@ -14,6 +14,7 @@ function decision(
     duration_ms: 10,
     dry_run: false,
     control_disarmed: false,
+    equipment_fault_active: false,
     hvac_state: "IDLE",
     call_confidence: "reported",
     zones: [],

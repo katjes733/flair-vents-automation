@@ -32,6 +32,7 @@ describe("TickDecisionInspector", () => {
       duration_ms: 12,
       dry_run: false,
       control_disarmed: false,
+      equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
       zones: [
@@ -53,6 +54,8 @@ describe("TickDecisionInspector", () => {
               reported_position_pct: 48,
               dispatch_decision: "dispatched",
               degraded: false,
+              voltage: null,
+              current_rssi: null,
             },
           ],
           reason: "still cooling",
@@ -103,6 +106,7 @@ describe("TickDecisionInspector", () => {
       duration_ms: 12,
       dry_run: false,
       control_disarmed: false,
+      equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
       zones: [
@@ -124,6 +128,8 @@ describe("TickDecisionInspector", () => {
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
               degraded: false,
+              voltage: null,
+              current_rssi: null,
             },
             {
               flair_vent_id: "vent-b",
@@ -132,6 +138,8 @@ describe("TickDecisionInspector", () => {
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
               degraded: false,
+              voltage: null,
+              current_rssi: null,
             },
           ],
           reason: "",
@@ -172,6 +180,7 @@ describe("TickDecisionInspector", () => {
       duration_ms: 12,
       dry_run: false,
       control_disarmed: false,
+      equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
       zones: [
@@ -193,6 +202,8 @@ describe("TickDecisionInspector", () => {
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
               degraded: false,
+              voltage: null,
+              current_rssi: null,
             },
             {
               flair_vent_id: "vent-b",
@@ -201,6 +212,8 @@ describe("TickDecisionInspector", () => {
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
               degraded: false,
+              voltage: null,
+              current_rssi: null,
             },
           ],
           reason: "",

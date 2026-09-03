@@ -39,3 +39,18 @@ export async function rearmControl(actor: string): Promise<void> {
 export async function triggerTick(): Promise<void> {
   await httpClient.post("/control/trigger-tick");
 }
+
+// See "Stage 12 — Current-Status Diagnostics" — FlairConnection's live
+// half. Every field is a direct read of state the server already tracks;
+// nothing is computed client-side.
+export interface FlairStatus {
+  outage: { failing: boolean; sinceMs: number | null };
+  tokenRefreshFailure: { terminal: boolean; message: string } | null;
+  tokenCallsToday: number;
+  tokenDailyBudget: number;
+}
+
+export async function fetchFlairStatus(): Promise<FlairStatus> {
+  const { data } = await httpClient.get<FlairStatus>("/control/flair-status");
+  return data;
+}

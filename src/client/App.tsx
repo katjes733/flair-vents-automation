@@ -10,6 +10,7 @@ import DashboardPage from "~/client/components/dashboard/DashboardPage";
 import SchedulesPage from "~/client/components/dashboard/SchedulesPage";
 import SettingsPage from "~/client/components/settings/SettingsPage";
 import SystemParametersPage from "~/client/components/settings/SystemParametersPage";
+import DiagnosticsPage from "~/client/components/diagnostics/DiagnosticsPage";
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/schedules" element={<SchedulesPage />} />
+                <Route path="/diagnostics" element={<DiagnosticsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route
                   path="/system-parameters"

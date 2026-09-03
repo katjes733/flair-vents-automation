@@ -109,6 +109,8 @@ describe("ZoneGrid", () => {
                       reported_position_pct: 48,
                       dispatch_decision: "dispatched",
                       degraded: false,
+                      voltage: null,
+                      current_rssi: null,
                     },
                   ],
                   reason: "still cooling",

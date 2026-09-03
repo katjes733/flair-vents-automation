@@ -135,6 +135,8 @@ function setupFlairFixture(
     tempC: number;
     ductC: number;
     percentOpen: number;
+    voltage?: number | null;
+    currentRssi?: number | null;
   }>,
   operatingState: "cool" | "heat" | "fan" | "idle" = "cool",
 ) {
@@ -181,8 +183,8 @@ function setupFlairFixture(
       name: r.ventId,
       percentOpen: r.percentOpen,
       inactive: false,
-      voltage: null,
-      currentRssi: null,
+      voltage: r.voltage ?? null,
+      currentRssi: r.currentRssi ?? null,
     })),
   );
   for (const r of rooms) {
@@ -679,6 +681,59 @@ describe("runTick — emergency fail-safe", () => {
       ventId: "vent-1",
       percentOpen: 100,
     });
+    // See "Stage 12 — Current-Status Diagnostics" — EquipmentFaultLog's
+    // current-status view reads this straight off the tick decision.
+    expect(decision.equipment_fault_active).toBe(true);
+  });
+});
+
+describe("runTick — hardware diagnostics (voltage/RSSI)", () => {
+  it("threads a vent's battery voltage and RSSI through to the tick decision", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 12,
+        percentOpen: 50,
+        voltage: 3.18,
+        currentRssi: -69,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    const vent = decision.zones[0].vents.find(
+      (v) => v.flair_vent_id === "vent-1",
+    );
+    expect(vent?.voltage).toBe(3.18);
+    expect(vent?.current_rssi).toBe(-69);
+  });
+});
+
+describe("runTick — equipment_fault_active reflects the real fault state", () => {
+  it("is false on an ordinary tick with no fault", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 12,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(false);
   });
 });
 

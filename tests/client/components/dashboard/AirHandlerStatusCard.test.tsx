@@ -55,6 +55,7 @@ function makeDecision(
     duration_ms: 42,
     dry_run: false,
     control_disarmed: false,
+    equipment_fault_active: false,
     hvac_state: "COOLING_CALL",
     call_confidence: "reported",
     zones: [makeZone()],

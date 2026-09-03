@@ -65,6 +65,10 @@ export interface VentTickDecisionRecord {
   reported_position_pct: number | null;
   dispatch_decision: string;
   degraded: boolean;
+  // Hardware-health fields — see "Stage 12 — Current-Status Diagnostics".
+  // Null on any path with no live Flair snapshot or a not-yet-visible vent.
+  voltage: number | null;
+  current_rssi: number | null;
 }
 
 export interface ZoneTickDecisionRecord {
@@ -91,6 +95,9 @@ export interface AirHandlerTickDecision {
   duration_ms: number;
   dry_run: boolean;
   control_disarmed: boolean;
+  // Whether the Emergency Fail-Safe is currently active for this air
+  // handler — see "Stage 12 — Current-Status Diagnostics".
+  equipment_fault_active: boolean;
   hvac_state: string;
   call_confidence: "reported" | "unknown";
   zones: ZoneTickDecisionRecord[];

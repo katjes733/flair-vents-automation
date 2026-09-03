@@ -88,6 +88,19 @@ export function isZoneDegraded(state: ZoneRuntimeState): boolean {
   return state.vents.some((v) => v.degraded);
 }
 
+/**
+ * `MIN` over currently-degraded vents' own `degraded_since` — mirrors the
+ * server-side helper of the same name (`shared/types/zone.ts`). `null`
+ * when no vent is currently degraded.
+ */
+export function zoneDegradedSince(state: ZoneRuntimeState): string | null {
+  const since = state.vents
+    .filter((v) => v.degraded && v.degraded_since !== null)
+    .map((v) => v.degraded_since as string);
+  if (since.length === 0) return null;
+  return since.reduce((min, s) => (s < min ? s : min));
+}
+
 export interface Zone {
   id: string;
   installationId: string;

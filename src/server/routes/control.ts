@@ -4,7 +4,14 @@ import { z } from "zod";
 import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
 import { updateSettingsForInstallation } from "~/server/util/services/settingsService";
 import { logControlDisarmed, logControlRearmed } from "~/server/logEvents";
-import { triggerImmediateTick } from "~/server/control/scheduler";
+import {
+  triggerImmediateTick,
+  getFlairClient,
+} from "~/server/control/scheduler";
+import {
+  getTokenCallsToday,
+  FLAIR_TOKEN_DAILY_BUDGET,
+} from "~/server/util/flair/tokenBudget";
 
 export const router = express.Router();
 const controlLog = logger.child({ service: "control" });
@@ -39,4 +46,21 @@ router.post("/rearm", validateBody(actorRequestSchema), async (req, res) => {
 router.post("/trigger-tick", async (_req, res) => {
   await triggerImmediateTick();
   res.status(200).json({});
+});
+
+// Live connection health for FlairConnection's current-status panel — see
+// "Stage 12 — Current-Status Diagnostics". Every value here is a direct
+// read of state that already exists (outage tracking, token-refresh
+// failure, the daily token-call counter); nothing new is computed or
+// persisted by this route itself.
+router.get("/flair-status", async (_req, res) => {
+  const installation = await getOrCreateDefaultInstallation();
+  const client = getFlairClient(installation.id);
+  const tokenCallsToday = await getTokenCallsToday();
+  res.status(200).json({
+    outage: client.getOutageState(),
+    tokenRefreshFailure: client.getTokenRefreshFailureState(),
+    tokenCallsToday,
+    tokenDailyBudget: FLAIR_TOKEN_DAILY_BUDGET,
+  });
 });

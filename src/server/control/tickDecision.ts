@@ -13,6 +13,11 @@ export interface VentTickDecision {
   reported_position_pct: number | null;
   dispatch_decision: "dispatched" | "suppressed_step_delta";
   degraded: boolean;
+  // Hardware-health fields for HardwareDiagnostics — see "Stage 12 —
+  // Current-Status Diagnostics". Null on any path with no live Flair
+  // snapshot (the fault short-circuit) or a vent not yet visible.
+  voltage: number | null;
+  current_rssi: number | null;
 }
 
 // The exhaustive per-tick record — see "Comprehensive tick decision
@@ -46,6 +51,10 @@ export interface AirHandlerTickDecision {
   duration_ms: number;
   dry_run: boolean;
   control_disarmed: boolean;
+  // Whether the Emergency Fail-Safe (see "Emergency fail-safe") is
+  // currently active for this air handler — for EquipmentFaultLog's
+  // current-status view. See "Stage 12 — Current-Status Diagnostics".
+  equipment_fault_active: boolean;
   hvac_state: string;
   call_confidence: "reported" | "unknown";
   zones: ZoneTickDecision[];

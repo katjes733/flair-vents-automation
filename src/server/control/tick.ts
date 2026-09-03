@@ -1486,6 +1486,7 @@ export async function runTick(
     duration_ms: finishedAtMs - startedAtMs,
     dry_run: dryRun,
     control_disarmed: controlDisarmed,
+    equipment_fault_active: faultActive,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
     zones: zones.map((zone): ZoneTickDecision => {
@@ -1516,6 +1517,8 @@ export async function runTick(
             degraded:
               finalVents.find((fv) => fv.flair_vent_id === v.flairVentId)
                 ?.degraded ?? false,
+            voltage: v.voltage,
+            current_rssi: v.currentRssi,
           }),
         ),
         reason: "",
@@ -1581,6 +1584,7 @@ function buildMinimalDecision(
     duration_ms: finishedAtMs - startedAtMs,
     dry_run: dryRun,
     control_disarmed: false,
+    equipment_fault_active: false,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
     zones: [],
@@ -1607,6 +1611,7 @@ function buildFaultDecision(
     duration_ms: finishedAtMs - startedAtMs,
     dry_run: dryRun,
     control_disarmed: false,
+    equipment_fault_active: true,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
     zones: zones.map((zone) => ({
@@ -1626,12 +1631,15 @@ function buildFaultDecision(
             flair_vent_id: flairVentId,
             // No live Flair snapshot is fetched on this path (the fault
             // trigger short-circuits before ingestion) — the client falls
-            // back to an ordinal label for an empty name.
+            // back to an ordinal label for an empty name, and hardware
+            // fields are unavailable for the same reason.
             name: "",
             commanded_position_pct: 100,
             reported_position_pct: null,
             dispatch_decision: "dispatched" as const,
             degraded: false,
+            voltage: null,
+            current_rssi: null,
           }))
         : [],
       reason:
@@ -1703,6 +1711,7 @@ async function holdAtIdleBaseline(params: {
     duration_ms: 0,
     dry_run: dryRun,
     control_disarmed: false,
+    equipment_fault_active: false,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
     zones: [],

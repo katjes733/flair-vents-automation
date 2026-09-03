@@ -51,6 +51,12 @@ export interface ZoneVentReading {
   reportedPositionPct: number | null;
   ductTemperatureC: number | null;
   ductReadingCreatedAt: string | null;
+  // Hardware-health fields, passed through unmodified for
+  // HardwareDiagnostics — see "Stage 12 — Current-Status Diagnostics".
+  // Already fetched by FlairClient.fetchVents() on every tick; simply
+  // never threaded past this point before now.
+  voltage: number | null;
+  currentRssi: number | null;
 }
 
 /**
@@ -100,5 +106,7 @@ export function ingestZoneVentReading(params: {
     reportedPositionPct: params.vent?.percentOpen ?? null,
     ductTemperatureC: params.ventReading?.ductTemperatureC ?? null,
     ductReadingCreatedAt: params.ventReading?.createdAt ?? null,
+    voltage: params.vent?.voltage ?? null,
+    currentRssi: params.vent?.currentRssi ?? null,
   };
 }

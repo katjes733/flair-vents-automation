@@ -27,6 +27,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard" },
   { path: "/schedules", label: "Schedules" },
+  { path: "/diagnostics", label: "Diagnostics" },
   { path: "/settings", label: "Settings" },
   { path: "/system-parameters", label: "System Parameters" },
 ];

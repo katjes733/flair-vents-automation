@@ -129,4 +129,27 @@ describe("ingestZoneVentReading", () => {
     expect(result.ductTemperatureC).toBeNull();
     expect(result.name).toBe("");
   });
+
+  // See "Stage 12 — Current-Status Diagnostics" — these were already
+  // fetched by FlairClient.fetchVents() on every tick but silently dropped
+  // at this exact boundary until now.
+  it("passes through the vent's battery voltage and RSSI for HardwareDiagnostics", () => {
+    const result = ingestZoneVentReading({
+      flairVentId: "vent-1",
+      vent: vent({ voltage: 3.18, currentRssi: -69 }),
+      ventReading: ventReading(),
+    });
+    expect(result.voltage).toBe(3.18);
+    expect(result.currentRssi).toBe(-69);
+  });
+
+  it("reports null voltage/RSSI for a vent not yet visible in this tick's snapshot", () => {
+    const result = ingestZoneVentReading({
+      flairVentId: "vent-1",
+      vent: null,
+      ventReading: null,
+    });
+    expect(result.voltage).toBeNull();
+    expect(result.currentRssi).toBeNull();
+  });
 });
