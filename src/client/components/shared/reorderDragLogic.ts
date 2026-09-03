@@ -1,10 +1,13 @@
-// Pure drag/reorder arithmetic for ZoneGrid, split into its own
-// non-component module — a component file exporting anything besides
-// components breaks React Fast Refresh (react-refresh/only-export-components).
-// Also lets this be unit-tested directly with plain numbers: jsdom's
-// `DragEvent`/pointer-position support is incomplete enough that simulating
-// real drag gestures to exercise this logic indirectly is unreliable,
-// independent of whether the logic itself is correct.
+// Pure drag/reorder arithmetic, shared by every reorderable list in this
+// app (ZoneGrid's dashboard cards, ZonePriorityList's zone priority order)
+// — split into its own non-component module since a component file
+// exporting anything besides components breaks React Fast Refresh
+// (react-refresh/only-export-components). Also lets this be unit-tested
+// directly with plain numbers: jsdom's `DragEvent`/pointer-position support
+// is incomplete enough that simulating real drag gestures to exercise this
+// logic indirectly is unreliable, independent of whether the logic itself
+// is correct. Domain-agnostic on purpose — every caller supplies its own
+// array and its own drag handlers; this file only ever does index math.
 
 export interface DropTarget {
   index: number;

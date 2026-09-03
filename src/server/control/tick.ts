@@ -51,6 +51,7 @@ import {
 import { clampToZoneRange } from "~/server/domain/position/clamp";
 import {
   selectDrivingZone,
+  resolveExplicitDrivingOverride,
   type DrivingZoneCandidate,
 } from "~/server/domain/setpoint/drivingZone";
 import { computeSetpointPush } from "~/server/domain/setpoint/setpointPush";
@@ -1204,8 +1205,13 @@ export async function runTick(
     }
   }
 
-  const explicitOverrideZoneId =
-    ctx.settings.driving_zone_overrides[airHandler.id] ?? null;
+  const explicitOverrideZoneId = resolveExplicitDrivingOverride({
+    airHandlerId: airHandler.id,
+    eventOverridesByZone: zones.map(
+      (z) => governingEventByZone.get(z.id)?.event.driving_zone_overrides,
+    ),
+    globalOverride: ctx.settings.driving_zone_overrides[airHandler.id] ?? null,
+  });
   const drivingSelection = selectDrivingZone({
     candidates: drivingCandidates,
     explicitOverrideZoneId,

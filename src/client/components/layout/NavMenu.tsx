@@ -23,10 +23,10 @@ interface NavItem {
 }
 
 // One array drives both the page title lookup and the nav menu, so they
-// can't drift apart — same convention as wake-on-lan's NavMenu. Phase 2's
-// schedule page adds an entry here when it lands.
+// can't drift apart — same convention as wake-on-lan's NavMenu.
 const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard" },
+  { path: "/schedules", label: "Schedules" },
   { path: "/settings", label: "Settings" },
   { path: "/system-parameters", label: "System Parameters" },
 ];

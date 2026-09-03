@@ -7,6 +7,7 @@ import MainContainer from "~/client/components/layout/MainContainer";
 import Footer from "~/client/components/layout/Footer";
 import { NotificationProvider } from "~/client/components/notification/NotificationContext";
 import DashboardPage from "~/client/components/dashboard/DashboardPage";
+import SchedulesPage from "~/client/components/dashboard/SchedulesPage";
 import SettingsPage from "~/client/components/settings/SettingsPage";
 import SystemParametersPage from "~/client/components/settings/SystemParametersPage";
 
@@ -20,6 +21,7 @@ function App() {
             <MainContainer>
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
+                <Route path="/schedules" element={<SchedulesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route
                   path="/system-parameters"

@@ -9,7 +9,7 @@ import {
   computeDropSide,
   computeReorderedIndex,
   type DropTarget,
-} from "~/client/components/dashboard/zoneGridDragLogic";
+} from "~/client/components/shared/reorderDragLogic";
 
 interface ZoneGridProps {
   zones: Zone[];

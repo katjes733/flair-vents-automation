@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   selectDrivingZone,
+  resolveExplicitDrivingOverride,
   type DrivingZoneCandidate,
 } from "~/server/domain/setpoint/drivingZone";
 
@@ -160,5 +161,52 @@ describe("selectDrivingZone — explicit override", () => {
       zoneId: "fallback",
       reason: "override_ineligible_fallback",
     });
+  });
+});
+
+describe("resolveExplicitDrivingOverride", () => {
+  it("prefers a schedule event's own override for this air handler over the global default", () => {
+    const result = resolveExplicitDrivingOverride({
+      airHandlerId: "ah1",
+      eventOverridesByZone: [{ ah1: "event-zone" }, { ah1: "event-zone" }],
+      globalOverride: "global-zone",
+    });
+    expect(result).toBe("event-zone");
+  });
+
+  it("falls back to the global override when no zone's governing event specifies one", () => {
+    const result = resolveExplicitDrivingOverride({
+      airHandlerId: "ah1",
+      eventOverridesByZone: [undefined, null, {}],
+      globalOverride: "global-zone",
+    });
+    expect(result).toBe("global-zone");
+  });
+
+  it("ignores an event override scoped to a different air handler", () => {
+    const result = resolveExplicitDrivingOverride({
+      airHandlerId: "ah1",
+      eventOverridesByZone: [{ ah2: "event-zone" }],
+      globalOverride: "global-zone",
+    });
+    expect(result).toBe("global-zone");
+  });
+
+  it("falls back to the global default when zones on the same handler disagree", () => {
+    const result = resolveExplicitDrivingOverride({
+      airHandlerId: "ah1",
+      eventOverridesByZone: [{ ah1: "zone-a" }, { ah1: "zone-b" }],
+      globalOverride: "global-zone",
+    });
+    expect(result).toBe("global-zone");
+  });
+
+  it("returns null when neither an event nor the global setting has an override", () => {
+    const result = resolveExplicitDrivingOverride({
+      airHandlerId: "ah1",
+      eventOverridesByZone: [undefined],
+      globalOverride: null,
+    });
+    expect(result).toBeNull();
   });
 });

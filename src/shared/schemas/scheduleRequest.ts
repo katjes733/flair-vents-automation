@@ -3,6 +3,7 @@ import {
   zoneScheduleSettingSchema,
   scheduleConfigSchema,
 } from "~/shared/schemas/scheduleEvents";
+import { genuinePartial } from "~/shared/schemas/zodPartial";
 
 const TIME_OF_DAY = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -40,10 +41,18 @@ export const createScheduleRequestSchema = z.object({
 
 export type CreateScheduleRequest = z.infer<typeof createScheduleRequestSchema>;
 
+// `config` uses genuinePartial(), not a plain `.partial()` — plain
+// `.partial()` doesn't suppress each field's own `.default()`, so an
+// omitted `enabled`/`default_inactive` would still get backfilled to its
+// schema default once parsed, then silently overwrite the existing value
+// once merged onto the current row (`{...existing.config, ...patch.config}`
+// in scheduleService.ts). Same bug already found and fixed for
+// zoneConfigSchema/systemSettingsConfigSchema — see genuinePartial's own
+// comment for the full incident.
 export const updateScheduleRequestSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   events: z.array(scheduleEventRequestSchema).optional(),
-  config: scheduleConfigSchema.partial().optional(),
+  config: genuinePartial(scheduleConfigSchema).optional(),
 });
 
 export type UpdateScheduleRequest = z.infer<typeof updateScheduleRequestSchema>;

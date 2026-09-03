@@ -17,10 +17,14 @@ import Switch from "@mui/material/Switch";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { fetchSettings, updateSettings } from "~/client/api/settingsApi";
 import type { SystemSettings } from "~/client/api/settingsApi";
+import { fetchZones } from "~/client/api/zonesApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import ParamField from "~/client/components/settings/ParamField";
+import ZonePriorityList, {
+  type ZonePriorityListOption,
+} from "~/client/components/shared/ZonePriorityList";
 import {
   SYSTEM_PARAMETER_GROUPS,
   SYSTEM_SETTINGS_DEFAULTS,
@@ -98,6 +102,13 @@ export default function SystemParametersPage() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [resetAllConfirmOpen, setResetAllConfirmOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(resolveStoredShowAdvanced);
+  const [zoneOptions, setZoneOptions] = useState<ZonePriorityListOption[]>([]);
+  // The one picker-shaped field on this page — kept as its own state
+  // rather than folded into `draft`, since ParamField's draft model is a
+  // flat string-keyed map and this is a real string[], not a display
+  // string. See ZonePriorityList's own comment for why it's always
+  // normalized to every known zone, not just the ones already ordered.
+  const [priorityOrder, setPriorityOrder] = useState<string[]>([]);
 
   const handleToggleShowAdvanced = (checked: boolean) => {
     setShowAdvanced(checked);
@@ -119,14 +130,16 @@ export default function SystemParametersPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchSettings()
-      .then((config) => {
+    Promise.all([fetchSettings(), fetchZones()])
+      .then(([config, zones]) => {
         if (cancelled) return;
         setSavedConfig(config);
         // Seeded once, from whatever display unit is active at load time —
         // deliberately not re-derived on every unit change, so toggling
         // units elsewhere doesn't clobber an in-progress edit on this page.
         setDraft(buildDraft(config, units));
+        setZoneOptions(zones.map((z) => ({ id: z.id, name: z.name })));
+        setPriorityOrder(config.zone_priority_order);
         setLoading(false);
       })
       .catch((err) => {
@@ -186,6 +199,16 @@ export default function SystemParametersPage() {
     [allFields, isFieldDefault],
   );
 
+  const priorityOrderIsDefault =
+    JSON.stringify(priorityOrder) ===
+    JSON.stringify(SYSTEM_SETTINGS_DEFAULTS.zone_priority_order);
+  const priorityOrderIsDirty =
+    JSON.stringify(priorityOrder) !==
+    JSON.stringify(savedConfig?.zone_priority_order ?? []);
+  const totalDirtyCount = dirtyFields.length + (priorityOrderIsDirty ? 1 : 0);
+  const totalNonDefaultCount =
+    nonDefaultFields.length + (priorityOrderIsDefault ? 0 : 1);
+
   const handleChange = (path: string, raw: string) => {
     setDraft((d) => ({ ...d, [path]: raw }));
   };
@@ -209,13 +232,14 @@ export default function SystemParametersPage() {
     // once (not just the ones already at default) is a real, easy-to-regret
     // action for a page this size.
     setDraft(buildDraft(SYSTEM_SETTINGS_DEFAULTS, units));
+    setPriorityOrder(SYSTEM_SETTINGS_DEFAULTS.zone_priority_order);
     setError(null);
     setWarnings([]);
     setResetAllConfirmOpen(false);
   };
 
   const handleSave = async () => {
-    if (dirtyFields.length === 0) return;
+    if (totalDirtyCount === 0) return;
     setError(null);
     setWarnings([]);
 
@@ -263,12 +287,16 @@ export default function SystemParametersPage() {
       }
       patch.modifier_boosts = boosts;
     }
+    if (priorityOrderIsDirty) {
+      patch.zone_priority_order = priorityOrder;
+    }
 
     setSaving(true);
     try {
       const result = await updateSettings(patch);
       setSavedConfig(result.config);
       setDraft(buildDraft(result.config, units));
+      setPriorityOrder(result.config.zone_priority_order);
       setWarnings(result.warnings);
       showNotification(
         result.warnings.length > 0
@@ -286,6 +314,7 @@ export default function SystemParametersPage() {
   const handleDiscard = () => {
     if (!savedConfig) return;
     setDraft(buildDraft(savedConfig, units));
+    setPriorityOrder(savedConfig.zone_priority_order);
     setError(null);
     setWarnings([]);
   };
@@ -324,14 +353,14 @@ export default function SystemParametersPage() {
           <Button
             size="small"
             color="warning"
-            disabled={nonDefaultFields.length === 0 || saving}
+            disabled={totalNonDefaultCount === 0 || saving}
             onClick={() => setResetAllConfirmOpen(true)}
           >
             Reset all to defaults
           </Button>
           <Button
             size="small"
-            disabled={dirtyFields.length === 0 || saving}
+            disabled={totalDirtyCount === 0 || saving}
             onClick={handleDiscard}
           >
             Discard changes
@@ -339,12 +368,12 @@ export default function SystemParametersPage() {
           <Button
             variant="contained"
             size="small"
-            disabled={dirtyFields.length === 0 || saving}
+            disabled={totalDirtyCount === 0 || saving}
             onClick={handleSave}
           >
             {saving
               ? "Saving…"
-              : `Save${dirtyFields.length > 0 ? ` (${dirtyFields.length})` : ""}`}
+              : `Save${totalDirtyCount > 0 ? ` (${totalDirtyCount})` : ""}`}
           </Button>
         </Stack>
       </Box>
@@ -434,6 +463,39 @@ export default function SystemParametersPage() {
                     );
                   })}
                 </Stack>
+                {group.title === "Contention resolution" && (
+                  <Box sx={{ mt: 2 }}>
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        mb: 1,
+                      }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        Zone priority order — highest first, used when there
+                        isn't enough airflow for every demanding zone at once.
+                      </Typography>
+                      <Button
+                        size="small"
+                        disabled={priorityOrderIsDefault}
+                        onClick={() =>
+                          setPriorityOrder(
+                            SYSTEM_SETTINGS_DEFAULTS.zone_priority_order,
+                          )
+                        }
+                      >
+                        Reset
+                      </Button>
+                    </Box>
+                    <ZonePriorityList
+                      zones={zoneOptions}
+                      value={priorityOrder}
+                      onChange={setPriorityOrder}
+                    />
+                  </Box>
+                )}
               </CardContent>
             </Card>
           );
@@ -447,9 +509,10 @@ export default function SystemParametersPage() {
         <DialogTitle>Reset all parameters to their defaults?</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Every field on this page ({nonDefaultFields.length} currently away
-            from default) reverts to its schema default. Nothing is saved until
-            you click Save — you can still Discard changes instead.
+            Every field on this page, including the zone priority order, (
+            {totalNonDefaultCount} currently away from default) reverts to its
+            schema default. Nothing is saved until you click Save — you can
+            still Discard changes instead.
           </DialogContentText>
         </DialogContent>
         <DialogActions>

@@ -6,6 +6,7 @@ import {
   fireEvent,
   cleanup,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DisplayUnitProvider } from "~/client/theme/DisplayUnitProvider";
@@ -20,11 +21,13 @@ afterEach(cleanup);
 // (bun run test:coverage). Bumped file-wide rather than per-test.
 vi.setConfig({ testTimeout: 15000 });
 
-const { fetchSettings, updateSettings } = vi.hoisted(() => ({
+const { fetchSettings, updateSettings, fetchZones } = vi.hoisted(() => ({
   fetchSettings: vi.fn(),
   updateSettings: vi.fn(),
+  fetchZones: vi.fn(),
 }));
 vi.mock("~/client/api/settingsApi", () => ({ fetchSettings, updateSettings }));
+vi.mock("~/client/api/zonesApi", () => ({ fetchZones }));
 
 const { default: SystemParametersPage } =
   await import("~/client/components/settings/SystemParametersPage");
@@ -50,6 +53,10 @@ describe("SystemParametersPage", () => {
     localStorage.setItem("displayAirflowUnit", "Lps");
     fetchSettings.mockReset().mockResolvedValue(DEFAULT_CONFIG);
     updateSettings.mockReset();
+    fetchZones.mockReset().mockResolvedValue([
+      { id: "z1", name: "Den Front" },
+      { id: "z2", name: "Martin Bedroom" },
+    ]);
   });
 
   afterEach(() => {
@@ -323,5 +330,69 @@ describe("SystemParametersPage", () => {
     expect(
       await screen.findByText("Couldn't save system parameters."),
     ).toBeInTheDocument();
+  });
+
+  describe("zone priority order", () => {
+    it("renders every known zone, its own reset disabled at the default (empty) order", async () => {
+      renderPage();
+      expect(await screen.findByText("1. Den Front")).toBeInTheDocument();
+      expect(screen.getByText("2. Martin Bedroom")).toBeInTheDocument();
+      const section = screen
+        .getByText(/Zone priority order/)
+        .closest("div")!.parentElement!;
+      expect(
+        within(section).getByRole("button", { name: "Reset" }),
+      ).toBeDisabled();
+    });
+
+    it("reordering zones marks the page dirty and enables its own reset", async () => {
+      renderPage();
+      await screen.findByText("1. Den Front");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Move Den Front down" }),
+      );
+      expect(screen.getByText("1. Martin Bedroom")).toBeInTheDocument();
+      expect(screen.getByText("2. Den Front")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Save (1)" }),
+      ).not.toBeDisabled();
+    });
+
+    it("Save includes the reordered zone_priority_order in the patch", async () => {
+      updateSettings.mockResolvedValue({
+        config: { ...DEFAULT_CONFIG, zone_priority_order: ["z2", "z1"] },
+        warnings: [],
+      });
+      renderPage();
+      await screen.findByText("1. Den Front");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Move Den Front down" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save (1)" }));
+      await waitFor(() =>
+        expect(updateSettings).toHaveBeenCalledWith({
+          zone_priority_order: ["z2", "z1"],
+        }),
+      );
+    });
+
+    it("Reset all to defaults also reverts the zone priority order", async () => {
+      renderPage();
+      await screen.findByText("1. Den Front");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Move Den Front down" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset all to defaults" }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Reset all" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByText("Reset all parameters to their defaults?"),
+        ).not.toBeInTheDocument(),
+      );
+      expect(screen.getByText("1. Den Front")).toBeInTheDocument();
+      expect(screen.getByText("2. Martin Bedroom")).toBeInTheDocument();
+    });
   });
 });

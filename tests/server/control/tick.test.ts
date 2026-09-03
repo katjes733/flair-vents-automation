@@ -1406,6 +1406,82 @@ describe("runTick — schedule-driven per-room settings", () => {
 
     expect(decision.zones[0].occupied).toBe(true);
   });
+
+  it("a governing event's own driving_zone_overrides pins the tracked zone, overriding the global default", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // z1's own deviation (1°C) is smaller than z2's (4°C) — dynamic
+      // worst-off selection would pick z2 absent any override.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 14,
+        percentOpen: 50,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 25,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({ id: "z1", flairRoomId: "room-1" }),
+      makeZone({ id: "z2", flairRoomId: "room-2" }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Always On",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+              {
+                zone_id: "z2",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+            // ah-1 is this fixture's air handler id (makeAirHandler()) —
+            // pins tracking to z1 despite z2 being the real worst-off zone.
+            driving_zone_overrides: { "ah-1": "z1" },
+          },
+        ],
+      },
+    ];
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.driving_zone).toEqual({
+      zone_id: "z1",
+      reason: "explicit_override",
+    });
+  });
 });
 
 describe("runTick — quiet actuation during Sleep Mode", () => {

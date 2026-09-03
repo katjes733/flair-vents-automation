@@ -90,3 +90,32 @@ export function selectDrivingZone(params: {
     ? { zoneId: dynamic, reason: "dynamic_worst_off" }
     : { zoneId: null, reason: "none_eligible" };
 }
+
+/**
+ * Resolves the explicit driving-zone override actually in effect for one
+ * air handler this tick. A schedule event's own `driving_zone_overrides`
+ * (same shape as the global setting — keyed by air handler id) takes
+ * precedence over `system_settings.driving_zone_overrides` for as long as
+ * that event is active, letting a schedule period override the default
+ * and revert automatically once the period ends — no separate "restore"
+ * step needed.
+ *
+ * Zones on the same air handler can, in principle, be governed by
+ * different schedule events (different schedules assigned per zone), so
+ * this takes every zone's own governing event's override for this air
+ * handler and requires them to agree. If they disagree, that's a genuine
+ * conflict with no single correct answer — falls back to the global
+ * default rather than arbitrarily picking one.
+ */
+export function resolveExplicitDrivingOverride(params: {
+  airHandlerId: string;
+  eventOverridesByZone: Array<Record<string, string> | undefined | null>;
+  globalOverride: string | null;
+}): string | null {
+  const distinct = new Set(
+    params.eventOverridesByZone
+      .map((overrides) => overrides?.[params.airHandlerId])
+      .filter((v): v is string => v !== undefined),
+  );
+  return distinct.size === 1 ? [...distinct][0] : params.globalOverride;
+}
