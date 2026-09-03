@@ -287,9 +287,7 @@ describe("EventEditorDialog", () => {
     );
     expect(screen.getByLabelText("Cool (°F)")).toHaveValue(70);
     expect(screen.getByLabelText("Heat (°F)")).toHaveValue(66);
-    expect(screen.getByLabelText("Tolerance, °F (blank = tight)")).toHaveValue(
-      1.01,
-    );
+    expect(screen.getByLabelText("Tolerance, °F")).toHaveValue(1.01);
     expect(screen.getByRole("checkbox", { name: "Sleep Mode" })).toBeChecked();
   });
 
