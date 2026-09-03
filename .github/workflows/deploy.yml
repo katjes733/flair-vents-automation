@@ -39,7 +39,7 @@ jobs:
           docker run -d \
             --name flair-vents-automation \
             --network tesla-macvlan \
-            --ip <CONFIRM_STATIC_IP> \
+            --ip 192.168.2.111 \
             --restart unless-stopped \
             --log-driver loki \
             --log-opt loki-url="http://192.168.2.103:3100/loki/api/v1/push" \
