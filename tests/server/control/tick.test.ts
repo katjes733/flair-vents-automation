@@ -396,6 +396,103 @@ describe("runTick — a satisfied zone closes down during someone else's active 
     expect(bedroom?.occupied).toBe(true);
     expect(bedroom?.vents[0]?.commanded_position_pct).toBeLessThan(100);
   });
+
+  // Regression test for the exact live sequence that exposed this: a
+  // short-cycling system kept yanking a closing bedroom back open to
+  // idle_baseline_position every time the compressor cycled to IDLE, then
+  // had to re-close from scratch next cycle — it never actually settled.
+  // Confirmed via real production data: desired 100 -> 90 -> 80 (closing,
+  // COOLING_CALL) -> 90 -> 100 (reset, the instant IDLE hit).
+  it("doesn't reopen an occupied, satisfied zone just because the compressor cycles to IDLE mid-close", async () => {
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Sleep Mode for the bedroom",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z-bedroom",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: true,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const zones = [makeZone({ id: "z-bedroom", flairRoomId: "room-bedroom" })];
+
+    // Tick 1: a real, active cooling call, bedroom already satisfied and
+    // closing down (matches the earlier test's own scenario).
+    const client1 = new FakeFlairClient();
+    setupFlairFixture(
+      client1,
+      [
+        {
+          roomId: "room-bedroom",
+          ventId: "vent-bedroom",
+          tempC: 15,
+          ductC: 14,
+          percentOpen: 100,
+        },
+      ],
+      "cool",
+    );
+    const decision1 = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client1, persisted, NOW),
+    );
+    const closedPosition = decision1.zones[0]?.vents[0]?.commanded_position_pct;
+    expect(decision1.hvac_state).toBe("COOLING_CALL");
+    expect(closedPosition).toBeLessThan(100);
+
+    // Tick 2: the compressor cycles to IDLE, nothing else changes — the
+    // *same* persisted runtime state carries the ramp forward. The old,
+    // buggy behavior would jump this straight back toward 100
+    // (idle_baseline_position, since the zone is occupied); the fix keeps
+    // it continuing from (or at) where it already was.
+    const client2 = new FakeFlairClient();
+    setupFlairFixture(
+      client2,
+      [
+        {
+          roomId: "room-bedroom",
+          ventId: "vent-bedroom",
+          tempC: 15,
+          ductC: 14,
+          percentOpen: closedPosition ?? 100,
+        },
+      ],
+      "idle",
+    );
+    const decision2 = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client2, persisted, NOW + 60_000),
+    );
+
+    expect(decision2.hvac_state).toBe("IDLE");
+    expect(decision2.zones[0]?.classification).toBe("satisfied");
+    expect(
+      decision2.zones[0]?.vents[0]?.commanded_position_pct,
+    ).toBeLessThanOrEqual(closedPosition!);
+  });
 });
 
 describe("runTick — FAN_ONLY/IDLE baselines", () => {
