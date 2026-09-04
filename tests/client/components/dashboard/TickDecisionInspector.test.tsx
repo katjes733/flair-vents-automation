@@ -153,9 +153,7 @@ describe("TickDecisionInspector", () => {
       screen.getByRole("button", { name: "Tick decision inspector" }),
     );
 
-    expect(
-      screen.getByText("holding (Δ12% of 30% to move)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("holding (Δ12%/30%)")).toBeInTheDocument();
     expect(screen.queryByText("suppressed_step_delta")).not.toBeInTheDocument();
   });
 

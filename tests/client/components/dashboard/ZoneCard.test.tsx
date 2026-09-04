@@ -392,9 +392,7 @@ describe("ZoneCard", () => {
       },
     });
     expect(
-      screen.getByText(
-        "42% target · 30% reported · holding (Δ12% of 30% to move)",
-      ),
+      screen.getByText("42% target · 30% reported · holding (Δ12%/30%)"),
     ).toBeInTheDocument();
   });
 
@@ -430,6 +428,45 @@ describe("ZoneCard", () => {
     });
     expect(
       screen.getByText("60% target · 30% reported · sent"),
+    ).toBeInTheDocument();
+  });
+
+  // Regression test: a satisfied, unoccupied zone resting at its own 0%
+  // floor has nothing pending — showing "holding (Δ0% of 15% to move)"
+  // falsely implies a real correction is being deliberately delayed.
+  // Caught live via a screenshot of exactly this state.
+  it("shows 'no change needed' rather than 'holding' for a vent already sitting at its own target", () => {
+    renderCard({
+      tickRecord: {
+        zone_id: "z1",
+        name: "Martin Bedroom",
+        vent_hardware_type: "flair_smart_vent",
+        classification: "satisfied",
+        occupied: false,
+        spiking: false,
+        temp_calibrated: null,
+        resolved_setpoint: null,
+        desired_position_pct: 0,
+        post_contention_position_pct: 0,
+        reason: "",
+        vents: [
+          {
+            flair_vent_id: "vent-1",
+            name: "",
+            commanded_position_pct: 0,
+            reported_position_pct: 0,
+            dispatch_decision: "suppressed_step_delta",
+            step_delta_pct: 0,
+            min_step_delta_pct: 15,
+            degraded: false,
+            voltage: null,
+            current_rssi: null,
+          },
+        ],
+      },
+    });
+    expect(
+      screen.getByText("0% target · 0% reported · no change needed"),
     ).toBeInTheDocument();
   });
 });
