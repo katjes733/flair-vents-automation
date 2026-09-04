@@ -417,9 +417,40 @@ describe("computeZoneCommands — inactive and stale zones", () => {
   });
 });
 
-describe("computeZoneCommands — IDLE/FAN_ONLY baselines", () => {
-  it("rests every smart vent at its idle baseline with no Step 1 math", () => {
+describe("computeZoneCommands — FAN_ONLY baselines", () => {
+  it("rests every smart vent at its occupancy-scaled idle baseline with no Step 1 math", () => {
     const zones = [zone({ zoneId: "z1", idleBaselinePosition: 60 })];
+    const result = computeZoneCommands({
+      state: "FAN_ONLY",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // unoccupied, non-active-call -> idleBaselinePosition * unoccupiedIdleFactor
+    // — FAN_ONLY circulates unconditioned air, so deviation-based math has
+    // nothing to react to, unlike IDLE (see the describe block below).
+    expect(result.commandedPositions["z1"]).toBe(30);
+  });
+});
+
+// Regression coverage for a real gap found live: a satisfied zone was
+// getting shoved back open to idle_baseline_position every time the
+// compressor cycled to IDLE, then had to re-close from scratch next
+// cycle — a short-cycling system never let it settle. IDLE now runs the
+// identical proportional math a real call would, using the same
+// arbitrary-but-harmless cooling-direction default the classification
+// label already used, so a zone's position doesn't reset just because
+// nothing happens to be calling for cooling at this exact instant.
+describe("computeZoneCommands — IDLE runs the same proportional math as an active call", () => {
+  it("opens a demanding zone proportionally instead of resting flat at idle baseline", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 60,
+        calibratedTemp: asAbsoluteTemp(25), // well above setpoint(21) -> demanding
+      }),
+    ];
     const result = computeZoneCommands({
       state: "IDLE",
       zones,
@@ -427,8 +458,56 @@ describe("computeZoneCommands — IDLE/FAN_ONLY baselines", () => {
       capLps: 10000,
       floorLps: 0,
     });
-    // unoccupied, non-active-call -> idleBaselinePosition * unoccupiedIdleFactor
-    expect(result.commandedPositions["z1"]).toBe(30);
+    expect(result.classifications["z1"]).toBe("demanding");
+    expect(result.commandedPositions["z1"]).toBeGreaterThan(60);
+  });
+
+  it("closes a satisfied zone proportionally instead of resting flat at idle baseline", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 100,
+        minVentPosition: 0,
+        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
+        tolerance: asTempDelta(1),
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "IDLE",
+      zones,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("satisfied");
+    expect(result.commandedPositions["z1"]).toBeLessThan(100);
+  });
+
+  it("computes the identical position for a satisfied zone whether the call is genuinely active or the compressor just cycled to idle", () => {
+    const satisfiedZone = {
+      zoneId: "z1",
+      idleBaselinePosition: 100,
+      minVentPosition: 0,
+      calibratedTemp: asAbsoluteTemp(18),
+      tolerance: asTempDelta(1),
+    };
+    const duringCall = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [zone(satisfiedZone)],
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    const duringIdle = computeZoneCommands({
+      state: "IDLE",
+      zones: [zone(satisfiedZone)],
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(duringIdle.commandedPositions["z1"]).toBe(
+      duringCall.commandedPositions["z1"],
+    );
   });
 });
 

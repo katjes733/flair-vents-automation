@@ -220,13 +220,14 @@ export function computeZoneCommands(params: {
       continue;
     }
 
-    if (!callActive) {
-      // IDLE/FAN_ONLY: no Step 1 math (it's only defined for the two call
-      // states) — every smart vent rests at its (occupancy-scaled) idle
-      // baseline.
+    // FAN_ONLY is the one state genuinely unrelated to deviation — the
+    // blower circulates *unconditioned* air, so proportional-to-deviation
+    // math has nothing meaningful to react to. Every zone (sensored or
+    // not) rests at its occupancy-scaled idle baseline, same as ever.
+    if (!callActive && params.state === "FAN_ONLY") {
       classifications[zone.zoneId] = classifyZone({
         hasTemperatureSensor: zone.hasTemperatureSensor,
-        state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only while idle
+        state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only during FAN_ONLY
         calibratedTemp: zone.calibratedTemp,
         resolvedSetpoint: zone.resolvedSetpoint,
         tolerance: zone.tolerance,
@@ -243,9 +244,25 @@ export function computeZoneCommands(params: {
       continue;
     }
 
+    // COOLING_CALL, HEATING_CALL, and now IDLE all reach here. IDLE uses
+    // the same arbitrary cooling-direction default the classification
+    // label already used (see ARBITRARY_IDLE_CALL_STATE) — extended now to
+    // govern *position* too, not just the label. This is a real, confirmed
+    // fix: nothing physically changes the instant a call ends (no air is
+    // moving either way), so there's no reason a satisfied zone should get
+    // shoved back open to idle_baseline_position just because the
+    // compressor happened to cycle off — confirmed live, a short-cycling
+    // system was yanking a closing bedroom back to 100% every time it hit
+    // IDLE, then having to re-close from scratch next cycle, which is
+    // exactly the oscillation this replaces with smooth, uninterrupted
+    // closing (or opening) straight through an idle gap.
+    const effectiveState = callActive
+      ? (params.state as "COOLING_CALL" | "HEATING_CALL")
+      : ARBITRARY_IDLE_CALL_STATE;
+
     const classification = classifyZone({
       hasTemperatureSensor: zone.hasTemperatureSensor,
-      state: params.state as "COOLING_CALL" | "HEATING_CALL",
+      state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
       tolerance: zone.tolerance,
@@ -264,7 +281,7 @@ export function computeZoneCommands(params: {
         maxVentPosition: zone.maxVentPosition,
         occupied: zone.occupied,
         staleOccupancy: zone.staleOccupancy,
-        callActive: true,
+        callActive,
         unoccupiedIdleFactor: params.settings.unoccupiedIdleFactor,
       });
       continue;
@@ -276,7 +293,7 @@ export function computeZoneCommands(params: {
       maxVentPosition: zone.maxVentPosition,
       thermalLoadFlags: zone.thermalLoadFlags,
       hasTemperatureSensor: zone.hasTemperatureSensor,
-      state: params.state as "COOLING_CALL" | "HEATING_CALL",
+      state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
       tolerance: zone.tolerance,
@@ -293,8 +310,12 @@ export function computeZoneCommands(params: {
     // A satisfied zone closes proportionally toward its floor (see
     // computeDesiredPosition's own comment) but isn't competing for scarce
     // airflow — it bypasses Step 3 contention entirely, same as every
-    // other non-demanding path, and goes straight to Step 2 ramping.
-    if (!step1.demanding) {
+    // other non-demanding path, and goes straight to Step 2 ramping. A
+    // "demanding" zone while genuinely IDLE isn't competing for anything
+    // either — there's no real airflow to ration while nothing is
+    // running — so it bypasses contention too, going straight to its own
+    // computed position rather than joining the Step 3 pool.
+    if (!step1.demanding || !callActive) {
       nonDemandingSmartVent[zone.zoneId] = step1.desiredPosition;
       continue;
     }
