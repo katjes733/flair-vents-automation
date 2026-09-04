@@ -3,10 +3,11 @@ import type {
   ThermalLoadFlag,
 } from "~/shared/schemas/zoneConfig";
 import type { AbsoluteTemp, TempDelta } from "~/shared/types/temperature";
-import type {
-  HvacState,
-  ModifierBoosts,
-  ZoneClassification,
+import {
+  ARBITRARY_IDLE_CALL_STATE,
+  type HvacState,
+  type ModifierBoosts,
+  type ZoneClassification,
 } from "~/server/domain/types";
 import { classifyZone } from "~/server/domain/targets/comfortTolerance";
 import { computeDesiredPosition } from "~/server/domain/position/step1DesiredPosition";
@@ -225,7 +226,7 @@ export function computeZoneCommands(params: {
       // baseline.
       classifications[zone.zoneId] = classifyZone({
         hasTemperatureSensor: zone.hasTemperatureSensor,
-        state: "COOLING_CALL", // arbitrary; classification is diagnostic only while idle
+        state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only while idle
         calibratedTemp: zone.calibratedTemp,
         resolvedSetpoint: zone.resolvedSetpoint,
         tolerance: zone.tolerance,

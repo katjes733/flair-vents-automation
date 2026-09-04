@@ -21,6 +21,7 @@ import {
   type VentRuntimeState,
 } from "~/shared/types/zone";
 
+import { ARBITRARY_IDLE_CALL_STATE } from "~/server/domain/types";
 import { deriveHvacState } from "~/server/domain/state/hvacState";
 import {
   detectEquipmentFault,
@@ -835,7 +836,22 @@ export async function runTick(
         zone.config.comfort_tolerance !== undefined
           ? asTempDelta(zone.config.comfort_tolerance)
           : null,
-      state: hvac.state as "COOLING_CALL" | "HEATING_CALL",
+      // A real, confirmed bug found live via shadow-mode evaluation: this
+      // was `hvac.state as "COOLING_CALL" | "HEATING_CALL"` — a cast that
+      // lied about `hvac.state` always being a real call state. On every
+      // IDLE/FAN_ONLY tick, that cast let a literal `"IDLE"` string reach
+      // resolveZoneTargets's `state === "COOLING_CALL"` check, which is
+      // false for `"IDLE"` too, so it silently fell through to the
+      // *heating* setpoint — for a cooling-only household, every idle gap
+      // between cooling cycles was momentarily resolving (and logging) the
+      // wrong setpoint. See "Stage 13, Increment B" and
+      // ARBITRARY_IDLE_CALL_STATE's own comment for why this mirrors
+      // pipeline.ts's identical, already-existing precedent instead of
+      // inventing a second convention.
+      state:
+        hvac.state === "COOLING_CALL" || hvac.state === "HEATING_CALL"
+          ? hvac.state
+          : ARBITRARY_IDLE_CALL_STATE,
     });
     targetsByZone.set(zone.id, target);
   }

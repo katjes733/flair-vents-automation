@@ -393,6 +393,75 @@ describe("runTick — FAN_ONLY/IDLE baselines", () => {
         ?.commanded_position_pct,
     ).toBe(100); // occupied (Sleep Mode) — unscaled
   });
+
+  // Regression test for a real bug found live via shadow-mode evaluation:
+  // `tick.ts` passed `hvac.state as "COOLING_CALL" | "HEATING_CALL"` into
+  // resolveZoneTargets — a cast that lied whenever the real state was
+  // IDLE/FAN_ONLY. Since `"IDLE" === "COOLING_CALL"` is false,
+  // resolveZoneTargets's cool/heat ternary silently fell through to the
+  // *heat* setpoint on every such tick — for a cooling-only household,
+  // every idle gap between cooling cycles briefly resolved (and logged)
+  // the wrong setpoint. Confirmed against real production data: a zone's
+  // `resolved_setpoint` flipped to its configured heat_setpoint in
+  // lockstep with the AC cycling to IDLE, self-correcting the moment a
+  // real call resumed.
+  it("resolves the cool setpoint during FAN_ONLY, never the heat setpoint", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(
+      client,
+      [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 22,
+          ductC: 14,
+          percentOpen: 100,
+        },
+      ],
+      "fan", // FAN_ONLY — no active call, reported confidence
+    );
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const ctx = makeCtx();
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Day",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, new Map(), NOW),
+    );
+
+    expect(decision.hvac_state).toBe("FAN_ONLY");
+    expect(
+      decision.zones.find((z) => z.zone_id === "z1")?.resolved_setpoint,
+    ).toBe(21);
+  });
 });
 
 describe("runTick — mixed vent hardware types", () => {

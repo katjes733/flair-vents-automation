@@ -16,6 +16,8 @@ import {
 } from "~/client/api/airHandlersApi";
 import { fetchZones, type Zone } from "~/client/api/zonesApi";
 import { useTickHistory } from "~/client/components/telemetry/useTickHistory";
+import { useOverrideHistory } from "~/client/components/telemetry/useOverrideHistory";
+import OverrideActivityLane from "~/client/components/telemetry/OverrideActivityLane";
 import ZoneTemperatureChart from "~/client/components/telemetry/ZoneTemperatureChart";
 import VentPositionChart from "~/client/components/telemetry/VentPositionChart";
 import HvacStateTimeline from "~/client/components/telemetry/HvacStateTimeline";
@@ -87,10 +89,17 @@ export default function TelemetryPage() {
     range.toMs,
   );
 
+  const { overrides, refetch: refetchOverrides } = useOverrideHistory(
+    selectedZoneId || null,
+    range.fromMs,
+    range.toMs,
+  );
+
   const handleRefresh = () => {
     const toMs = Date.now();
     setRange({ fromMs: toMs - rangeHours * 3600 * 1000, toMs });
     refetch();
+    refetchOverrides();
   };
 
   const selectedZone = zones.find((z) => z.id === selectedZoneId) ?? null;
@@ -238,6 +247,10 @@ export default function TelemetryPage() {
                   <SpikeEventTimeline
                     points={points}
                     zoneId={selectedZone.id}
+                  />
+                  <OverrideActivityLane
+                    overrides={overrides}
+                    domain={[range.fromMs, range.toMs]}
                   />
                   {selectedZone.config.flair_vents.map((v, i) => (
                     <Box key={v.flair_vent_id}>

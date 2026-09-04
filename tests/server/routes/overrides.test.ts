@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
+import { HttpError } from "~/server/util/httpError";
 
 const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
   getOrCreateDefaultInstallation: vi.fn(),
@@ -15,16 +16,22 @@ const { getZonesForInstallation } = vi.hoisted(() => ({
 }));
 vi.mock("~/server/util/routes/zone", () => ({ getZonesForInstallation }));
 
-const { createOverrideForZone, revokeOverride, getLatestOverridesForZones } =
-  vi.hoisted(() => ({
-    createOverrideForZone: vi.fn(),
-    revokeOverride: vi.fn(),
-    getLatestOverridesForZones: vi.fn(),
-  }));
+const {
+  createOverrideForZone,
+  revokeOverride,
+  getLatestOverridesForZones,
+  getOverrideHistoryForZone,
+} = vi.hoisted(() => ({
+  createOverrideForZone: vi.fn(),
+  revokeOverride: vi.fn(),
+  getLatestOverridesForZones: vi.fn(),
+  getOverrideHistoryForZone: vi.fn(),
+}));
 vi.mock("~/server/util/services/overrideService", () => ({
   createOverrideForZone,
   revokeOverride,
   getLatestOverridesForZones,
+  getOverrideHistoryForZone,
 }));
 
 const { router } = await import("~/server/routes/overrides");
@@ -45,6 +52,7 @@ beforeEach(() => {
   createOverrideForZone.mockReset();
   revokeOverride.mockReset();
   getLatestOverridesForZones.mockReset();
+  getOverrideHistoryForZone.mockReset();
 });
 
 describe("GET /api/v1/overrides", () => {
@@ -139,5 +147,48 @@ describe("POST /api/v1/overrides/:id/revoke", () => {
     const res = await request(buildApp()).post("/api/v1/overrides/mo-1/revoke");
     expect(res.status).toBe(204);
     expect(revokeOverride).toHaveBeenCalledWith("mo-1");
+  });
+});
+
+describe("GET /api/v1/overrides/:zoneId/history", () => {
+  it("rejects a request missing fromMs/toMs", async () => {
+    const res = await request(buildApp()).get("/api/v1/overrides/z1/history");
+    expect(res.status).toBe(400);
+    expect(getOverrideHistoryForZone).not.toHaveBeenCalled();
+  });
+
+  it("rejects toMs at or before fromMs", async () => {
+    const res = await request(buildApp()).get(
+      "/api/v1/overrides/z1/history?fromMs=2000&toMs=1000",
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a range wider than 7 days", async () => {
+    const toMs = 8 * 24 * 3600 * 1000;
+    const res = await request(buildApp()).get(
+      `/api/v1/overrides/z1/history?fromMs=0&toMs=${toMs}`,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for a zone that doesn't exist", async () => {
+    getOverrideHistoryForZone.mockRejectedValue(
+      new HttpError("Zone missing not found.", 404),
+    );
+    const res = await request(buildApp()).get(
+      "/api/v1/overrides/missing/history?fromMs=0&toMs=1000",
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns the zone's override history for the given range", async () => {
+    getOverrideHistoryForZone.mockResolvedValue([{ id: "mo-1" }]);
+    const res = await request(buildApp()).get(
+      "/api/v1/overrides/z1/history?fromMs=0&toMs=1000",
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ id: "mo-1" }]);
+    expect(getOverrideHistoryForZone).toHaveBeenCalledWith("z1", 0, 1000);
   });
 });
