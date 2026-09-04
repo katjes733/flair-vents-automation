@@ -8,6 +8,12 @@ import { formatPct } from "~/client/util/formatPct";
  * Null when there's nothing meaningful to say (no dispatch decision was
  * made this tick at all — e.g. the emergency fail-safe short-circuit,
  * which already reports its own fixed "forced open" reason instead).
+ *
+ * A real gap this fixes: a suppressed dispatch with step_delta_pct === 0
+ * means the target already exactly matches the last thing this app asked
+ * for — there's nothing pending, just nothing new to say — which reads
+ * very differently from "holding (Δ0% of 15% to move)", a phrase that
+ * implies a real, growing correction is being deliberately delayed.
  */
 export function formatDispatchStatus(v: {
   dispatch_decision: string;
@@ -16,5 +22,6 @@ export function formatDispatchStatus(v: {
 }): string | null {
   if (v.dispatch_decision === "dispatched") return "sent";
   if (v.step_delta_pct === null || v.min_step_delta_pct === null) return null;
-  return `holding (Δ${formatPct(v.step_delta_pct)}% of ${formatPct(v.min_step_delta_pct)}% to move)`;
+  if (v.step_delta_pct === 0) return "no change needed";
+  return `holding (Δ${formatPct(v.step_delta_pct)}%/${formatPct(v.min_step_delta_pct)}%)`;
 }
