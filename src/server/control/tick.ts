@@ -1471,10 +1471,24 @@ export async function runTick(
             minStepDeltaPct: effectiveMinStepDeltaPct,
           },
         );
+        // A real, confirmed bug found live via shadow-mode evaluation: this
+        // used to freeze last_reported_position (this app's own persisted
+        // "last thing we told this vent," which the step-delta suppressor
+        // above reads back as lastDispatchedPosition) whenever dryRun was
+        // true, instead of always advancing it like every other piece of
+        // ramp state does. Shadow mode's own stated guarantee is that
+        // dispatch state "advances exactly as it would live" — with this
+        // frozen, a shadowed zone's dispatch decision kept comparing
+        // against the exact same stale baseline forever, so once a zone's
+        // target drifted far enough from it to cross the threshold once,
+        // every subsequent tick recomputed the identical "would dispatch"
+        // answer indefinitely, never settling into "no change needed"
+        // even after the target itself stopped moving. The fail-safe
+        // dispatch path a few hundred lines up never had this bug — it
+        // always advances unconditionally, which is the correct behavior
+        // this now matches.
         vents = patchVentState(vents, ventReading.flairVentId, {
-          last_reported_position: dryRun
-            ? (priorVent?.last_reported_position ?? null)
-            : result.lastDispatchedPosition,
+          last_reported_position: result.lastDispatchedPosition,
         });
         currentVentsByZoneId.set(zone.id, vents);
       } catch (err) {

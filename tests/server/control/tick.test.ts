@@ -1092,6 +1092,69 @@ describe("runTick — shadow mode (dry run)", () => {
     expect(client.getVentCommandHistory()).toHaveLength(0);
     expect(client.getSetpointCommandHistory()).toHaveLength(0);
   });
+
+  // Regression test for a real, confirmed bug found live: a shadowed
+  // zone's persisted last_reported_position (this app's own record of
+  // "the last thing we told this vent," read back as lastDispatchedPosition
+  // — see dispatcher.ts) used to freeze in dry_run mode instead of
+  // advancing like every other piece of ramp state, contradicting shadow
+  // mode's own stated guarantee ("dispatch state advances exactly as it
+  // would live"). With it frozen, a zone whose target had drifted far
+  // enough from the frozen baseline to cross the dispatch threshold once
+  // kept recomputing that identical "would dispatch" answer every
+  // subsequent tick forever, even once its target stopped changing at
+  // all — confirmed live via a screenshot showing a zone stuck showing
+  // "sent" indefinitely while sitting at a stable position.
+  it("advances a shadowed zone's dispatch state across ticks, settling into 'no change needed' rather than re-dispatching forever", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 15, // well below the fallback cool setpoint -> satisfied, closes to floor
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+    ctx.globalDryRun = true;
+
+    const decision1 = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    // First tick ever for this zone — no prior dispatched position on
+    // record, so it unconditionally dispatches once.
+    expect(decision1.zones[0]?.vents[0]?.dispatch_decision).toBe("dispatched");
+    const settledPosition =
+      decision1.zones[0]?.vents[0]?.commanded_position_pct;
+
+    // Tick 2, same reading, same target — reload the zone from what tick 1
+    // actually persisted (mirroring every other multi-tick test's pattern).
+    const zonesTick2 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    const decision2 = await runTick(
+      makeAirHandler(),
+      zonesTick2,
+      ctx,
+      makeDeps(client, persisted, NOW + 60000),
+    );
+
+    expect(decision2.zones[0]?.vents[0]?.commanded_position_pct).toBe(
+      settledPosition,
+    );
+    // The fix under test: dispatch state advanced from tick 1, so tick 2
+    // correctly sees zero accumulated delta — not another "dispatched".
+    expect(decision2.zones[0]?.vents[0]?.dispatch_decision).toBe(
+      "suppressed_step_delta",
+    );
+    expect(decision2.zones[0]?.vents[0]?.step_delta_pct).toBe(0);
+  });
 });
 
 describe("runTick — manual disarm", () => {
