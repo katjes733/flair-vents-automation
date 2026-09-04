@@ -79,15 +79,9 @@ export function computeDesiredPosition(
     };
   }
 
-  if (!demanding) {
-    return {
-      desiredPosition: i.idleBaselinePosition,
-      demanding: false,
-      deviation,
-      clampedBy: null,
-    };
-  }
-
+  // Computed unconditionally — both the demanding (ramp up) and satisfied
+  // (ramp down) branches below scale across the identical band, so a boost
+  // that narrows one side narrows the other too, symmetrically.
   const boosts: number[] = [];
   if (i.occupied) boosts.push(modifierBoosts.occupancy);
   if (i.spiking) boosts.push(modifierBoosts.spike);
@@ -102,6 +96,37 @@ export function computeDesiredPosition(
   }
   const sumBoosts = boosts.reduce((a, b) => a + b, 0);
   const effectiveBand = i.settings.proportionalBandWidthC / (1 + sumBoosts);
+
+  if (!demanding) {
+    // The goal is staying as close to target as possible at all times, not
+    // "hold idle baseline until demanding again" — so a satisfied zone
+    // keeps closing past the comfort boundary rather than snapping flat.
+    // Mirrors the demanding ramp exactly: `overshoot` (how far past the
+    // tolerance edge, in the "too satisfied" direction) plays the same
+    // role `effectiveDemand` plays below, scaled by the same effectiveBand,
+    // running from idleBaselinePosition (overshoot=0, i.e. exactly at the
+    // demanding/satisfied boundary — continuous with the demanding
+    // branch's own ratio=0 value) down to minVentPosition (overshoot >=
+    // effectiveBand). This applies regardless of occupancy: an occupied
+    // room that keeps getting colder closes down just like an empty one —
+    // "occupied" only still matters via the occupancy boost narrowing (or
+    // not) the band itself, same as it already does on the demanding side.
+    // See "Occupancy" — this replaces effectiveIdleBaseline's old flat
+    // idleBaselinePosition return for a satisfied zone during an active
+    // call, which had no mechanism to correct an already-overcooled room.
+    const overshoot = Math.max(0, toleranceC - deviation);
+    const closeRatio =
+      effectiveBand > 0 ? Math.min(1, overshoot / effectiveBand) : 1;
+    const desiredPosition =
+      i.idleBaselinePosition -
+      (i.idleBaselinePosition - i.minVentPosition) * closeRatio;
+    return {
+      desiredPosition,
+      demanding: false,
+      deviation,
+      clampedBy: null,
+    };
+  }
 
   const effectiveDemand = Math.max(0, deviation - toleranceC);
   const ratio =

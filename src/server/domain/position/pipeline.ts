@@ -252,7 +252,12 @@ export function computeZoneCommands(params: {
     });
     classifications[zone.zoneId] = classification;
 
-    if (classification !== "demanding") {
+    // No sensor means no reliable deviation to close proportionally from —
+    // rest at the plain (occupancy-scaled) idle baseline, same as ever.
+    // "demanding" and "satisfied" both have a real sensor reading behind
+    // them and go through computeDesiredPosition below instead, which
+    // handles both directions of the same proportional curve.
+    if (classification === "unclassified_no_sensor") {
       nonDemandingSmartVent[zone.zoneId] = effectiveIdleBaseline({
         idleBaselinePosition: zone.idleBaselinePosition,
         minVentPosition: zone.minVentPosition,
@@ -284,6 +289,15 @@ export function computeZoneCommands(params: {
         heatingChokePositionPct: params.settings.heatingChokePositionPct,
       },
     });
+
+    // A satisfied zone closes proportionally toward its floor (see
+    // computeDesiredPosition's own comment) but isn't competing for scarce
+    // airflow — it bypasses Step 3 contention entirely, same as every
+    // other non-demanding path, and goes straight to Step 2 ramping.
+    if (!step1.demanding) {
+      nonDemandingSmartVent[zone.zoneId] = step1.desiredPosition;
+      continue;
+    }
 
     demanding.push({
       zoneId: zone.zoneId,
