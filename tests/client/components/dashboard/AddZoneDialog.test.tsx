@@ -66,7 +66,7 @@ describe("AddZoneDialog", () => {
     // Default hardware type is manual_fixed_vent — Create stays disabled
     // until a valid position is entered.
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Position 1"), {
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
       target: { value: "40" },
     });
     expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
@@ -78,7 +78,7 @@ describe("AddZoneDialog", () => {
       screen.queryByRole("option", { name: "Flair smart vent" }),
     ).not.toBeInTheDocument();
     await user.click(await screen.findByRole("option", { name: "No vent" }));
-    expect(screen.queryByLabelText("Position 1")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Open Position 1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
   });
 
@@ -93,13 +93,13 @@ describe("AddZoneDialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Guest Bath" },
     });
-    expect(screen.getByLabelText("Position 1")).toHaveValue(null);
+    expect(screen.getByLabelText("Open Position 1")).toHaveValue(null);
 
-    fireEvent.change(screen.getByLabelText("Position 1"), {
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
       target: { value: "75" },
     });
     await user.click(screen.getByRole("button", { name: "Add another vent" }));
-    fireEvent.change(screen.getByLabelText("Position 2"), {
+    fireEvent.change(screen.getByLabelText("Open Position 2"), {
       target: { value: "25" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -123,7 +123,7 @@ describe("AddZoneDialog", () => {
       screen.getByRole("combobox", { name: "Vent hardware type" }),
     );
     await user.click(await screen.findByRole("option", { name: "No vent" }));
-    expect(screen.queryByLabelText(/Position 1/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Open Position 1/)).not.toBeInTheDocument();
   });
 
   it("submits a no_vent zone with no flair_room_id and no vents", async () => {
@@ -162,7 +162,7 @@ describe("AddZoneDialog", () => {
   it("autofills a vent's airflow rating from a picked size, still overridable", async () => {
     const user = userEvent.setup();
     renderDialog();
-    fireEvent.change(screen.getByLabelText("Position 1"), {
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
       target: { value: "75" },
     });
     await user.click(screen.getByRole("combobox", { name: "Vent size" }));
@@ -183,7 +183,7 @@ describe("AddZoneDialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Office" },
     });
-    fireEvent.change(screen.getByLabelText("Position 1"), {
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
       target: { value: "75" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -223,7 +223,7 @@ describe("AddZoneDialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Luke Bathroom" },
     });
-    fireEvent.change(screen.getByLabelText("Position 1"), {
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
       target: { value: "75" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -234,7 +234,7 @@ describe("AddZoneDialog", () => {
     rerenderOpen(true);
 
     expect(screen.getByLabelText("Name")).toHaveValue("");
-    expect(screen.getByLabelText("Position 1")).toHaveValue(null);
+    expect(screen.getByLabelText("Open Position 1")).toHaveValue(null);
     expect(
       screen.queryByText(/already exists on this air handler/),
     ).not.toBeInTheDocument();

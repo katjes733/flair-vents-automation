@@ -50,5 +50,25 @@ jobs:
         id: test-coverage-run
         run: bun test:coverage
 
+  # A separate job, not a step in `build` above — `bun audit` only needs the
+  # lockfile/installed deps, nothing `build`'s steps produce, and it's by far
+  # the slowest single step (3-5 min vs. build's ~1.5 min total). Jobs run
+  # concurrently by default (no `needs:` between them), so this overlaps with
+  # `build` instead of adding to it — PR wait time drops from sum to max.
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install
+
       - name: Audit Dependencies
         run: bun run audit

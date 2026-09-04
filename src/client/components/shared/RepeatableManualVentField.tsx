@@ -2,9 +2,11 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 import Button from "@mui/material/Button";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import VentAirflowRatingField from "~/client/components/shared/VentAirflowRatingField";
 import { AIRFLOW_UNIT_LABELS, type AirflowUnit } from "~/shared/types/airflow";
 
@@ -29,11 +31,22 @@ interface RepeatableManualVentFieldProps {
  *
  * Every control in a row is sized to its actual content (fixed widths,
  * not flex-grown to fill the row) — a position is a 0–100 number, so its
- * field is only as wide as a short label and three digits need, not
- * stretched to match whatever room the dialog happens to have. Confirmed
- * live: an earlier flex-based version left the position field's own label
- * clipped and made the whole row (and the dialog around it, since this
- * row is the widest thing in it) wider than it needed to be.
+ * field stays a narrow, fixed 106px (matching every other short field in
+ * this row) rather than stretched to match whatever room the dialog
+ * happens to have, even though its label ("Open Position N" — deliberately
+ * not just "Position N", which real user feedback found ambiguous: this
+ * is how open the physical vent currently is, 0-100%, not an ordering/
+ * priority index) is wider than the field itself when unfocused/empty —
+ * an accepted, deliberate tradeoff (kept narrow on request) rather than
+ * a bug. Confirmed live: an earlier flex-based version left the position
+ * field's own label clipped and made the whole row (and the dialog around
+ * it, since this row is the widest thing in it) wider than it needed to be.
+ *
+ * A dedicated info tooltip sits beside the field for the same reason,
+ * mirroring ParamField.tsx's info-icon convention — the label alone
+ * (even the clarified "Open Position") doesn't carry "you have to go
+ * check the physical vent yourself; this app can't sense it," which is
+ * exactly the part that read as confusing before the label was clarified.
  */
 export default function RepeatableManualVentField({
   values,
@@ -64,10 +77,19 @@ export default function RepeatableManualVentField({
           key={index}
           sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}
         >
+          <Tooltip title="How open this vent physically is right now, 0-100% — check the vent itself; this app has no way to sense it.">
+            <IconButton
+              size="small"
+              aria-label={`About Open Position ${index + 1}`}
+              sx={{ mt: 0.5 }}
+            >
+              <InfoOutlinedIcon fontSize="small" color="action" />
+            </IconButton>
+          </Tooltip>
           <TextField
             size="small"
             type="number"
-            label={`Position ${index + 1}`}
+            label={`Open Position ${index + 1}`}
             value={row.position}
             onChange={(e) => handlePositionChange(index, e.target.value)}
             sx={{ width: 106 }}
