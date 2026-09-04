@@ -30,6 +30,15 @@ export interface ZoneTickDecision {
   classification: string;
   occupied: boolean;
   spiking: boolean;
+  // The zone's own calibrated reading this tick — Celsius, always (see
+  // "Temperature units"). Null when no live reading exists this tick (an
+  // unsensored zone, or the emergency fail-safe's short-circuit path,
+  // which fetches no live Flair snapshot at all). Added specifically so
+  // Stage 13 Increment B's ZoneTemperatureChart can be built from this
+  // already-info-level, already-historically-logged record rather than
+  // needing `Zone evaluated` (debug-only, absent from production Loki at
+  // the deployed LOG_LEVEL=info) or a new Postgres telemetry table.
+  temp_calibrated: number | null;
   // The zone's own resolved target this tick — the value its current
   // reading is actually being compared against to decide
   // satisfied/demanding. Celsius, always (see "Temperature units");

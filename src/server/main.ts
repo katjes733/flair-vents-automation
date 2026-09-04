@@ -17,6 +17,7 @@ import { router as OverridesRouter } from "~/server/routes/overrides";
 import { router as SettingsRouter } from "~/server/routes/settings";
 import { router as ControlRouter } from "~/server/routes/control";
 import { router as SyncRouter } from "~/server/routes/sync";
+import { router as TelemetryRouter } from "~/server/routes/telemetry";
 import { errorHandler } from "~/server/middleware/errorHandler";
 import { HttpError } from "~/server/util/httpError";
 import { redis } from "~/server/util/redis";
@@ -125,6 +126,7 @@ app.use("/api/v1/overrides", OverridesRouter);
 app.use("/api/v1/settings", SettingsRouter);
 app.use("/api/v1/control", ControlRouter);
 app.use("/api/v1/sync", SyncRouter);
+app.use("/api/v1/telemetry", TelemetryRouter);
 
 // Bare (not /api/v1) — this must match the OAuth redirect_uri Flair itself
 // is configured with, and is only ever reached in authorization_code mode.

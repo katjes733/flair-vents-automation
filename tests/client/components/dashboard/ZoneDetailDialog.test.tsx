@@ -422,6 +422,7 @@ describe("ZoneDetailDialog", () => {
         classification: "demanding",
         occupied: false,
         spiking: false,
+        temp_calibrated: null,
         resolved_setpoint: null,
         desired_position_pct: 100,
         post_contention_position_pct: 100,

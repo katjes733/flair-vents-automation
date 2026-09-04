@@ -72,6 +72,7 @@ function makeDecision(
         classification: "satisfied",
         occupied: false,
         spiking: false,
+        temp_calibrated: null,
         resolved_setpoint: 21,
         desired_position_pct: 40,
         post_contention_position_pct: 40,

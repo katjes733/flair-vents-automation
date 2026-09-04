@@ -28,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard" },
   { path: "/schedules", label: "Schedules" },
   { path: "/diagnostics", label: "Diagnostics" },
+  { path: "/telemetry", label: "Telemetry" },
   { path: "/settings", label: "Settings" },
   { path: "/system-parameters", label: "System Parameters" },
 ];
