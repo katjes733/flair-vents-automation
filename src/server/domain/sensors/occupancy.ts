@@ -42,15 +42,25 @@ export function evaluateOccupancy(params: {
 }
 
 /**
- * The occupancy-scaled idle baseline fix (see "Occupancy-scaled idle
- * baseline" in the plan): during an active call, a satisfied-and-
- * unoccupied zone closes all the way to its own min_vent_position floor,
- * not a scaled fraction — there's no reason to hold a room open once it's
- * both comfortable and empty while the equipment is actively working.
- * During FAN_ONLY/IDLE, the gentler unoccupiedIdleFactor reduction applies
- * instead (circulation fairness, not scarcity). Stale occupancy falls back
- * to the plain, unscaled baseline in both cases — the safe direction to
- * err when occupancy might be wrong.
+ * The occupancy-scaled idle baseline for a zone with no real deviation to
+ * react to — either genuinely resting (FAN_ONLY/IDLE, no call active at
+ * all) or sensorless (has_temperature_sensor false, so there's no
+ * deviation to compute a proportional close from even during a real
+ * call). A *sensored* zone that's actually "satisfied" during an active
+ * call no longer goes through this function at all — see
+ * `step1DesiredPosition.ts`'s own not-demanding branch, which closes it
+ * proportionally toward its floor as it gets further past comfortable,
+ * regardless of occupancy, rather than resting flat here.
+ *
+ * During an active call: unoccupied closes all the way to
+ * min_vent_position (no reason to hold a sensorless, empty room open while
+ * the equipment works); occupied stays at the plain idle_baseline_position
+ * (no data at all to react to, so err toward not cutting off airflow to an
+ * occupied room). During FAN_ONLY/IDLE, the gentler unoccupiedIdleFactor
+ * reduction applies instead of a full close (circulation fairness, not
+ * scarcity — nothing is actively running either way). Stale occupancy
+ * falls back to the plain, unscaled baseline in both cases — the safe
+ * direction to err when occupancy might be wrong.
  */
 export function effectiveIdleBaseline(params: {
   idleBaselinePosition: number;

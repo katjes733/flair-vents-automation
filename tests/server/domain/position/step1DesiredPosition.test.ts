@@ -155,4 +155,93 @@ describe("computeDesiredPosition", () => {
     expect(result.desiredPosition).toBe(40);
     expect(result.clampedBy).toBe("max_position_below_idle_baseline");
   });
+
+  // Regression coverage for a real gap found live: a satisfied zone
+  // previously held flat at idle_baseline_position forever once satisfied,
+  // with nothing correcting an already-overcooled room — see "the goal is
+  // staying as close to target as possible at all times" in the
+  // implementation plan follow-up. This mirrors the demanding-side ramp
+  // exactly, just closing instead of opening.
+  describe("closing proportionally once satisfied", () => {
+    it("stays exactly at idle baseline right at the demanding/satisfied boundary (continuous with the demanding branch)", () => {
+      const result = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 100,
+          minVentPosition: 0,
+          tolerance: asTempDelta(1),
+          calibratedTemp: asAbsoluteTemp(22), // deviation = 22-21 = 1 = tolerance exactly
+        }),
+      );
+      expect(result.demanding).toBe(false);
+      expect(result.desiredPosition).toBe(100);
+    });
+
+    it("closes partway as the room gets colder past the comfort boundary", () => {
+      const result = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 100,
+          minVentPosition: 0,
+          tolerance: asTempDelta(1),
+          // deviation = 21 - 21 = 0 (colder than setpoint by 1 relative to
+          // the tolerance edge) -> overshoot = 1 - 0 = 1 against a
+          // 1.67 effectiveBand -> ~40% closed toward the floor.
+          calibratedTemp: asAbsoluteTemp(21),
+        }),
+      );
+      expect(result.demanding).toBe(false);
+      expect(result.desiredPosition).toBeLessThan(100);
+      expect(result.desiredPosition).toBeGreaterThan(0);
+    });
+
+    it("fully closes to min_vent_position once far enough past comfortable", () => {
+      const result = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 100,
+          minVentPosition: 5,
+          tolerance: asTempDelta(1),
+          // deviation = 15 - 21 = -6, overshoot = 1 - (-6) = 7, far past a
+          // 1.67 effectiveBand -> saturates at the floor, not below it.
+          calibratedTemp: asAbsoluteTemp(15),
+        }),
+      );
+      expect(result.demanding).toBe(false);
+      expect(result.desiredPosition).toBe(5);
+    });
+
+    it("closes an occupied zone too — occupancy no longer holds a satisfied zone open indefinitely", () => {
+      const result = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 100,
+          minVentPosition: 0,
+          tolerance: asTempDelta(1),
+          calibratedTemp: asAbsoluteTemp(15),
+          occupied: true,
+        }),
+      );
+      expect(result.demanding).toBe(false);
+      expect(result.desiredPosition).toBe(0);
+    });
+
+    it("a boost narrows the closing band too, same as it narrows the opening band", () => {
+      const unboosted = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 100,
+          minVentPosition: 0,
+          tolerance: asTempDelta(1),
+          calibratedTemp: asAbsoluteTemp(20.5),
+        }),
+      );
+      const boosted = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 100,
+          minVentPosition: 0,
+          tolerance: asTempDelta(1),
+          calibratedTemp: asAbsoluteTemp(20.5),
+          occupied: true, // narrows effectiveBand -> reaches the floor sooner
+        }),
+      );
+      expect(unboosted.desiredPosition).toBeGreaterThan(0);
+      expect(boosted.desiredPosition).toBeLessThan(unboosted.desiredPosition);
+    });
+  });
 });

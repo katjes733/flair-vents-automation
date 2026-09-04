@@ -318,6 +318,86 @@ describe("runTick — no contention", () => {
   });
 });
 
+// Regression test for a real gap found live via a user screenshot: an
+// occupied, satisfied bedroom's vent stayed pinned at 100% indefinitely
+// during a real cooling call driven by a different, still-demanding zone
+// — nothing corrected it as it kept getting colder past its own setpoint.
+// See "the goal is staying as close to target as possible at all times" —
+// a satisfied zone now closes proportionally toward its floor regardless
+// of occupancy, exactly like the demanding side ramps up.
+describe("runTick — a satisfied zone closes down during someone else's active call", () => {
+  it("closes an occupied, already-cold bedroom instead of leaving it pinned at its idle baseline", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-bedroom",
+        ventId: "vent-bedroom",
+        tempC: 15, // well past satisfied — should close hard toward the floor
+        ductC: 14,
+        percentOpen: 100,
+      },
+      {
+        roomId: "room-office",
+        ventId: "vent-office",
+        tempC: 30, // keeps the call genuinely active
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({ id: "z-bedroom", flairRoomId: "room-bedroom" }),
+      makeZone({ id: "z-office", flairRoomId: "room-office" }),
+    ];
+    const ctx = makeCtx();
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Sleep Mode for the bedroom",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z-bedroom",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: true,
+              },
+              {
+                zone_id: "z-office",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, new Map(), NOW),
+    );
+
+    expect(decision.hvac_state).toBe("COOLING_CALL");
+    const bedroom = decision.zones.find((z) => z.zone_id === "z-bedroom");
+    expect(bedroom?.classification).toBe("satisfied");
+    expect(bedroom?.occupied).toBe(true);
+    expect(bedroom?.vents[0]?.commanded_position_pct).toBeLessThan(100);
+  });
+});
+
 describe("runTick — FAN_ONLY/IDLE baselines", () => {
   it("scales an unoccupied zone's idle baseline down, but leaves an occupied (Sleep Mode) zone's baseline unscaled", async () => {
     const client = new FakeFlairClient();

@@ -157,9 +157,13 @@ describe("computeZoneCommands — the join between classification and contention
       floorLps: 0,
     });
     expect(result.classifications["satisfied"]).toBe("satisfied");
-    // The satisfied zone rests at its (occupancy-scaled) idle baseline —
-    // it was never a Step 3 candidate to reduce.
-    expect(result.commandedPositions["satisfied"]).toBe(0); // min_vent_position floor, unoccupied+active call
+    // The satisfied zone closes proportionally toward its floor (see
+    // step1DesiredPosition.ts's not-demanding branch) — it was never a
+    // Step 3 candidate to reduce, regardless of what it closed to.
+    // deviation=0 (temp 21 == setpoint 21), tolerance=1, so overshoot=1
+    // against effectiveBand=1.67 (unboosted): 100 - 100*(1/1.67) ≈ 40.12,
+    // quantized to the nearest modulationStepPct (1%) by Step 2.
+    expect(result.commandedPositions["satisfied"]).toBe(40);
   });
 });
 
