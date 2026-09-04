@@ -1,6 +1,7 @@
 import http from "http";
 import https from "https";
 import fs from "fs";
+import path from "path";
 import { randomBytes } from "crypto";
 import express from "express";
 import helmet from "helmet";
@@ -195,6 +196,40 @@ app.get("/callback", async (req, res) => {
 
   res.type("html").send(renderOAuthCallbackPage({ success: true, nonce }));
 });
+
+// Serves the built React frontend — dev mode never reaches this (Vite's own
+// dev server on 5173 serves the frontend there, proxying /api/v1/* to this
+// process); a real single-process deploy has no separate frontend server,
+// so this process must serve it too. This was never exercised until a real
+// deploy actually hit "Cannot GET /" — every prior verification in this
+// project ran via `bun run dev`'s two-server split, which never needed it.
+// Mirrors tesla-powerwall-automation's own working main.ts pattern exactly
+// (verified there directly) rather than inventing a new one: index.html
+// gets a hard no-store (a stale cached index.html can silently keep
+// referencing old, no-longer-existing hashed asset filenames after a
+// deploy, per vite.config.ts's emptyOutDir), while the hashed assets
+// themselves are safe to cache indefinitely, since any content change
+// gives them a new URL.
+if (process.env.NODE_ENV !== "development") {
+  logger.info("Serving static files from 'public' directory");
+  const NEVER_CACHE = "no-cache, no-store, must-revalidate";
+  app.use(
+    express.static(path.join(process.cwd(), "public"), {
+      setHeaders: (res, filePath) => {
+        if (path.basename(filePath) === "index.html") {
+          res.setHeader("Cache-Control", NEVER_CACHE);
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }),
+  );
+  app.use((_req, res) => {
+    res.sendFile(path.join(process.cwd(), "public", "index.html"), {
+      headers: { "Cache-Control": NEVER_CACHE },
+    });
+  });
+}
 
 app.use(errorHandler);
 
