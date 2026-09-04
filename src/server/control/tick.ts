@@ -21,7 +21,10 @@ import {
   type VentRuntimeState,
 } from "~/shared/types/zone";
 
-import { ARBITRARY_IDLE_CALL_STATE } from "~/server/domain/types";
+import {
+  ARBITRARY_IDLE_CALL_STATE,
+  type HvacCallState,
+} from "~/server/domain/types";
 import { deriveHvacState } from "~/server/domain/state/hvacState";
 import {
   detectEquipmentFault,
@@ -39,6 +42,7 @@ import {
   resolveZoneTargets,
   type GoverningEvent,
 } from "~/server/domain/targets/resolveTargets";
+import { applyAwayTargets } from "~/server/domain/targets/awayMode";
 import {
   selectActiveEvents,
   resolveGoverningEvent,
@@ -426,6 +430,21 @@ export async function runTick(
   );
   const callActive =
     hvac.state === "COOLING_CALL" || hvac.state === "HEATING_CALL";
+  // The single shared "which direction" input for every computation below
+  // that needs a call-direction decision but isn't itself gated on
+  // callActive (away/fallback setpoint selection, driving-zone deviation,
+  // setpoint-push termination direction) — mirrors pipeline.ts's own
+  // ARBITRARY_IDLE_CALL_STATE convention. A real, confirmed bug this fixes:
+  // each of those four call sites used to compare the raw `hvac.state`
+  // against a literal `"COOLING_CALL"` directly, which is always false
+  // during FAN_ONLY/IDLE regardless of which direction the system actually
+  // runs — silently resolving the *heat* setpoint/deviation direction on
+  // every idle/fan tick for this cooling-focused household. One shared
+  // value here instead of four independent copies of the same ternary is
+  // exactly what stops a fifth copy from drifting the same way.
+  const effectiveCallState: HvacCallState = callActive
+    ? (hvac.state as HvacCallState)
+    : ARBITRARY_IDLE_CALL_STATE;
 
   if (priorRuntime.lastHvacState !== hvac.state) {
     logHvacStateTransition(log, {
@@ -761,17 +780,15 @@ export async function runTick(
       : new Set<string>(),
     nativeAwayZoneIds: new Set(ctx.settings.away_native_zone_ids),
   };
-  const awayTargets = {
-    setpoint: asAbsoluteTemp(
-      hvac.state === "COOLING_CALL"
-        ? ctx.settings.away_setpoint_cool
-        : ctx.settings.away_setpoint_heat,
-    ),
-    tolerance: asTempDelta(ctx.settings.away_tolerance),
-  };
+  const awayTargets = applyAwayTargets({
+    awaySetpointCool: asAbsoluteTemp(ctx.settings.away_setpoint_cool),
+    awaySetpointHeat: asAbsoluteTemp(ctx.settings.away_setpoint_heat),
+    awayTolerance: asTempDelta(ctx.settings.away_tolerance),
+    state: effectiveCallState,
+  });
   const fallback = {
     setpoint: asAbsoluteTemp(
-      hvac.state === "COOLING_CALL"
+      effectiveCallState === "COOLING_CALL"
         ? ctx.settings.fallback_setpoint_cool
         : ctx.settings.fallback_setpoint_heat,
     ),
@@ -837,21 +854,14 @@ export async function runTick(
           ? asTempDelta(zone.config.comfort_tolerance)
           : null,
       // A real, confirmed bug found live via shadow-mode evaluation: this
-      // was `hvac.state as "COOLING_CALL" | "HEATING_CALL"` — a cast that
-      // lied about `hvac.state` always being a real call state. On every
-      // IDLE/FAN_ONLY tick, that cast let a literal `"IDLE"` string reach
-      // resolveZoneTargets's `state === "COOLING_CALL"` check, which is
-      // false for `"IDLE"` too, so it silently fell through to the
-      // *heating* setpoint — for a cooling-only household, every idle gap
-      // between cooling cycles was momentarily resolving (and logging) the
-      // wrong setpoint. See "Stage 13, Increment B" and
-      // ARBITRARY_IDLE_CALL_STATE's own comment for why this mirrors
-      // pipeline.ts's identical, already-existing precedent instead of
-      // inventing a second convention.
-      state:
-        hvac.state === "COOLING_CALL" || hvac.state === "HEATING_CALL"
-          ? hvac.state
-          : ARBITRARY_IDLE_CALL_STATE,
+      // used to be `hvac.state as "COOLING_CALL" | "HEATING_CALL"` — a cast
+      // that lied about `hvac.state` always being a real call state, so
+      // every IDLE/FAN_ONLY tick silently fell through to the *heating*
+      // setpoint for this cooling-only household. Now uses the same shared
+      // effectiveCallState every other non-callActive-gated call-direction
+      // decision this tick uses, instead of its own independent copy of
+      // the same fallback ternary — see effectiveCallState's own comment.
+      state: effectiveCallState,
       minimumComfortTolerance: asTempDelta(
         ctx.settings.minimum_comfort_tolerance_c,
       ),
@@ -1155,9 +1165,19 @@ export async function runTick(
     .map((z) => {
       const reading = readings.get(z.id)!.room;
       const target = targetsByZone.get(z.id)!;
+      // A real, confirmed bug: this used to compare the raw `hvac.state`
+      // against a literal "COOLING_CALL", which is always false during
+      // FAN_ONLY/IDLE regardless of which direction the system actually
+      // runs. Since every candidate's deviation flips sign uniformly, the
+      // effect wasn't just "wrong magnitude" — among zones already
+      // correctly flagged demanding, it inverted the worst-off ranking
+      // (a room barely over its setpoint would look "worse" than one
+      // spiking hard), so the setpoint push could get calibrated to the
+      // wrong zone's offset during every idle/fan gap. See
+      // effectiveCallState's own comment.
       const deviation =
         reading.calibratedTemp !== null && target.setpoint !== null
-          ? hvac.state === "COOLING_CALL"
+          ? effectiveCallState === "COOLING_CALL"
             ? reading.calibratedTemp - target.setpoint
             : target.setpoint - reading.calibratedTemp
           : -Infinity;
@@ -1298,7 +1318,12 @@ export async function runTick(
     const trackedZone = zones.find((z) => z.id === drivingSelection.zoneId)!;
     const trackedTarget = targetsByZone.get(trackedZone.id)!;
     const pushResult = computeSetpointPush({
-      state: hvac.state as "COOLING_CALL" | "HEATING_CALL",
+      // A real, confirmed bug: this used to cast the raw `hvac.state`
+      // rather than substituting effectiveCallState, so the termination
+      // branch's min/max direction (only reachable once demandingZoneCount
+      // is 0) picked the wrong direction during FAN_ONLY/IDLE — see
+      // effectiveCallState's own comment.
+      state: effectiveCallState,
       trackedZoneSetpoint: trackedTarget.setpoint ?? 0,
       trackedZoneTemp: readings.get(trackedZone.id)!.room.calibratedTemp,
       trackedZoneStale: zoneStaleness.get(trackedZone.id) ?? false,

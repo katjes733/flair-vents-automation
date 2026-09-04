@@ -1694,6 +1694,151 @@ describe("runTick — Away Mode (partial house)", () => {
   });
 });
 
+// Regression coverage for a real, confirmed bug found live: awayTargets and
+// fallback both used to compare the raw hvac.state against a literal
+// "COOLING_CALL" directly, which is always false during FAN_ONLY/IDLE
+// regardless of which direction the system actually runs — silently
+// resolving the *heat* setpoint on every idle/fan tick for this
+// cooling-only household. Fixed via the shared effectiveCallState.
+describe("runTick — away/fallback targets resolve the correct (cooling) direction during FAN_ONLY", () => {
+  it("resolves the away zone as satisfied against the away *cool* setpoint, not the heat one", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(
+      client,
+      [
+        {
+          roomId: "room-away",
+          ventId: "vent-away",
+          tempC: 25,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ],
+      "fan", // FAN_ONLY — the buggy code path only misfired here, never during COOLING_CALL
+    );
+    const zones = [makeZone({ id: "z-away", flairRoomId: "room-away" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ away_native_zone_ids: ["z-away"] });
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.hvac_state).toBe("FAN_ONLY");
+    // Correct (cool) target: away_setpoint_cool 27.78°C ± away_tolerance
+    // 2.78°C comfortably covers a 25°C room -> satisfied. The pre-fix bug
+    // resolved away_setpoint_heat (15.56°C) instead, which a 25°C room is
+    // nowhere near -> would have read "demanding".
+    expect(
+      decision.zones.find((z) => z.zone_id === "z-away")?.classification,
+    ).toBe("satisfied");
+  });
+
+  it("resolves an unscheduled zone's fallback target against the fallback *cool* setpoint, not the heat one", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(
+      client,
+      [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          // Barely above the correct fallback_setpoint_cool (23.89°C),
+          // within the 0.56°C minimum-tolerance floor -> satisfied. The
+          // pre-fix bug would have resolved fallback_setpoint_heat
+          // (21.11°C) instead, which this same reading sits 2.79°C past
+          // -> would have read "demanding".
+          tempC: 23.9,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ],
+      "fan",
+    );
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.hvac_state).toBe("FAN_ONLY");
+    expect(decision.zones.find((z) => z.zone_id === "z1")?.classification).toBe(
+      "satisfied",
+    );
+  });
+});
+
+// Regression coverage for a second real, confirmed bug in the same family:
+// drivingCandidates' deviation formula had the identical raw-hvac.state
+// comparison. Because every candidate's deviation flips sign uniformly
+// during FAN_ONLY/IDLE, the bug didn't just get the magnitude wrong — among
+// zones already correctly flagged demanding, it inverted the worst-off
+// ranking (a room barely over its setpoint looked "worse" than one
+// spiking hard), so the setpoint push could get calibrated to the wrong
+// zone's offset during every idle/fan gap.
+describe("runTick — driving-zone selection ranks the genuinely worst-off zone during FAN_ONLY", () => {
+  it("tracks the sharply spiking zone, not the one barely over its target", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(
+      client,
+      [
+        {
+          roomId: "room-barely",
+          ventId: "vent-barely",
+          // ~0.6°C past the fallback cool setpoint (23.89°C) + the 0.56°C
+          // minimum-tolerance floor -> hairline demanding.
+          tempC: 24.5,
+          ductC: 14,
+          percentOpen: 50,
+        },
+        {
+          roomId: "room-spike",
+          ventId: "vent-spike",
+          // Way past target -> the genuinely worst-off zone.
+          tempC: 30,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ],
+      "fan",
+    );
+    const zones = [
+      makeZone({ id: "z-barely", flairRoomId: "room-barely" }),
+      makeZone({ id: "z-spike", flairRoomId: "room-spike" }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.hvac_state).toBe("FAN_ONLY");
+    expect(
+      decision.zones.find((z) => z.zone_id === "z-barely")?.classification,
+    ).toBe("demanding");
+    expect(
+      decision.zones.find((z) => z.zone_id === "z-spike")?.classification,
+    ).toBe("demanding");
+    // The pre-fix bug's inverted ranking would have tracked "z-barely"
+    // instead (its wrongly-signed deviation, -3.39, beats z-spike's -8.89).
+    expect(decision.driving_zone).toEqual({
+      zone_id: "z-spike",
+      reason: "dynamic_worst_off",
+    });
+  });
+});
+
 describe("runTick — schedule-driven per-room settings", () => {
   it("applies a governing event's per-zone setpoint, tolerance, and Sleep Mode override", async () => {
     const client = new FakeFlairClient();
