@@ -1,10 +1,13 @@
 name: verify
 
+# Deliberately no `push` trigger for feature branches — every change merges
+# through a PR (branch protection requires the `pull_request` run below
+# anyway), so a duplicate `push`-triggered run of the same commit added no
+# real coverage, just doubled CI minutes. Diverges from
+# tesla-powerwall-automation's/wake-on-lan's own verify.yml, which both
+# still have the redundant push trigger — a deliberate choice for this repo,
+# not an oversight.
 on:
-  push:
-    branches-ignore:
-      - main
-      - master
   pull_request:
     branches:
       - main
