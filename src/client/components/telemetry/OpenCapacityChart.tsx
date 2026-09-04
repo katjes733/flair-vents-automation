@@ -19,7 +19,10 @@ import { formatChartTime } from "~/client/components/shared/charts/chartTime";
 import ChartTooltip, {
   type ChartTooltipRow,
 } from "~/client/components/shared/charts/ChartTooltip";
-import { buildOpenCapacityData } from "~/client/components/telemetry/chartData";
+import {
+  buildOpenCapacityData,
+  computeOpenCapacityYTicks,
+} from "~/client/components/telemetry/chartData";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 
 interface OpenCapacityChartProps {
@@ -66,6 +69,14 @@ export default function OpenCapacityChart({
     }
     return null;
   }, [data]);
+
+  // See computeOpenCapacityYTicks's own comment — a real bug found live
+  // (an unrounded "157.70078406442045%" tick) from assuming aggregate_open_pct
+  // never exceeds 100%.
+  const yTicks = useMemo(
+    () => computeOpenCapacityYTicks(data, capPct),
+    [data, capPct],
+  );
 
   const renderTooltip = useCallback(
     (props: {
@@ -143,8 +154,9 @@ export default function OpenCapacityChart({
             minTickGap={40}
           />
           <YAxis
-            domain={[0, 100]}
-            tickFormatter={(v: number) => `${v}%`}
+            domain={[0, yTicks[yTicks.length - 1]]}
+            ticks={yTicks}
+            tickFormatter={(v: number) => `${v.toFixed(0)}%`}
             tick={{ fontSize: 11, fill: theme.palette.text.secondary }}
             axisLine={false}
             tickLine={false}

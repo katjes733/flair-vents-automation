@@ -167,6 +167,7 @@ describe("ZoneCard", () => {
           hold_type: "2h",
           actor: "Martin",
         },
+        createdAtMs: 0,
         expiresAtMs: null,
         revokedAtMs: null,
         active: true,

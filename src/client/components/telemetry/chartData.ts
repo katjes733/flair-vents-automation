@@ -4,11 +4,13 @@ import {
   type TemperatureUnit,
 } from "~/shared/types/temperature";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
+import type { ManualOverrideRecord } from "~/client/api/overridesApi";
 import {
   computeTruePeriods,
   type BooleanPeriod,
   type Sample,
 } from "~/client/components/shared/charts/timelineSegments";
+import { niceTickInterval } from "~/client/components/shared/charts/chartMath";
 
 /**
  * Every pure data-transformation this app's Increment-B telemetry views
@@ -87,6 +89,34 @@ export function buildOpenCapacityData(
     openPct: p.decision.pressure?.aggregate_open_pct ?? null,
     capPct: p.decision.pressure?.cap_pct ?? null,
   }));
+}
+
+/**
+ * OpenCapacityChart's Y-axis ticks — a real bug found live: a fixed
+ * `domain={[0, 100]}` either clips real data or leaves Recharts to
+ * auto-extend the domain with an unrounded, raw-float tick label sitting
+ * exactly at the data's real max (confirmed live against production data:
+ * "157.70078406442045%", since `aggregate_open_pct` is relative to the
+ * blower's rated flow, not a hard 100% ceiling, and this deployment's real
+ * aggregate genuinely exceeds it). Always computing fresh, evenly-spaced
+ * ticks — covering at least 100% so the ordinary case still reads as a
+ * clean 0/40/80/100-style scale — fixes both the clipping and the
+ * unrounded-label problem at once.
+ */
+export function computeOpenCapacityYTicks(
+  data: OpenCapacityChartRow[],
+  capPct: number | null,
+): number[] {
+  const values = data.flatMap((d) => (d.openPct !== null ? [d.openPct] : []));
+  if (capPct !== null) values.push(capPct);
+  const max = values.length > 0 ? Math.max(...values, 100) : 100;
+  const interval = niceTickInterval(0, max);
+  const domainMax = Math.ceil(max / interval) * interval;
+  const ticks: number[] = [];
+  for (let v = 0; v <= domainMax + 1e-9; v += interval) {
+    ticks.push(Math.round(v / interval) * interval);
+  }
+  return ticks;
 }
 
 export interface AgreementMetricResult {
@@ -181,4 +211,41 @@ export function findLatestVentName(
     if (vent?.name) return vent.name;
   }
   return null;
+}
+
+export interface OverrideSegment {
+  startMs: number;
+  endMs: number;
+  override: ManualOverrideRecord;
+}
+
+/**
+ * Turns override rows into non-overlapping display segments for the
+ * override activity lane — see "Stage 13, Increment B" follow-up. The
+ * `manual_overrides` table is append-only and never marks a row as
+ * "superseded" when a newer one is created for the same zone (see the Data
+ * Model's "last-write-wins" rule) — `resolveManualOverride`'s own "most
+ * recent row per zone" selection is what actually makes an older row stop
+ * mattering the instant a newer one exists, regardless of the older row's
+ * own `expires_at`. Without reproducing that here, two rows whose stored
+ * windows technically overlap would render as two simultaneously "active"
+ * bars, which never happened in reality — so each row's rendered end is
+ * capped at whichever comes first: its own revocation/expiry, or the next
+ * row's creation.
+ */
+export function computeOverrideSegments(
+  overrides: ManualOverrideRecord[],
+  domainEndMs: number,
+): OverrideSegment[] {
+  const sorted = [...overrides].sort((a, b) => a.createdAtMs - b.createdAtMs);
+  return sorted.map((o, i) => {
+    const naturalEnd = o.revokedAtMs ?? o.expiresAtMs ?? domainEndMs;
+    const supersededAtMs =
+      i + 1 < sorted.length ? sorted[i + 1].createdAtMs : Infinity;
+    return {
+      startMs: o.createdAtMs,
+      endMs: Math.min(naturalEnd, supersededAtMs),
+      override: o,
+    };
+  });
 }

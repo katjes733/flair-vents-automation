@@ -15,17 +15,23 @@ const { getSystemSettings } = vi.hoisted(() => ({
 }));
 vi.mock("~/server/util/routes/systemSettings", () => ({ getSystemSettings }));
 
-const { createManualOverride, revokeManualOverride } = vi.hoisted(() => ({
+const {
+  createManualOverride,
+  revokeManualOverride,
+  getOverridesForZoneInRange,
+} = vi.hoisted(() => ({
   createManualOverride: vi.fn(),
   revokeManualOverride: vi.fn(),
+  getOverridesForZoneInRange: vi.fn(),
 }));
 vi.mock("~/server/util/routes/manualOverride", () => ({
   createManualOverride,
   revokeManualOverride,
+  getOverridesForZoneInRange,
   getLatestOverridesForZones: vi.fn(),
 }));
 
-const { createOverrideForZone, revokeOverride } =
+const { createOverrideForZone, revokeOverride, getOverrideHistoryForZone } =
   await import("~/server/util/services/overrideService");
 
 describe("createOverrideForZone", () => {
@@ -109,5 +115,28 @@ describe("revokeOverride", () => {
     revokeManualOverride.mockReset().mockResolvedValue(undefined);
     await revokeOverride("mo-1");
     expect(revokeManualOverride).toHaveBeenCalledWith("mo-1");
+  });
+});
+
+describe("getOverrideHistoryForZone", () => {
+  beforeEach(() => {
+    getZoneById.mockReset();
+    getOverridesForZoneInRange.mockReset();
+  });
+
+  it("404s when the zone doesn't exist", async () => {
+    getZoneById.mockResolvedValue(null);
+    await expect(getOverrideHistoryForZone("missing", 0, 1000)).rejects.toThrow(
+      /not found/,
+    );
+    expect(getOverridesForZoneInRange).not.toHaveBeenCalled();
+  });
+
+  it("delegates to getOverridesForZoneInRange for a real zone", async () => {
+    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
+    getOverridesForZoneInRange.mockResolvedValue([{ id: "mo-1" }]);
+    const result = await getOverrideHistoryForZone("z1", 0, 1000);
+    expect(result).toEqual([{ id: "mo-1" }]);
+    expect(getOverridesForZoneInRange).toHaveBeenCalledWith("z1", 0, 1000);
   });
 });

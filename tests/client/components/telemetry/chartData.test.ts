@@ -3,10 +3,12 @@ import {
   buildZoneTemperatureData,
   buildVentPositionData,
   buildOpenCapacityData,
+  computeOpenCapacityYTicks,
   computeAgreementMetric,
   computeDegradedPeriodsForVent,
   computeFaultPeriodsForAirHandler,
   findLatestVentName,
+  computeOverrideSegments,
 } from "~/client/components/telemetry/chartData";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import type {
@@ -14,6 +16,7 @@ import type {
   VentTickDecisionRecord,
   ZoneTickDecisionRecord,
 } from "~/client/api/airHandlersApi";
+import type { ManualOverrideRecord } from "~/client/api/overridesApi";
 
 function makeVent(
   overrides: Partial<VentTickDecisionRecord> = {},
@@ -156,6 +159,46 @@ describe("buildOpenCapacityData", () => {
   });
 });
 
+describe("computeOpenCapacityYTicks", () => {
+  it("covers at least 0-100 with clean, evenly-spaced ticks when data stays under 100%", () => {
+    const data = [
+      { time: 100, openPct: 45, capPct: 80 },
+      { time: 200, openPct: 60, capPct: 80 },
+    ];
+    const ticks = computeOpenCapacityYTicks(data, 80);
+    expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(100);
+    // Every tick is a whole number — the actual bug being regression-tested
+    // (a raw, unrounded float landing as the final tick).
+    for (const t of ticks) {
+      expect(Number.isInteger(t)).toBe(true);
+    }
+  });
+
+  it("extends the domain with whole-number ticks when real data exceeds 100%", () => {
+    // Regression test: live production data hit 157.70078406442045% —
+    // confirmed via a real screenshot showing that exact unrounded value as
+    // an axis tick under the old fixed [0, 100] domain.
+    const data = [{ time: 100, openPct: 157.70078406442045, capPct: null }];
+    const ticks = computeOpenCapacityYTicks(data, null);
+    expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(157.70078406442045);
+    for (const t of ticks) {
+      expect(Number.isInteger(t)).toBe(true);
+    }
+  });
+
+  it("accounts for the cap line even when it exceeds every data point", () => {
+    const data = [{ time: 100, openPct: 20, capPct: 200 }];
+    const ticks = computeOpenCapacityYTicks(data, 200);
+    expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(200);
+  });
+
+  it("defaults to a plain 0-100 scale with no data at all", () => {
+    expect(computeOpenCapacityYTicks([], null)).toEqual([
+      0, 20, 40, 60, 80, 100,
+    ]);
+  });
+});
+
 describe("computeAgreementMetric", () => {
   it("averages the absolute delta across every vent sample with both sides present", () => {
     const points = [
@@ -288,5 +331,95 @@ describe("findLatestVentName", () => {
       }),
     ];
     expect(findLatestVentName(points, "z1", "v1")).toBeNull();
+  });
+});
+
+function makeOverride(
+  overrides: Partial<ManualOverrideRecord> = {},
+): ManualOverrideRecord {
+  return {
+    id: "mo-1",
+    zoneId: "z1",
+    config: {
+      kind: "position",
+      value: 40,
+      hold_type: "permanent",
+      actor: "Martin",
+    },
+    createdAtMs: 100,
+    expiresAtMs: null,
+    revokedAtMs: null,
+    ...overrides,
+  };
+}
+
+describe("computeOverrideSegments", () => {
+  it("ends a permanent, never-revoked hold at the domain end", () => {
+    const segments = computeOverrideSegments(
+      [
+        makeOverride({
+          createdAtMs: 100,
+          expiresAtMs: null,
+          revokedAtMs: null,
+        }),
+      ],
+      1000,
+    );
+    expect(segments).toEqual([
+      { startMs: 100, endMs: 1000, override: expect.anything() },
+    ]);
+  });
+
+  it("ends at the natural expiry when set and not revoked", () => {
+    const segments = computeOverrideSegments(
+      [makeOverride({ createdAtMs: 100, expiresAtMs: 300, revokedAtMs: null })],
+      1000,
+    );
+    expect(segments[0].endMs).toBe(300);
+  });
+
+  it("prefers an explicit revocation over the natural expiry", () => {
+    const segments = computeOverrideSegments(
+      [
+        makeOverride({
+          createdAtMs: 100,
+          expiresAtMs: 900,
+          revokedAtMs: 250,
+        }),
+      ],
+      1000,
+    );
+    expect(segments[0].endMs).toBe(250);
+  });
+
+  it("caps an older row's end at the moment the next one was created, even though nothing revoked it", () => {
+    // Regression test for the actual "last-write-wins" bug this function
+    // exists to avoid: the manual_overrides table never marks an older row
+    // as superseded when a newer one for the same zone is created (see the
+    // Data Model's append-only rule) — without this cap, both rows would
+    // render as simultaneously "active" on the lane, which never happened.
+    const older = makeOverride({
+      id: "mo-1",
+      createdAtMs: 100,
+      expiresAtMs: 900, // would naturally run long past the newer hold's start
+      revokedAtMs: null,
+    });
+    const newer = makeOverride({
+      id: "mo-2",
+      createdAtMs: 300,
+      expiresAtMs: null,
+      revokedAtMs: null,
+    });
+    // Deliberately passed newest-first — the function must sort, not trust
+    // caller order.
+    const segments = computeOverrideSegments([newer, older], 1000);
+    const olderSegment = segments.find((s) => s.override.id === "mo-1");
+    const newerSegment = segments.find((s) => s.override.id === "mo-2");
+    expect(olderSegment?.endMs).toBe(300);
+    expect(newerSegment).toEqual({
+      startMs: 300,
+      endMs: 1000,
+      override: newer,
+    });
   });
 });

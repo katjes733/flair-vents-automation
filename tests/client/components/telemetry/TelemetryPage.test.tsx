@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { lightStatusPalette } from "~/client/theme/statusPalette";
 import type { AirHandler } from "~/client/api/airHandlersApi";
 import type { Zone } from "~/client/api/zonesApi";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
@@ -31,10 +32,21 @@ vi.mock("~/client/api/telemetryApi", async (importOriginal) => {
   return { ...actual, fetchTickHistory };
 });
 
+const { fetchOverrideHistory } = vi.hoisted(() => ({
+  fetchOverrideHistory: vi.fn(),
+}));
+vi.mock("~/client/api/overridesApi", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/client/api/overridesApi")>();
+  return { ...actual, fetchOverrideHistory };
+});
+
 const { default: TelemetryPage } =
   await import("~/client/components/telemetry/TelemetryPage");
 
-const theme = createTheme();
+const theme = createTheme({
+  palette: { mode: "light", status: lightStatusPalette },
+});
 
 const AIR_HANDLER: AirHandler = {
   id: "ah-1",
@@ -156,6 +168,7 @@ describe("TelemetryPage", () => {
     fetchAirHandlers.mockReset().mockResolvedValue([AIR_HANDLER]);
     fetchZones.mockReset().mockResolvedValue([ZONE, OTHER_ZONE]);
     fetchTickHistory.mockReset().mockResolvedValue(makePoints());
+    fetchOverrideHistory.mockReset().mockResolvedValue([]);
   });
 
   it("defaults to the first air handler/zone and renders both sections once data loads", async () => {
@@ -170,6 +183,36 @@ describe("TelemetryPage", () => {
       expect.any(Number),
       expect.any(Number),
     );
+    expect(fetchOverrideHistory).toHaveBeenCalledWith(
+      "z1",
+      expect.any(Number),
+      expect.any(Number),
+    );
+  });
+
+  it("shows the override activity lane, including a real override when one exists", async () => {
+    fetchOverrideHistory.mockResolvedValue([
+      {
+        id: "mo-1",
+        zoneId: "z1",
+        config: {
+          kind: "position",
+          value: 40,
+          hold_type: "permanent",
+          actor: "Martin",
+        },
+        createdAtMs: Date.now() - 60_000,
+        expiresAtMs: null,
+        revokedAtMs: null,
+      },
+    ]);
+    renderPage();
+    expect(
+      await screen.findByText("Manual Override Activity"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No overrides in this window."),
+    ).not.toBeInTheDocument();
   });
 
   it("shows an unavailable message when Loki isn't configured (fetch resolves null)", async () => {
