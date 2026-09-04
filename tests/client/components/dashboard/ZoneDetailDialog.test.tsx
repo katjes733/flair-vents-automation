@@ -434,6 +434,8 @@ describe("ZoneDetailDialog", () => {
             commanded_position_pct: 100,
             reported_position_pct: 100,
             dispatch_decision: "dispatched",
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,

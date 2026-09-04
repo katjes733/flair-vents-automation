@@ -27,6 +27,8 @@ function makeVent(
     commanded_position_pct: null,
     reported_position_pct: null,
     dispatch_decision: "dispatched",
+    step_delta_pct: null,
+    min_step_delta_pct: null,
     degraded: false,
     voltage: null,
     current_rssi: null,

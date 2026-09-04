@@ -1,10 +1,7 @@
 import type { AbsoluteTemp, TempDelta } from "~/shared/types/temperature";
 import type { ThermalLoadFlag } from "~/shared/schemas/zoneConfig";
 import type { HvacCallState, ModifierBoosts } from "~/server/domain/types";
-import {
-  classifyZone,
-  computeDeviation,
-} from "~/server/domain/targets/comfortTolerance";
+import { computeDeviation } from "~/server/domain/targets/comfortTolerance";
 
 export interface DesiredPositionInput {
   // idleBaselinePosition is the caller's *effective* idle baseline (see
@@ -15,7 +12,12 @@ export interface DesiredPositionInput {
   minVentPosition: number;
   maxVentPosition: number;
   thermalLoadFlags: ThermalLoadFlag[];
-  hasTemperatureSensor: boolean;
+  // The caller's already-*stabilized* satisfied/demanding decision (see
+  // comfortTolerance.ts's stabilizeClassification) — this function no
+  // longer derives it internally via a fresh, unstabilized classifyZone
+  // call, so a single-tick noise blip in the raw reading can't flip which
+  // branch runs here out from under the caller's own hysteresis dwell.
+  demanding: boolean;
   state: HvacCallState;
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp;
@@ -32,7 +34,6 @@ export interface DesiredPositionInput {
 
 export interface DesiredPositionResult {
   desiredPosition: number;
-  demanding: boolean;
   deviation: number;
   clampedBy: string | null;
 }
@@ -51,14 +52,7 @@ export interface DesiredPositionResult {
 export function computeDesiredPosition(
   i: DesiredPositionInput,
 ): DesiredPositionResult {
-  const classification = classifyZone({
-    hasTemperatureSensor: i.hasTemperatureSensor,
-    state: i.state,
-    calibratedTemp: i.calibratedTemp,
-    resolvedSetpoint: i.resolvedSetpoint,
-    tolerance: i.tolerance,
-  });
-  const demanding = classification === "demanding";
+  const demanding = i.demanding;
   const deviation = computeDeviation(
     i.state,
     i.calibratedTemp,
@@ -73,7 +67,6 @@ export function computeDesiredPosition(
   if (maxPositionPct < i.idleBaselinePosition) {
     return {
       desiredPosition: maxPositionPct,
-      demanding,
       deviation,
       clampedBy: "max_position_below_idle_baseline",
     };
@@ -122,7 +115,6 @@ export function computeDesiredPosition(
       (i.idleBaselinePosition - i.minVentPosition) * closeRatio;
     return {
       desiredPosition,
-      demanding: false,
       deviation,
       clampedBy: null,
     };
@@ -151,5 +143,5 @@ export function computeDesiredPosition(
     clampedBy = clampedBy ?? "zone_max";
   }
 
-  return { desiredPosition, demanding, deviation, clampedBy };
+  return { desiredPosition, deviation, clampedBy };
 }

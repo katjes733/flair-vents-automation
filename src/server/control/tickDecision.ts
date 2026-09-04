@@ -12,6 +12,15 @@ export interface VentTickDecision {
   commanded_position_pct: number | null;
   reported_position_pct: number | null;
   dispatch_decision: "dispatched" | "suppressed_step_delta";
+  // How close this vent is to actually being sent a new command — the
+  // magnitude of change since the last real dispatch (step_delta_pct) out
+  // of the threshold that would trigger one (min_step_delta_pct, wider
+  // during an active Sleep Mode window — see sleep_mode_min_step_delta_pct).
+  // Null wherever no dispatch decision was made this tick at all (the
+  // emergency fail-safe short-circuit, or a zone with no live vent
+  // readings) — distinct from 0, which is a real "no change pending" value.
+  step_delta_pct: number | null;
+  min_step_delta_pct: number | null;
   degraded: boolean;
   // Hardware-health fields for HardwareDiagnostics — see "Stage 12 —
   // Current-Status Diagnostics". Null on any path with no live Flair

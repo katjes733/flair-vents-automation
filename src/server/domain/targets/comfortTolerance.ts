@@ -54,3 +54,68 @@ export function classifyZone(params: {
   const toleranceC = params.tolerance ?? 0;
   return deviation > toleranceC ? "demanding" : "satisfied";
 }
+
+export interface ClassificationStabilization {
+  classification: ZoneClassification;
+  pendingClassification: ZoneClassification | null;
+  pendingSinceMs: number | null;
+}
+
+/**
+ * Debounces the satisfied/demanding boundary itself — mirrors
+ * spikeDetection.ts/occupancy.ts's own stabilization-dwell pattern. A real,
+ * confirmed gap found live via shadow-mode evaluation: real sensor noise
+ * (confirmed: a bedroom's own reading wobbling ~0.5°C around its setpoint
+ * with nothing actually wrong) can flip the *raw* classification every
+ * tick, and since a zone's idle_baseline_position commonly equals its
+ * max_vent_position, any "demanding" tick — even a hairline one — snaps
+ * the computed position straight back to fully open, undoing whatever
+ * proportional closing had already happened. This is a separate, layered
+ * fix from `minimum_comfort_tolerance_c` (which raises the deadband
+ * itself) — this one holds the *classification* steady even when a real
+ * temperature genuinely sits close enough to the boundary that noise still
+ * crosses it occasionally.
+ *
+ * A `previousClassification` of `null` means the zone has never been
+ * classified yet (a brand-new zone) — the raw value is adopted immediately
+ * with no dwell, since there's nothing yet to protect continuity of.
+ */
+export function stabilizeClassification(params: {
+  raw: ZoneClassification;
+  previousClassification: ZoneClassification | null;
+  previousPending: {
+    classification: ZoneClassification;
+    sinceMs: number;
+  } | null;
+  nowMs: number;
+  stabilizationMinutes: number;
+}): ClassificationStabilization {
+  if (
+    params.previousClassification === null ||
+    params.raw === params.previousClassification
+  ) {
+    return {
+      classification: params.raw,
+      pendingClassification: null,
+      pendingSinceMs: null,
+    };
+  }
+
+  const sinceMs =
+    params.previousPending?.classification === params.raw
+      ? params.previousPending.sinceMs
+      : params.nowMs;
+  const dwellElapsedMinutes = (params.nowMs - sinceMs) / 60000;
+  if (dwellElapsedMinutes >= params.stabilizationMinutes) {
+    return {
+      classification: params.raw,
+      pendingClassification: null,
+      pendingSinceMs: null,
+    };
+  }
+  return {
+    classification: params.previousClassification,
+    pendingClassification: params.raw,
+    pendingSinceMs: sinceMs,
+  };
+}

@@ -27,6 +27,9 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     lastCommandedTarget: null,
     manualPositionPct: null,
     degraded: false,
+    previousClassification: null,
+    previousPendingClassification: null,
+    previousPendingSinceMs: null,
     ...overrides,
   };
 }
@@ -47,6 +50,11 @@ const settings = {
   // tests isolate Steps 1/3 rather than Step 2's own ramp behavior.
   modulationStepPct: 1,
   maxStepsPerTick: 1000,
+  // Zero dwell — every zone() fixture starts with previousClassification:
+  // null anyway (immediate adoption regardless of stabilization minutes),
+  // so these tests exercise Steps 1-3 without any hysteresis lag; the
+  // hysteresis behavior itself gets its own dedicated describe block below.
+  classificationStabilizationMinutes: 0,
 };
 
 describe("computeZoneCommands — no contention", () => {
@@ -66,6 +74,7 @@ describe("computeZoneCommands — no contention", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -76,6 +85,7 @@ describe("computeZoneCommands — no contention", () => {
         { ...zones[0], priorityRank: 1 },
         { ...zones[1], priorityRank: 0 },
       ],
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -112,6 +122,7 @@ describe("computeZoneCommands — genuine contention", () => {
     const uncapped = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -119,6 +130,7 @@ describe("computeZoneCommands — genuine contention", () => {
     const capped = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 100, // forces contention
       floorLps: 0,
@@ -152,6 +164,7 @@ describe("computeZoneCommands — the join between classification and contention
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 1, // would force contention if the satisfied zone were a candidate
       floorLps: 0,
@@ -173,6 +186,7 @@ describe("computeZoneCommands — manual position override", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -195,6 +209,7 @@ describe("computeZoneCommands — mixed vent hardware", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -225,6 +240,7 @@ describe("computeZoneCommands — mixed vent hardware", () => {
     const belowThreshold = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 34,
@@ -234,6 +250,7 @@ describe("computeZoneCommands — mixed vent hardware", () => {
     const aboveThreshold = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 36,
@@ -261,6 +278,7 @@ describe("computeZoneCommands — mixed vent hardware", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 10000, // unreachable — forces the clamp to look for candidates
@@ -292,6 +310,7 @@ describe("computeZoneCommands — classification for zones with no position math
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -313,6 +332,7 @@ describe("computeZoneCommands — classification for zones with no position math
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -332,6 +352,7 @@ describe("computeZoneCommands — classification for zones with no position math
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -350,6 +371,7 @@ describe("computeZoneCommands — classification for zones with no position math
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -368,6 +390,7 @@ describe("computeZoneCommands — classification for zones with no position math
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -388,6 +411,7 @@ describe("computeZoneCommands — inactive and stale zones", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -408,6 +432,7 @@ describe("computeZoneCommands — inactive and stale zones", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -423,6 +448,7 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
     const result = computeZoneCommands({
       state: "FAN_ONLY",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -454,6 +480,7 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     const result = computeZoneCommands({
       state: "IDLE",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -475,6 +502,7 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     const result = computeZoneCommands({
       state: "IDLE",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -494,6 +522,7 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     const duringCall = computeZoneCommands({
       state: "COOLING_CALL",
       zones: [zone(satisfiedZone)],
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -501,6 +530,7 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     const duringIdle = computeZoneCommands({
       state: "IDLE",
       zones: [zone(satisfiedZone)],
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 0,
@@ -508,6 +538,82 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(duringIdle.commandedPositions["z1"]).toBe(
       duringCall.commandedPositions["z1"],
     );
+  });
+});
+
+// Regression coverage for a real gap found live: a near-zero comfort
+// tolerance combined with ordinary sensor noise (~±0.5°C observed) flipped
+// a zone's raw classification every tick. Note that for a zone whose
+// idle_baseline_position equals its max_vent_position (the exact real
+// scenario — Martin Bedroom), the demanding and satisfied formulas both
+// converge to exactly idleBaselinePosition right at/past the tolerance
+// boundary (continuity by construction — see step1DesiredPosition.ts's own
+// comment), so a held-vs-flipped classification doesn't change *that one
+// tick's own desiredPosition* in this degenerate case; what it protects is
+// whether the zone gets pulled into Step 3 contention at all on a blip
+// that shouldn't count as genuine, sustained demand — see also
+// minimum_comfort_tolerance_c, a separate, complementary fix that reduces
+// how often noise crosses the boundary in the first place.
+describe("computeZoneCommands — classification stabilization holds a noisy zone out of contention", () => {
+  const noisyZone = {
+    zoneId: "z1",
+    idleBaselinePosition: 100,
+    minVentPosition: 0,
+    maxVentPosition: 100,
+    tolerance: asTempDelta(0.1),
+    calibratedTemp: asAbsoluteTemp(21.15), // deviation 0.15 > tolerance 0.1 -> raw reads "demanding"
+    resolvedSetpoint: asAbsoluteTemp(21),
+    flowRateLps: 47,
+  };
+
+  it("holds the prior tick's stabilized classification against a single-tick noise blip, keeping it out of Step 3 contention", () => {
+    const zones = [
+      zone({
+        ...noisyZone,
+        previousClassification: "satisfied",
+        previousPendingClassification: null,
+        previousPendingSinceMs: null,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 1_000,
+      settings: { ...settings, classificationStabilizationMinutes: 3 },
+      capLps: 1, // would force contention if this zone were treated as demanding
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("satisfied");
+    expect(result.contention).toBeNull();
+    expect(result.classificationPending["z1"]).toEqual({
+      value: "demanding",
+      sinceMs: 1_000,
+    });
+  });
+
+  it("adopts the raw classification once the dwell has fully elapsed, entering contention", () => {
+    const zones = [
+      zone({
+        ...noisyZone,
+        previousClassification: "satisfied",
+        previousPendingClassification: "demanding",
+        previousPendingSinceMs: 0,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 4 * 60_000, // 4 minutes past the pending-since anchor
+      settings: { ...settings, classificationStabilizationMinutes: 3 },
+      capLps: 1,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("demanding");
+    expect(result.contention).not.toBeNull();
+    expect(result.classificationPending["z1"]).toEqual({
+      value: null,
+      sinceMs: null,
+    });
   });
 });
 
@@ -536,6 +642,7 @@ describe("computeZoneCommands — pressure floor clamp", () => {
     const result = computeZoneCommands({
       state: "COOLING_CALL",
       zones,
+      nowMs: 0,
       settings,
       capLps: 10000,
       floorLps: 100, // both satisfied zones close to 0 — floor forces a reopen

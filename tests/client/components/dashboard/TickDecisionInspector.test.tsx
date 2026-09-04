@@ -54,6 +54,8 @@ describe("TickDecisionInspector", () => {
               commanded_position_pct: 50,
               reported_position_pct: 48,
               dispatch_decision: "dispatched",
+              step_delta_pct: null,
+              min_step_delta_pct: null,
               degraded: false,
               voltage: null,
               current_rssi: null,
@@ -93,7 +95,68 @@ describe("TickDecisionInspector", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Bedroom")).toBeInTheDocument();
     expect(screen.getByText("demanding")).toBeInTheDocument();
-    expect(screen.getByText("dispatched")).toBeInTheDocument();
+    expect(screen.getByText("sent")).toBeInTheDocument();
+  });
+
+  // Regression test: the Dispatch column previously showed the raw
+  // dispatch_decision enum ("suppressed_step_delta") with no indication of
+  // how close the vent actually is to moving — see the conversation this
+  // was built from ("is the commanded truly the command being sent?").
+  it("shows the accumulated delta against the threshold when a dispatch is held, not the raw enum", async () => {
+    const user = userEvent.setup();
+    renderInspector({
+      air_handler_id: "ah-1",
+      tick_at: "2024-01-01T00:00:00.000Z",
+      duration_ms: 12,
+      dry_run: false,
+      control_disarmed: false,
+      equipment_fault_active: false,
+      hvac_state: "COOLING_CALL",
+      call_confidence: "reported",
+      zones: [
+        {
+          zone_id: "z1",
+          name: "Bedroom",
+          vent_hardware_type: "flair_smart_vent",
+          classification: "demanding",
+          occupied: false,
+          spiking: false,
+          temp_calibrated: null,
+          resolved_setpoint: null,
+          desired_position_pct: 60,
+          post_contention_position_pct: 60,
+          vents: [
+            {
+              flair_vent_id: "vent-1",
+              name: "Bedroom Vent",
+              commanded_position_pct: 42,
+              reported_position_pct: 30,
+              dispatch_decision: "suppressed_step_delta",
+              step_delta_pct: 12,
+              min_step_delta_pct: 30,
+              degraded: false,
+              voltage: null,
+              current_rssi: null,
+            },
+          ],
+          reason: "still cooling",
+        },
+      ],
+      contention: null,
+      pressure: null,
+      driving_zone: null,
+      setpoint_push: null,
+      narrative: "COOLING_CALL, tracking Bedroom.",
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Tick decision inspector" }),
+    );
+
+    expect(
+      screen.getByText("holding (Δ12% of 30% to move)"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("suppressed_step_delta")).not.toBeInTheDocument();
   });
 
   // Regression test: a multi-vent zone's rows previously showed the raw
@@ -129,6 +192,8 @@ describe("TickDecisionInspector", () => {
               commanded_position_pct: 100,
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
+              step_delta_pct: null,
+              min_step_delta_pct: null,
               degraded: false,
               voltage: null,
               current_rssi: null,
@@ -139,6 +204,8 @@ describe("TickDecisionInspector", () => {
               commanded_position_pct: 100,
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
+              step_delta_pct: null,
+              min_step_delta_pct: null,
               degraded: false,
               voltage: null,
               current_rssi: null,
@@ -204,6 +271,8 @@ describe("TickDecisionInspector", () => {
               commanded_position_pct: 100,
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
+              step_delta_pct: null,
+              min_step_delta_pct: null,
               degraded: false,
               voltage: null,
               current_rssi: null,
@@ -214,6 +283,8 @@ describe("TickDecisionInspector", () => {
               commanded_position_pct: 100,
               reported_position_pct: 100,
               dispatch_decision: "dispatched",
+              step_delta_pct: null,
+              min_step_delta_pct: null,
               degraded: false,
               voltage: null,
               current_rssi: null,

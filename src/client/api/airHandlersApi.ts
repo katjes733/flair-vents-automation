@@ -64,6 +64,13 @@ export interface VentTickDecisionRecord {
   commanded_position_pct: number | null;
   reported_position_pct: number | null;
   dispatch_decision: string;
+  // How close this vent is to its next real dispatch — the accumulated
+  // change since the last real dispatch (step_delta_pct) out of the
+  // threshold that triggers one (min_step_delta_pct, wider during an
+  // active Sleep Mode window). Null wherever no dispatch decision was made
+  // this tick (e.g. the emergency fail-safe path) — distinct from a real 0.
+  step_delta_pct: number | null;
+  min_step_delta_pct: number | null;
   degraded: boolean;
   // Hardware-health fields — see "Stage 12 — Current-Status Diagnostics".
   // Null on any path with no live Flair snapshot or a not-yet-visible vent.

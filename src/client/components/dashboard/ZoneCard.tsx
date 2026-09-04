@@ -20,6 +20,7 @@ import { useNotification } from "~/client/components/notification/useNotificatio
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
 import { formatPct } from "~/client/util/formatPct";
+import { formatDispatchStatus } from "~/client/util/formatDispatchStatus";
 import ZoneOverrideDialog from "~/client/components/dashboard/ZoneOverrideDialog";
 
 interface ZoneCardProps {
@@ -231,9 +232,10 @@ export default function ZoneCard({
                       : "Vent position"}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {formatPct(v.commanded_position_pct ?? 0)}% commanded
+                    {formatPct(v.commanded_position_pct ?? 0)}% target
                     {v.reported_position_pct !== null &&
                       ` · ${formatPct(v.reported_position_pct)}% reported`}
+                    {formatDispatchStatus(v) && ` · ${formatDispatchStatus(v)}`}
                   </Typography>
                 </Box>
                 <LinearProgress

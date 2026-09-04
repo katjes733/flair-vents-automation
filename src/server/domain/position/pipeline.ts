@@ -9,7 +9,10 @@ import {
   type ModifierBoosts,
   type ZoneClassification,
 } from "~/server/domain/types";
-import { classifyZone } from "~/server/domain/targets/comfortTolerance";
+import {
+  classifyZone,
+  stabilizeClassification,
+} from "~/server/domain/targets/comfortTolerance";
 import { computeDesiredPosition } from "~/server/domain/position/step1DesiredPosition";
 import { effectiveIdleBaseline } from "~/server/domain/sensors/occupancy";
 import {
@@ -46,11 +49,28 @@ export interface PipelineZoneInput {
   lastCommandedTarget: number | null;
   manualPositionPct: number | null;
   degraded: boolean;
+  // Hysteresis inputs for the satisfied/demanding classification boundary
+  // itself — see stabilizeClassification. previousClassification is the
+  // prior tick's own *stabilized* result (zone.state.last_classification);
+  // previousPendingClassification/previousPendingSinceMs mirror
+  // spike_active/spike_since's shape (zone.state.classification_pending_*).
+  previousClassification: ZoneClassification | null;
+  previousPendingClassification: ZoneClassification | null;
+  previousPendingSinceMs: number | null;
 }
 
 export interface PipelineResult {
   commandedPositions: Record<string, number>;
   classifications: Record<string, ZoneClassification | "inactive">;
+  // The updated hysteresis-dwell state per zone, for the caller to persist
+  // back to zone.state.classification_pending_value/_since — absent for a
+  // zone that never ran through classifyZone this tick (inactive, a manual
+  // position override, or a bypassed early-continue), which resets its
+  // hysteresis to "nothing pending" on persist.
+  classificationPending: Record<
+    string,
+    { value: ZoneClassification | null; sinceMs: number | null }
+  >;
   contention: ContentionResult | null;
   pressureFloorClamped: boolean;
   insufficientFloor: boolean;
@@ -109,6 +129,7 @@ function bucketFor(
 export function computeZoneCommands(params: {
   state: HvacState;
   zones: PipelineZoneInput[];
+  nowMs: number;
   settings: {
     proportionalBandWidthC: TempDelta;
     maxPositionPct: number;
@@ -117,6 +138,7 @@ export function computeZoneCommands(params: {
     unoccupiedIdleFactor: number;
     modulationStepPct: number;
     maxStepsPerTick: number;
+    classificationStabilizationMinutes: number;
   };
   capLps: number;
   floorLps: number;
@@ -125,6 +147,41 @@ export function computeZoneCommands(params: {
     params.state === "COOLING_CALL" || params.state === "HEATING_CALL";
   const commandedPositions: Record<string, number> = {};
   const classifications: Record<string, ZoneClassification | "inactive"> = {};
+  const classificationPending: PipelineResult["classificationPending"] = {};
+
+  // Debounces a zone's raw classifyZone() output against its own prior
+  // tick's stabilized result — see stabilizeClassification's own doc
+  // comment for the real, confirmed bug this exists to fix (near-zero
+  // tolerance + real sensor noise flapping demanding/satisfied every tick,
+  // snapping a closing zone straight back to fully open). Every call site
+  // that runs classifyZone routes its raw result through this, so the
+  // classification stored in `classifications` — and the one Step 1 above
+  // sees via `demanding` — is always the stabilized value, never the raw
+  // one.
+  function classifyWithStabilization(
+    zone: PipelineZoneInput,
+    raw: ZoneClassification,
+  ): ZoneClassification {
+    const result = stabilizeClassification({
+      raw,
+      previousClassification: zone.previousClassification,
+      previousPending:
+        zone.previousPendingClassification !== null &&
+        zone.previousPendingSinceMs !== null
+          ? {
+              classification: zone.previousPendingClassification,
+              sinceMs: zone.previousPendingSinceMs,
+            }
+          : null,
+      nowMs: params.nowMs,
+      stabilizationMinutes: params.settings.classificationStabilizationMinutes,
+    });
+    classificationPending[zone.zoneId] = {
+      value: result.pendingClassification,
+      sinceMs: result.pendingSinceMs,
+    };
+    return result.classification;
+  }
 
   interface DemandingZone {
     zoneId: string;
@@ -154,7 +211,7 @@ export function computeZoneCommands(params: {
   ): ZoneClassification | "inactive" {
     if (zone.resolvedSetpoint === null) return "inactive";
     if (zone.staleReading) return "unclassified_no_sensor";
-    return classifyZone({
+    const raw = classifyZone({
       hasTemperatureSensor: zone.hasTemperatureSensor,
       state: callActive
         ? (params.state as "COOLING_CALL" | "HEATING_CALL")
@@ -163,6 +220,7 @@ export function computeZoneCommands(params: {
       resolvedSetpoint: zone.resolvedSetpoint,
       tolerance: zone.tolerance,
     });
+    return classifyWithStabilization(zone, raw);
   }
 
   for (const zone of params.zones) {
@@ -225,13 +283,17 @@ export function computeZoneCommands(params: {
     // math has nothing meaningful to react to. Every zone (sensored or
     // not) rests at its occupancy-scaled idle baseline, same as ever.
     if (!callActive && params.state === "FAN_ONLY") {
-      classifications[zone.zoneId] = classifyZone({
+      const rawFanOnly = classifyZone({
         hasTemperatureSensor: zone.hasTemperatureSensor,
         state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only during FAN_ONLY
         calibratedTemp: zone.calibratedTemp,
         resolvedSetpoint: zone.resolvedSetpoint,
         tolerance: zone.tolerance,
       });
+      classifications[zone.zoneId] = classifyWithStabilization(
+        zone,
+        rawFanOnly,
+      );
       nonDemandingSmartVent[zone.zoneId] = effectiveIdleBaseline({
         idleBaselinePosition: zone.idleBaselinePosition,
         minVentPosition: zone.minVentPosition,
@@ -260,13 +322,14 @@ export function computeZoneCommands(params: {
       ? (params.state as "COOLING_CALL" | "HEATING_CALL")
       : ARBITRARY_IDLE_CALL_STATE;
 
-    const classification = classifyZone({
+    const rawClassification = classifyZone({
       hasTemperatureSensor: zone.hasTemperatureSensor,
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
       tolerance: zone.tolerance,
     });
+    const classification = classifyWithStabilization(zone, rawClassification);
     classifications[zone.zoneId] = classification;
 
     // No sensor means no reliable deviation to close proportionally from —
@@ -287,12 +350,13 @@ export function computeZoneCommands(params: {
       continue;
     }
 
+    const isDemanding = classification === "demanding";
     const step1 = computeDesiredPosition({
       idleBaselinePosition: zone.idleBaselinePosition,
       minVentPosition: zone.minVentPosition,
       maxVentPosition: zone.maxVentPosition,
       thermalLoadFlags: zone.thermalLoadFlags,
-      hasTemperatureSensor: zone.hasTemperatureSensor,
+      demanding: isDemanding,
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
@@ -315,7 +379,7 @@ export function computeZoneCommands(params: {
     // either — there's no real airflow to ration while nothing is
     // running — so it bypasses contention too, going straight to its own
     // computed position rather than joining the Step 3 pool.
-    if (!step1.demanding || !callActive) {
+    if (!isDemanding || !callActive) {
       nonDemandingSmartVent[zone.zoneId] = step1.desiredPosition;
       continue;
     }
@@ -409,6 +473,7 @@ export function computeZoneCommands(params: {
   return {
     commandedPositions,
     classifications,
+    classificationPending,
     contention,
     pressureFloorClamped: floorResult.clamped,
     insufficientFloor: floorResult.insufficient,

@@ -713,6 +713,25 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           "The minimum required gap between a zone's heat and cool setpoints, enforced when saving a schedule or zone — stops a configuration where the system would end up fighting itself, alternating heat and cool.",
         tier: "advanced",
       },
+      {
+        path: "minimum_comfort_tolerance_c",
+        baseLabel: "Minimum comfort tolerance",
+        kind: "tempDelta",
+        min: 0,
+        step: 0.1,
+        description:
+          "A floor applied to every zone's resolved comfort tolerance, including an unset or explicit-zero schedule tolerance — so a room configured for tight targeting still gets at least this much deadband against ordinary sensor noise, instead of flapping between satisfied and demanding every tick.",
+        tier: "advanced",
+      },
+      {
+        path: "classification_stabilization_minutes",
+        baseLabel: "Classification stabilization dwell",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long a zone's satisfied/demanding reading has to hold steady before it's actually accepted — a single noisy tick that disagrees with the current classification is held over rather than immediately flipping it (and, for a zone whose idle baseline equals its max position, snapping straight back open).",
+        tier: "advanced",
+      },
     ],
   },
   {

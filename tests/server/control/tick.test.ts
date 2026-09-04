@@ -1023,7 +1023,14 @@ describe("runTick — stale sensor safeguard", () => {
       {
         roomId: "room-1",
         ventId: "vent-1",
-        tempC: 24,
+        // Clearly demanding against the fallback cool setpoint (23.89°C)
+        // even once minimum_comfort_tolerance_c's default 0.56°C floor is
+        // applied — 24°C (deviation 0.11) used to be enough to read as
+        // demanding under the old implicit-zero tolerance, but now floors
+        // to "satisfied", which would incorrectly trip classifyStaleness's
+        // own "not already satisfied" gate and mask the very staleness
+        // this test exists to exercise.
+        tempC: 26,
         ductC: 14,
         percentOpen: 50,
       },
@@ -1902,7 +1909,7 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
       },
     ];
 
-    await runTick(
+    const decision = await runTick(
       makeAirHandler(),
       zones,
       ctx,
@@ -1914,6 +1921,20 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
       .map((c) => c.ventId);
     expect(dispatchedVentIds).not.toContain("vent-1");
     expect(dispatchedVentIds).toContain("vent-2");
+
+    // The tick decision record surfaces *why* z1 held (Sleep Mode's wider
+    // 30% threshold, with only a 20% accumulated delta) vs. why z2 sent
+    // (the normal 15% threshold, cleared by the same 20% delta) — this is
+    // the UI-facing distinction "is commanded truly the command being
+    // sent?" resolves.
+    const z1Vent = decision.zones.find((z) => z.zone_id === "z1")?.vents[0];
+    const z2Vent = decision.zones.find((z) => z.zone_id === "z2")?.vents[0];
+    expect(z1Vent?.dispatch_decision).toBe("suppressed_step_delta");
+    expect(z1Vent?.step_delta_pct).toBe(20);
+    expect(z1Vent?.min_step_delta_pct).toBe(30);
+    expect(z2Vent?.dispatch_decision).toBe("dispatched");
+    expect(z2Vent?.step_delta_pct).toBe(20);
+    expect(z2Vent?.min_step_delta_pct).toBe(15);
   });
 });
 
