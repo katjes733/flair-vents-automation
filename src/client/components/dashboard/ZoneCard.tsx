@@ -19,6 +19,7 @@ import { useTheme } from "@mui/material/styles";
 import { useNotification } from "~/client/components/notification/useNotification";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
+import { formatPct } from "~/client/util/formatPct";
 import ZoneOverrideDialog from "~/client/components/dashboard/ZoneOverrideDialog";
 
 interface ZoneCardProps {
@@ -230,9 +231,9 @@ export default function ZoneCard({
                       : "Vent position"}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {v.commanded_position_pct ?? 0}% commanded
+                    {formatPct(v.commanded_position_pct ?? 0)}% commanded
                     {v.reported_position_pct !== null &&
-                      ` · ${v.reported_position_pct}% reported`}
+                      ` · ${formatPct(v.reported_position_pct)}% reported`}
                   </Typography>
                 </Box>
                 <LinearProgress
@@ -251,8 +252,9 @@ export default function ZoneCard({
               color="text.secondary"
               component="div"
             >
-              Desired {tickRecord?.desired_position_pct ?? "—"}% ·
-              Post-contention {tickRecord?.post_contention_position_pct ?? "—"}%
+              Desired {formatPct(tickRecord?.desired_position_pct)}% ·
+              Post-contention{" "}
+              {formatPct(tickRecord?.post_contention_position_pct)}%
             </Typography>
             <Typography
               variant="caption"

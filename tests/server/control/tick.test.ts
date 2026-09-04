@@ -241,6 +241,36 @@ describe("runTick — no contention", () => {
     ).toEqual(["vent-1", "vent-2"]);
   });
 
+  // Regression test: `temp_calibrated` was added to the tick decision
+  // record specifically so Stage 13 Increment B's ZoneTemperatureChart can
+  // be built from this already-info-level event instead of the debug-only
+  // `Zone evaluated` (absent from production Loki at LOG_LEVEL=info) — see
+  // "Stage 13, Increment B".
+  it("carries each zone's calibrated reading on the tick decision record", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      makeCtx(),
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(
+      decision.zones.find((z) => z.zone_id === "z1")?.temp_calibrated,
+    ).toBe(24);
+  });
+
   // Regression test: the narrative previously interpolated the tracked
   // zone's raw id (e.g. a UUID) directly rather than its name — confirmed
   // live via a screenshot showing "tracking 0b10ae8e-756a-..." on the
@@ -684,6 +714,9 @@ describe("runTick — emergency fail-safe", () => {
     // See "Stage 12 — Current-Status Diagnostics" — EquipmentFaultLog's
     // current-status view reads this straight off the tick decision.
     expect(decision.equipment_fault_active).toBe(true);
+    // The fault short-circuit fetches no live Flair snapshot, so there's
+    // no calibrated reading to report — null, not a stale/fabricated value.
+    expect(decision.zones[0].temp_calibrated).toBeNull();
   });
 });
 

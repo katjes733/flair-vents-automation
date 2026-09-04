@@ -38,6 +38,7 @@ function makeZone(
     classification: "demanding",
     occupied: false,
     spiking: false,
+    temp_calibrated: null,
     resolved_setpoint: 21.11,
     desired_position_pct: 60,
     post_contention_position_pct: 60,

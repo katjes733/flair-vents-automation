@@ -6,6 +6,7 @@ import type {
   AirHandler,
   AirHandlerTickDecision,
 } from "~/client/api/airHandlersApi";
+import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import EquipmentFaultLog from "~/client/components/diagnostics/EquipmentFaultLog";
 
 afterEach(cleanup);
@@ -84,5 +85,58 @@ describe("EquipmentFaultLog", () => {
   it("renders one tile per air handler", () => {
     renderPanel(new Map());
     expect(screen.getByText("Upstairs")).toBeInTheDocument();
+  });
+
+  function makeHistoryPoint(
+    loggedAtMs: number,
+    faultActive: boolean,
+  ): TickHistoryPoint {
+    return {
+      loggedAtMs,
+      decision: makeDecision({ equipment_fault_active: faultActive }),
+    };
+  }
+
+  it("shows a historical fault period when historyPoints is supplied", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <EquipmentFaultLog
+          airHandlers={[AIR_HANDLER]}
+          tickDecisionsByAirHandlerId={new Map()}
+          historyPoints={[
+            makeHistoryPoint(0, false),
+            makeHistoryPoint(60_000, true),
+            makeHistoryPoint(120_000, false),
+          ]}
+          historyAirHandlerId="ah-1"
+          historyAirHandlerName="Upstairs"
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.getByText("Fault Periods (this window) — Upstairs"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1m")).toBeInTheDocument();
+  });
+
+  it("hides the current-status section when hideCurrentStatus is set", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <EquipmentFaultLog
+          airHandlers={[AIR_HANDLER]}
+          tickDecisionsByAirHandlerId={new Map()}
+          historyPoints={[makeHistoryPoint(0, false)]}
+          historyAirHandlerId="ah-1"
+          historyAirHandlerName="Upstairs"
+          hideCurrentStatus
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.queryByText("Equipment Fault Status"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Fault Periods (this window) — Upstairs"),
+    ).toBeInTheDocument();
   });
 });

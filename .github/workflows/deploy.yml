@@ -80,4 +80,5 @@ jobs:
             -e ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
             -e CONTROL_LOOP_ENABLED=true \
             -e LOG_LEVEL=info \
+            -e LOKI_URL=http://192.168.2.103:3100 \
             192.168.2.106:5000/flair-vents-automation:latest

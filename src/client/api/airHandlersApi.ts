@@ -78,6 +78,11 @@ export interface ZoneTickDecisionRecord {
   classification: string;
   occupied: boolean;
   spiking: boolean;
+  // The zone's own calibrated reading this tick — Celsius, always; convert
+  // via toDisplayAbsolute before rendering. Null when no live reading
+  // exists this tick (unsensored zone, or the emergency fail-safe's
+  // short-circuit path, which fetches no live snapshot at all).
+  temp_calibrated: number | null;
   // The zone's own resolved target this tick — Celsius, always (see
   // "Temperature units"); convert via toDisplayAbsolute before rendering.
   // Null when no real target was resolved this tick (unsensored zone, or

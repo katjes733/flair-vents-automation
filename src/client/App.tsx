@@ -11,6 +11,7 @@ import SchedulesPage from "~/client/components/dashboard/SchedulesPage";
 import SettingsPage from "~/client/components/settings/SettingsPage";
 import SystemParametersPage from "~/client/components/settings/SystemParametersPage";
 import DiagnosticsPage from "~/client/components/diagnostics/DiagnosticsPage";
+import TelemetryPage from "~/client/components/telemetry/TelemetryPage";
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/schedules" element={<SchedulesPage />} />
                 <Route path="/diagnostics" element={<DiagnosticsPage />} />
+                <Route path="/telemetry" element={<TelemetryPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route
                   path="/system-parameters"

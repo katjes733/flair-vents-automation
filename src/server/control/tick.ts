@@ -1499,6 +1499,7 @@ export async function runTick(
           pipelineResult.classifications[zone.id] ?? "unclassified_no_sensor",
         occupied: occupiedByZone.get(zone.id) ?? false,
         spiking: zoneSpike.get(zone.id)?.spiking ?? false,
+        temp_calibrated: readings.get(zone.id)?.room.calibratedTemp ?? null,
         resolved_setpoint: targetsByZone.get(zone.id)?.setpoint ?? null,
         desired_position_pct:
           pipelineResult.commandedPositions[zone.id] ?? null,
@@ -1621,6 +1622,9 @@ function buildFaultDecision(
       classification: "unclassified_no_sensor",
       occupied: false,
       spiking: false,
+      // No live Flair snapshot is fetched on this path (the fault trigger
+      // short-circuits before ingestion) — nothing to report.
+      temp_calibrated: null,
       // The fail-safe path bypasses target resolution entirely — nothing
       // was actually compared against anything this tick.
       resolved_setpoint: null,

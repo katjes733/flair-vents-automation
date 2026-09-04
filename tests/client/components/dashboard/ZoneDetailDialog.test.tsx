@@ -192,7 +192,7 @@ describe("ZoneDetailDialog", () => {
   it("switching to manual fixed vent reveals a vent-position field and requires it before Save", async () => {
     const user = userEvent.setup();
     renderDialog(makeZone({ ventHardwareType: "no_vent" }));
-    expect(screen.queryByLabelText("Position 1")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Open Position 1")).not.toBeInTheDocument();
 
     await user.click(
       screen.getByRole("combobox", { name: "Vent hardware type" }),
@@ -202,7 +202,7 @@ describe("ZoneDetailDialog", () => {
     );
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText("Position 1"), {
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
       target: { value: "40" },
     });
     expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
@@ -231,7 +231,7 @@ describe("ZoneDetailDialog", () => {
     });
     expect(option).not.toHaveAttribute("aria-disabled", "true");
     await user.click(option);
-    expect(screen.getByLabelText("Position 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Open Position 1")).toBeInTheDocument();
   });
 
   it("switching away from manual_fixed_vent clears manual_vents rather than leaving it stale", async () => {
@@ -275,10 +275,10 @@ describe("ZoneDetailDialog", () => {
         },
       }),
     );
-    expect(screen.getByLabelText("Position 1")).toHaveValue(75);
-    expect(screen.getByLabelText("Position 2")).toHaveValue(25);
+    expect(screen.getByLabelText("Open Position 1")).toHaveValue(75);
+    expect(screen.getByLabelText("Open Position 2")).toHaveValue(25);
 
-    fireEvent.change(screen.getByLabelText("Position 2"), {
+    fireEvent.change(screen.getByLabelText("Open Position 2"), {
       target: { value: "60" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -303,7 +303,7 @@ describe("ZoneDetailDialog", () => {
       }),
     );
     await user.click(screen.getByRole("button", { name: "Add another vent" }));
-    fireEvent.change(screen.getByLabelText("Position 2"), {
+    fireEvent.change(screen.getByLabelText("Open Position 2"), {
       target: { value: "30" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -422,6 +422,7 @@ describe("ZoneDetailDialog", () => {
         classification: "demanding",
         occupied: false,
         spiking: false,
+        temp_calibrated: null,
         resolved_setpoint: null,
         desired_position_pct: 100,
         post_contention_position_pct: 100,

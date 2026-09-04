@@ -15,6 +15,7 @@ import type { AirHandlerTickDecision } from "~/client/api/airHandlersApi";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
 import { toDisplayFlowRate, AIRFLOW_UNIT_LABELS } from "~/shared/types/airflow";
+import { formatPct } from "~/client/util/formatPct";
 
 interface TickDecisionInspectorProps {
   decision: AirHandlerTickDecision | null;
@@ -82,16 +83,16 @@ export default function TickDecisionInspector({
                           : "—"}
                       </TableCell>
                       <TableCell align="right">
-                        {z.desired_position_pct ?? "—"}
+                        {formatPct(z.desired_position_pct)}
                       </TableCell>
                       <TableCell align="right">
-                        {z.post_contention_position_pct ?? "—"}
+                        {formatPct(z.post_contention_position_pct)}
                       </TableCell>
                       <TableCell align="right">
-                        {v.commanded_position_pct ?? "—"}
+                        {formatPct(v.commanded_position_pct)}
                       </TableCell>
                       <TableCell align="right">
-                        {v.reported_position_pct ?? "—"}
+                        {formatPct(v.reported_position_pct)}
                       </TableCell>
                       <TableCell>
                         {v.dispatch_decision}
@@ -110,10 +111,10 @@ export default function TickDecisionInspector({
                         : "—"}
                     </TableCell>
                     <TableCell align="right">
-                      {z.desired_position_pct ?? "—"}
+                      {formatPct(z.desired_position_pct)}
                     </TableCell>
                     <TableCell align="right">
-                      {z.post_contention_position_pct ?? "—"}
+                      {formatPct(z.post_contention_position_pct)}
                     </TableCell>
                     <TableCell align="right">—</TableCell>
                     <TableCell align="right">—</TableCell>

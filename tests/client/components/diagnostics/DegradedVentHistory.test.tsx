@@ -4,6 +4,7 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import type { Zone } from "~/client/api/zonesApi";
 import type { AirHandlerTickDecision } from "~/client/api/airHandlersApi";
+import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import DegradedVentHistory from "~/client/components/diagnostics/DegradedVentHistory";
 
 afterEach(cleanup);
@@ -116,6 +117,7 @@ describe("DegradedVentHistory", () => {
               classification: "satisfied",
               occupied: false,
               spiking: false,
+              temp_calibrated: null,
               resolved_setpoint: 21,
               desired_position_pct: 40,
               post_contention_position_pct: 40,
@@ -183,6 +185,98 @@ describe("DegradedVentHistory", () => {
     ]);
     expect(
       screen.getByText("No vents are currently degraded."),
+    ).toBeInTheDocument();
+  });
+
+  function makeHistoryPoint(
+    loggedAtMs: number,
+    degraded: boolean,
+  ): TickHistoryPoint {
+    return {
+      loggedAtMs,
+      decision: {
+        air_handler_id: "ah-1",
+        tick_at: new Date(loggedAtMs).toISOString(),
+        duration_ms: 1,
+        dry_run: false,
+        control_disarmed: false,
+        equipment_fault_active: false,
+        hvac_state: "IDLE",
+        call_confidence: "reported",
+        zones: [
+          {
+            zone_id: "z1",
+            name: "Martin Bedroom",
+            vent_hardware_type: "flair_smart_vent",
+            classification: "demanding",
+            occupied: false,
+            spiking: false,
+            temp_calibrated: null,
+            resolved_setpoint: null,
+            desired_position_pct: null,
+            post_contention_position_pct: null,
+            vents: [
+              {
+                flair_vent_id: "vent-1",
+                name: "",
+                commanded_position_pct: null,
+                reported_position_pct: null,
+                dispatch_decision: "dispatched",
+                degraded,
+                voltage: null,
+                current_rssi: null,
+              },
+            ],
+            reason: "",
+          },
+        ],
+        contention: null,
+        pressure: null,
+        driving_zone: null,
+        setpoint_push: null,
+        narrative: "",
+      },
+    };
+  }
+
+  it("shows a historical degraded period when historyPoints is supplied", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <DegradedVentHistory
+          zones={[makeZone()]}
+          tickDecisionsByAirHandlerId={new Map()}
+          nowMs={NOW}
+          historyPoints={[
+            makeHistoryPoint(0, false),
+            makeHistoryPoint(60_000, true),
+            makeHistoryPoint(120_000, false),
+          ]}
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.getByText("Degraded Periods (this window)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1m")).toBeInTheDocument();
+  });
+
+  it("hides the current-status section when hideCurrentStatus is set", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <DegradedVentHistory
+          zones={[makeZone()]}
+          tickDecisionsByAirHandlerId={new Map()}
+          nowMs={NOW}
+          historyPoints={[makeHistoryPoint(0, false)]}
+          hideCurrentStatus
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.queryByText("Currently Degraded Vents"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Degraded Periods (this window)"),
     ).toBeInTheDocument();
   });
 });
