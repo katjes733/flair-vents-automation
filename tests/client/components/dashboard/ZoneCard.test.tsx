@@ -267,6 +267,8 @@ describe("ZoneCard", () => {
             commanded_position_pct: 100,
             reported_position_pct: 100,
             dispatch_decision: "dispatched",
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,
@@ -277,6 +279,8 @@ describe("ZoneCard", () => {
             commanded_position_pct: 100,
             reported_position_pct: 100,
             dispatch_decision: "dispatched",
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,
@@ -324,6 +328,8 @@ describe("ZoneCard", () => {
             commanded_position_pct: 100,
             reported_position_pct: 100,
             dispatch_decision: "dispatched",
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,
@@ -334,6 +340,8 @@ describe("ZoneCard", () => {
             commanded_position_pct: 100,
             reported_position_pct: 100,
             dispatch_decision: "dispatched",
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,
@@ -346,6 +354,82 @@ describe("ZoneCard", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText("Vent position (Den Center North)"),
+    ).toBeInTheDocument();
+  });
+
+  // Regression test: "commanded" is this tick's target, not necessarily
+  // what was actually sent to the vent — see the conversation this was
+  // built from. The card must make that distinction visible rather than
+  // implying every "commanded" value already reached the hardware.
+  it("shows the accumulated delta toward dispatch when a command is being held, not sent as 'commanded'", () => {
+    renderCard({
+      tickRecord: {
+        zone_id: "z1",
+        name: "Den Front",
+        vent_hardware_type: "flair_smart_vent",
+        classification: "demanding",
+        occupied: false,
+        spiking: false,
+        temp_calibrated: null,
+        resolved_setpoint: null,
+        desired_position_pct: 42,
+        post_contention_position_pct: 42,
+        reason: "",
+        vents: [
+          {
+            flair_vent_id: "vent-1",
+            name: "",
+            commanded_position_pct: 42,
+            reported_position_pct: 30,
+            dispatch_decision: "suppressed_step_delta",
+            step_delta_pct: 12,
+            min_step_delta_pct: 30,
+            degraded: false,
+            voltage: null,
+            current_rssi: null,
+          },
+        ],
+      },
+    });
+    expect(
+      screen.getByText(
+        "42% target · 30% reported · holding (Δ12% of 30% to move)",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows 'sent' once a command actually goes out", () => {
+    renderCard({
+      tickRecord: {
+        zone_id: "z1",
+        name: "Den Front",
+        vent_hardware_type: "flair_smart_vent",
+        classification: "demanding",
+        occupied: false,
+        spiking: false,
+        temp_calibrated: null,
+        resolved_setpoint: null,
+        desired_position_pct: 60,
+        post_contention_position_pct: 60,
+        reason: "",
+        vents: [
+          {
+            flair_vent_id: "vent-1",
+            name: "",
+            commanded_position_pct: 60,
+            reported_position_pct: 30,
+            dispatch_decision: "dispatched",
+            step_delta_pct: 30,
+            min_step_delta_pct: 30,
+            degraded: false,
+            voltage: null,
+            current_rssi: null,
+          },
+        ],
+      },
+    });
+    expect(
+      screen.getByText("60% target · 30% reported · sent"),
     ).toBeInTheDocument();
   });
 });

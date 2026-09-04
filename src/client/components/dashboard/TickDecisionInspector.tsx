@@ -16,6 +16,7 @@ import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
 import { toDisplayFlowRate, AIRFLOW_UNIT_LABELS } from "~/shared/types/airflow";
 import { formatPct } from "~/client/util/formatPct";
+import { formatDispatchStatus } from "~/client/util/formatDispatchStatus";
 
 interface TickDecisionInspectorProps {
   decision: AirHandlerTickDecision | null;
@@ -95,7 +96,7 @@ export default function TickDecisionInspector({
                         {formatPct(v.reported_position_pct)}
                       </TableCell>
                       <TableCell>
-                        {v.dispatch_decision}
+                        {formatDispatchStatus(v) ?? v.dispatch_decision}
                         {v.degraded ? " (degraded)" : ""}
                       </TableCell>
                     </TableRow>

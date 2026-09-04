@@ -13,7 +13,7 @@ function base(
     minVentPosition: 0,
     maxVentPosition: 100,
     thermalLoadFlags: [],
-    hasTemperatureSensor: true,
+    demanding: false,
     state: "COOLING_CALL",
     calibratedTemp: asAbsoluteTemp(21),
     resolvedSetpoint: asAbsoluteTemp(21),
@@ -38,7 +38,6 @@ function base(
 describe("computeDesiredPosition", () => {
   it("holds at idle baseline when satisfied (deviation within tolerance)", () => {
     const result = computeDesiredPosition(base());
-    expect(result.demanding).toBe(false);
     expect(result.desiredPosition).toBe(100);
   });
 
@@ -46,16 +45,20 @@ describe("computeDesiredPosition", () => {
     const halfway = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         calibratedTemp: asAbsoluteTemp(21 + 1.67 / 2),
       }),
     );
-    expect(halfway.demanding).toBe(true);
     expect(halfway.desiredPosition).toBeCloseTo(50, 0);
   });
 
   it("clamps at the ceiling once demand meets or exceeds the full band", () => {
     const result = computeDesiredPosition(
-      base({ idleBaselinePosition: 0, calibratedTemp: asAbsoluteTemp(30) }),
+      base({
+        idleBaselinePosition: 0,
+        demanding: true,
+        calibratedTemp: asAbsoluteTemp(30),
+      }),
     );
     expect(result.desiredPosition).toBe(100);
   });
@@ -64,6 +67,7 @@ describe("computeDesiredPosition", () => {
     const oneBoost = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         calibratedTemp: asAbsoluteTemp(21.5),
         occupied: true,
       }),
@@ -71,6 +75,7 @@ describe("computeDesiredPosition", () => {
     const twoBoosts = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         calibratedTemp: asAbsoluteTemp(21.5),
         occupied: true,
         spiking: true,
@@ -85,6 +90,7 @@ describe("computeDesiredPosition", () => {
     const result = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         state: "HEATING_CALL",
         calibratedTemp: asAbsoluteTemp(10),
         resolvedSetpoint: asAbsoluteTemp(21),
@@ -99,6 +105,7 @@ describe("computeDesiredPosition", () => {
     const result = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         state: "HEATING_CALL",
         calibratedTemp: asAbsoluteTemp(10),
         resolvedSetpoint: asAbsoluteTemp(21),
@@ -112,6 +119,7 @@ describe("computeDesiredPosition", () => {
     const result = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         state: "HEATING_CALL",
         calibratedTemp: asAbsoluteTemp(10),
         resolvedSetpoint: asAbsoluteTemp(21),
@@ -125,6 +133,7 @@ describe("computeDesiredPosition", () => {
     const result = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         minVentPosition: 10,
         calibratedTemp: asAbsoluteTemp(21.01),
       }),
@@ -137,6 +146,7 @@ describe("computeDesiredPosition", () => {
     const result = computeDesiredPosition(
       base({
         idleBaselinePosition: 0,
+        demanding: true,
         maxVentPosition: 50,
         calibratedTemp: asAbsoluteTemp(30),
       }),
@@ -156,6 +166,42 @@ describe("computeDesiredPosition", () => {
     expect(result.clampedBy).toBe("max_position_below_idle_baseline");
   });
 
+  // The whole point of externalizing `demanding` (see the field's own doc
+  // comment): the caller's already-stabilized decision governs which branch
+  // runs here, even when a fresh, unstabilized classification of the same
+  // raw reading would disagree — a single-tick noise blip can't flip this
+  // out from under the caller's own hysteresis dwell.
+  it("honors the caller's stabilized demanding=true even when the raw deviation alone reads satisfied", () => {
+    const result = computeDesiredPosition(
+      base({
+        idleBaselinePosition: 100,
+        minVentPosition: 0,
+        demanding: true,
+        tolerance: asTempDelta(1),
+        calibratedTemp: asAbsoluteTemp(21), // deviation 0, well within tolerance -> raw would be "satisfied"
+      }),
+    );
+    // The demanding (opening) branch ran, not the closing one — desired
+    // position moves toward maxPositionPct from idleBaselinePosition, not
+    // down toward minVentPosition.
+    expect(result.desiredPosition).toBe(100);
+  });
+
+  it("honors the caller's stabilized demanding=false even when the raw deviation alone reads demanding", () => {
+    const result = computeDesiredPosition(
+      base({
+        idleBaselinePosition: 0,
+        minVentPosition: 0,
+        demanding: false,
+        tolerance: null,
+        calibratedTemp: asAbsoluteTemp(30), // way past setpoint -> raw would be "demanding"
+      }),
+    );
+    // The satisfied (closing) branch ran — desired position stays pinned at
+    // idleBaselinePosition (0 here), never ramping up toward the ceiling.
+    expect(result.desiredPosition).toBe(0);
+  });
+
   // Regression coverage for a real gap found live: a satisfied zone
   // previously held flat at idle_baseline_position forever once satisfied,
   // with nothing correcting an already-overcooled room — see "the goal is
@@ -172,7 +218,6 @@ describe("computeDesiredPosition", () => {
           calibratedTemp: asAbsoluteTemp(22), // deviation = 22-21 = 1 = tolerance exactly
         }),
       );
-      expect(result.demanding).toBe(false);
       expect(result.desiredPosition).toBe(100);
     });
 
@@ -188,7 +233,6 @@ describe("computeDesiredPosition", () => {
           calibratedTemp: asAbsoluteTemp(21),
         }),
       );
-      expect(result.demanding).toBe(false);
       expect(result.desiredPosition).toBeLessThan(100);
       expect(result.desiredPosition).toBeGreaterThan(0);
     });
@@ -204,7 +248,6 @@ describe("computeDesiredPosition", () => {
           calibratedTemp: asAbsoluteTemp(15),
         }),
       );
-      expect(result.demanding).toBe(false);
       expect(result.desiredPosition).toBe(5);
     });
 
@@ -218,7 +261,6 @@ describe("computeDesiredPosition", () => {
           occupied: true,
         }),
       );
-      expect(result.demanding).toBe(false);
       expect(result.desiredPosition).toBe(0);
     });
 

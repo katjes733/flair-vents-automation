@@ -83,6 +83,8 @@ function makeDecision(
             commanded_position_pct: 40,
             reported_position_pct: 40,
             dispatch_decision: "dispatched",
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,

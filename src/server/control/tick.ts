@@ -852,6 +852,9 @@ export async function runTick(
         hvac.state === "COOLING_CALL" || hvac.state === "HEATING_CALL"
           ? hvac.state
           : ARBITRARY_IDLE_CALL_STATE,
+      minimumComfortTolerance: asTempDelta(
+        ctx.settings.minimum_comfort_tolerance_c,
+      ),
     });
     targetsByZone.set(zone.id, target);
   }
@@ -951,12 +954,18 @@ export async function runTick(
       lastCommandedTarget: zone.state.last_target_position,
       manualPositionPct: target.manualPositionPct,
       degraded: isZoneDegraded(zone.state),
+      previousClassification: zone.state.last_classification,
+      previousPendingClassification: zone.state.classification_pending_value,
+      previousPendingSinceMs: parseIsoOrNull(
+        zone.state.classification_pending_since,
+      ),
     };
   });
 
   const pipelineResult = computeZoneCommands({
     state: hvac.state,
     zones: pipelineInputs,
+    nowMs: startedAtMs,
     settings: {
       proportionalBandWidthC: asTempDelta(ctx.settings.proportional_band_width),
       maxPositionPct: ctx.settings.max_position_pct,
@@ -972,6 +981,8 @@ export async function runTick(
       unoccupiedIdleFactor: ctx.settings.unoccupied_idle_factor,
       modulationStepPct: ctx.settings.modulation_step_pct,
       maxStepsPerTick: ctx.settings.max_steps_per_tick,
+      classificationStabilizationMinutes:
+        ctx.settings.classification_stabilization_minutes,
     },
     capLps,
     floorLps,
@@ -1373,6 +1384,12 @@ export async function runTick(
     string,
     "dispatched" | "suppressed_step_delta"
   >();
+  // How close each vent is to its next real dispatch — see
+  // VentTickDecision's own step_delta_pct/min_step_delta_pct doc comment.
+  const stepDeltaByVentKey = new Map<
+    string,
+    { stepDeltaPct: number; minStepDeltaPct: number }
+  >();
   const zoneDispatchedThisTickByZoneId = new Map<string, boolean>();
   for (const zone of zones) {
     if (!isControllable(zone.ventHardwareType)) continue;
@@ -1421,6 +1438,13 @@ export async function runTick(
         dispatchDecisionByVentKey.set(
           reconciliationKey(zone.id, ventReading.flairVentId),
           result.dispatched ? "dispatched" : "suppressed_step_delta",
+        );
+        stepDeltaByVentKey.set(
+          reconciliationKey(zone.id, ventReading.flairVentId),
+          {
+            stepDeltaPct: result.stepDeltaPct,
+            minStepDeltaPct: effectiveMinStepDeltaPct,
+          },
         );
         vents = patchVentState(vents, ventReading.flairVentId, {
           last_reported_position: dryRun
@@ -1474,6 +1498,13 @@ export async function runTick(
         : null,
       last_classification: (pipelineResult.classifications[zone.id] ?? null) as
         "satisfied" | "demanding" | "unclassified_no_sensor" | null,
+      classification_pending_value:
+        pipelineResult.classificationPending[zone.id]?.value ?? null,
+      classification_pending_since: pipelineResult.classificationPending[
+        zone.id
+      ]?.sinceMs
+        ? toIso(pipelineResult.classificationPending[zone.id]!.sinceMs!)
+        : null,
       occupied: occupancyHysteresisByZone.get(zone.id)?.occupied ?? false,
       occupancy_pending_flip_since: occupancyHysteresisByZone.get(zone.id)
         ?.pendingFlipSince
@@ -1531,6 +1562,12 @@ export async function runTick(
               dispatchDecisionByVentKey.get(
                 reconciliationKey(zone.id, v.flairVentId),
               ) ?? "suppressed_step_delta",
+            step_delta_pct:
+              stepDeltaByVentKey.get(reconciliationKey(zone.id, v.flairVentId))
+                ?.stepDeltaPct ?? null,
+            min_step_delta_pct:
+              stepDeltaByVentKey.get(reconciliationKey(zone.id, v.flairVentId))
+                ?.minStepDeltaPct ?? null,
             degraded:
               finalVents.find((fv) => fv.flair_vent_id === v.flairVentId)
                 ?.degraded ?? false,
@@ -1657,6 +1694,11 @@ function buildFaultDecision(
             commanded_position_pct: 100,
             reported_position_pct: null,
             dispatch_decision: "dispatched" as const,
+            // The fail-safe path bypasses the step-delta suppressor
+            // entirely (unconditional dispatch) — there's no accumulated
+            // delta to report.
+            step_delta_pct: null,
+            min_step_delta_pct: null,
             degraded: false,
             voltage: null,
             current_rssi: null,

@@ -34,12 +34,21 @@ export interface ZoneRuntimeState {
   stale: boolean;
   spike_active: boolean;
   spike_since: string | null;
-  // The previous tick's satisfied/demanding classification — the input
-  // classifyStaleness()'s "not already satisfied" gate needs, since a
-  // comfortable room's reading is unchanging by design. See "Stale sensor
-  // reading safeguard".
+  // The previous tick's *stabilized* satisfied/demanding classification —
+  // the input classifyStaleness()'s "not already satisfied" gate needs,
+  // since a comfortable room's reading is unchanging by design (see "Stale
+  // sensor reading safeguard"), and also the anchor `stabilizeClassification`
+  // itself debounces against — see the two fields below.
   last_classification:
     "satisfied" | "demanding" | "unclassified_no_sensor" | null;
+  // The hysteresis dwell for the classification boundary itself — mirrors
+  // spike_active/spike_since's shape. A raw classification that disagrees
+  // with `last_classification` sits here, pending, until it's held steady
+  // for `classification_stabilization_minutes` — see
+  // `stabilizeClassification` in comfortTolerance.ts.
+  classification_pending_value:
+    "satisfied" | "demanding" | "unclassified_no_sensor" | null;
+  classification_pending_since: string | null;
   // Debounced occupancy state — mirrors spike_active/spike_since's shape.
   // The live signal (`remote-sensor-readings.occupied`, confirmed present
   // via a targeted live check — see docs/flair-api-schema.md) is fed
@@ -59,6 +68,8 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   spike_active: false,
   spike_since: null,
   last_classification: null,
+  classification_pending_value: null,
+  classification_pending_since: null,
   occupied: false,
   occupancy_pending_flip_since: null,
 };

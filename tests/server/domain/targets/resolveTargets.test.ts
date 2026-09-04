@@ -25,6 +25,7 @@ function base() {
     fallback: FALLBACK,
     zoneTolerance: null,
     state: "COOLING_CALL" as const,
+    minimumComfortTolerance: asTempDelta(0),
   };
 }
 
@@ -171,6 +172,83 @@ describe("resolveZoneTargets", () => {
       tolerance: null,
       source: "fallback",
       manualPositionPct: null,
+    });
+  });
+
+  describe("minimum comfort tolerance floor", () => {
+    it("floors an unset schedule-event tolerance up to the minimum", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        minimumComfortTolerance: asTempDelta(0.56),
+        governingEvent: {
+          mode: "active",
+          coolSetpoint: asAbsoluteTemp(21),
+          heatSetpoint: asAbsoluteTemp(19),
+          toleranceOverride: null,
+        },
+      });
+      expect(result.tolerance).toBe(0.56);
+    });
+
+    it("floors a small explicit tolerance up to the minimum", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        minimumComfortTolerance: asTempDelta(0.56),
+        governingEvent: {
+          mode: "active",
+          coolSetpoint: asAbsoluteTemp(21),
+          heatSetpoint: asAbsoluteTemp(19),
+          toleranceOverride: asTempDelta(0.1),
+        },
+      });
+      expect(result.tolerance).toBe(0.56);
+    });
+
+    it("leaves an already-wide tolerance untouched", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        minimumComfortTolerance: asTempDelta(0.56),
+        governingEvent: {
+          mode: "active",
+          coolSetpoint: asAbsoluteTemp(21),
+          heatSetpoint: asAbsoluteTemp(19),
+          toleranceOverride: asTempDelta(1.5),
+        },
+      });
+      expect(result.tolerance).toBe(1.5);
+    });
+
+    it("does not apply to an inactive resolution — no setpoint means no tolerance to floor", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        minimumComfortTolerance: asTempDelta(0.56),
+        governingEvent: {
+          mode: "inactive",
+          coolSetpoint: null,
+          heatSetpoint: null,
+          toleranceOverride: null,
+        },
+      });
+      expect(result.setpoint).toBeNull();
+      expect(result.tolerance).toBeNull();
+    });
+
+    it("applies to a manual setpoint override's own tolerance too", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        minimumComfortTolerance: asTempDelta(0.56),
+        manualOverride: {
+          config: {
+            kind: "setpoint",
+            value: 20,
+            hold_type: "permanent",
+            actor: "Martin",
+          },
+          expiresAtMs: null,
+          revokedAtMs: null,
+        },
+      });
+      expect(result.tolerance).toBe(0.56);
     });
   });
 });

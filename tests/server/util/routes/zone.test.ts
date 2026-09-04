@@ -70,6 +70,8 @@ describe("updateZoneState", () => {
       spike_active: false,
       spike_since: null,
       last_classification: null,
+      classification_pending_value: null,
+      classification_pending_since: null,
       occupied: false,
       occupancy_pending_flip_since: null,
     });

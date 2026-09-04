@@ -1,4 +1,8 @@
-import type { AbsoluteTemp, TempDelta } from "~/shared/types/temperature";
+import {
+  asTempDelta,
+  type AbsoluteTemp,
+  type TempDelta,
+} from "~/shared/types/temperature";
 import type { HvacCallState } from "~/server/domain/types";
 import {
   resolveManualOverride,
@@ -48,21 +52,53 @@ export function resolveZoneTargets(params: {
   fallback: { setpoint: AbsoluteTemp; tolerance: TempDelta | null };
   zoneTolerance: TempDelta | null;
   state: HvacCallState;
+  // A resolved tolerance of unset/zero — including a schedule event's own
+  // explicit `comfort_tolerance: 0`/unset — is floored up to at least this
+  // value wherever a real setpoint is resolved. A real, confirmed gap: a
+  // near-zero tolerance combined with ordinary sensor noise (~±0.5°C
+  // observed live) flapped a zone's raw classification every tick, which
+  // — for a zone whose idle_baseline_position equals its max_vent_position
+  // — snapped position straight back to fully open on any hairline
+  // "demanding" tick. See also stabilizeClassification, a second, layered
+  // fix for the same underlying flapping.
+  minimumComfortTolerance: TempDelta;
 }): ResolvedTarget {
   const manual = resolveManualOverride(params.manualOverride, params.nowMs);
-  if (manual) {
-    if (manual.kind === "position") {
-      const beneath = resolveBeneathManual(params);
-      return { ...beneath, source: "manual", manualPositionPct: manual.value };
-    }
-    return {
-      setpoint: manual.value as AbsoluteTemp,
-      tolerance: params.zoneTolerance,
-      source: "manual",
-      manualPositionPct: null,
-    };
-  }
-  return resolveBeneathManual(params);
+  const result: ResolvedTarget = manual
+    ? manual.kind === "position"
+      ? {
+          ...resolveBeneathManual(params),
+          source: "manual",
+          manualPositionPct: manual.value,
+        }
+      : {
+          setpoint: manual.value as AbsoluteTemp,
+          tolerance: params.zoneTolerance,
+          source: "manual",
+          manualPositionPct: null,
+        }
+    : resolveBeneathManual(params);
+  return applyMinimumToleranceFloor(result, params.minimumComfortTolerance);
+}
+
+/**
+ * Skipped for "inactive" (setpoint === null) — there's no target to floor a
+ * tolerance against, and "inactive" zones aren't classified at all. Also
+ * skipped when the floor itself is disabled (minimum <= 0) — a real 0
+ * genuinely means "no floor configured," and forcing an unset (null)
+ * tolerance to a literal 0 would silently collapse "unset ⇒ tight
+ * targeting" and "explicitly zero" into the same on-the-wire value, which
+ * `resolveComfortTolerance`'s own contract explicitly treats as distinct.
+ */
+function applyMinimumToleranceFloor(
+  target: ResolvedTarget,
+  minimum: TempDelta,
+): ResolvedTarget {
+  if (target.setpoint === null || minimum <= 0) return target;
+  return {
+    ...target,
+    tolerance: asTempDelta(Math.max(target.tolerance ?? 0, minimum)),
+  };
 }
 
 function resolveBeneathManual(

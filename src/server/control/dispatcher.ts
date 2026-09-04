@@ -12,6 +12,13 @@ type Logger = ReturnType<typeof logger.child>;
 export interface DispatchResult {
   dispatched: boolean;
   lastDispatchedPosition: number | null;
+  // The magnitude of change since the last real dispatch — the same value
+  // the step-delta suppressor itself compares against minStepDeltaPct.
+  // Returned unconditionally (dispatched or suppressed) so a caller can
+  // surface "how close to actually moving" in the UI, not just whether it
+  // moved this tick — see "Vent command suppressed"'s own step_delta_pct
+  // field, which this mirrors.
+  stepDeltaPct: number;
 }
 
 /**
@@ -58,6 +65,7 @@ export async function dispatchZoneCommand(params: {
     return {
       dispatched: false,
       lastDispatchedPosition: params.lastDispatchedPosition,
+      stepDeltaPct,
     };
   }
 
@@ -87,5 +95,9 @@ export async function dispatchZoneCommand(params: {
     dry_run: params.dryRun,
   });
 
-  return { dispatched: true, lastDispatchedPosition: params.targetPosition };
+  return {
+    dispatched: true,
+    lastDispatchedPosition: params.targetPosition,
+    stepDeltaPct,
+  };
 }

@@ -159,6 +159,31 @@ export const systemSettingsConfigSchema = z.object({
   // --- Comfort / deadband ---
   // 2°F → 1.11°C (Config-time validation section).
   heat_cool_deadband_min_c: z.number().positive().default(1.11),
+  // A real, confirmed gap found live via shadow-mode evaluation: a
+  // zone/schedule-event `comfort_tolerance` left unset (or set very tight)
+  // means an effectively-zero deadband, which real sensor noise alone
+  // (confirmed live: a bedroom's own reading wobbling ~0.5°C around its
+  // setpoint with nothing actually wrong) is enough to flip
+  // satisfied/demanding classification every tick — and since a zone's
+  // idle_baseline_position commonly equals its max_vent_position, any
+  // "demanding" tick — even a hairline one — snaps its target straight
+  // back to fully open, undoing whatever proportional closing had already
+  // happened. This floor guarantees every zone gets at least this much
+  // real deadband regardless of what's configured — "0.1" in a schedule
+  // still means "at least this," never truly zero. ~1°F default; the real
+  // noise observed live was closer to 0.5°C in amplitude, so this may need
+  // to go higher via System Parameters once you've watched a few real
+  // cycles.
+  minimum_comfort_tolerance_c: z.number().min(0).max(2.78).default(0.56),
+  // The companion fix, layered on top of the floor above: even with a real
+  // deadband, a zone whose actual temperature happens to sit close to its
+  // own boundary can still cross it occasionally on pure noise. Mirrors
+  // spike detection's/occupancy's own stabilization-dwell pattern — a raw
+  // classification only takes effect once it's held steady for this long,
+  // not on the first tick it appears. Default chosen to absorb a few
+  // single-tick blips (at the standard 60s tick interval) without making a
+  // genuine transition feel sluggish.
+  classification_stabilization_minutes: z.number().min(0).default(3),
 
   // --- Fallback baselines ---
   // No specific figures stated in the plan. PLACEHOLDER (~75°F / ~70°F).
