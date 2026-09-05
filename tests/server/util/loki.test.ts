@@ -143,5 +143,62 @@ describe("fetchTickDecisionHistory", () => {
     expect(calledUrl.searchParams.get("start")).toBe("1000000000");
     expect(calledUrl.searchParams.get("end")).toBe("2000000000");
     expect(calledUrl.searchParams.get("limit")).toBe("42");
+    // Regression test for a real, confirmed bug found live: this used to be
+    // "forward", which fills a truncated (window-larger-than-limit) result
+    // from the *oldest* end — every chart on the Telemetry page silently
+    // plotted a stale slice ending hours before "now", which looked exactly
+    // like a timezone bug (a correctly-local-formatted but very-old
+    // timestamp) rather than the pagination bug it actually was. Every
+    // current caller wants the newest points in the window, not the oldest.
+    expect(calledUrl.searchParams.get("direction")).toBe("backward");
+  });
+
+  it("still returns points in chronological order even though Loki itself is queried backward", async () => {
+    // Mirrors the out-of-order test above, but is the direct regression
+    // guard for the "backward" fix specifically: Loki's own backward-
+    // direction response order is newest-first, so if the final sort ever
+    // regressed, this would come back reversed instead of chronological.
+    const decisionEarly = { air_handler_id: "ah-1", tick_at: "early" };
+    const decisionLate = { air_handler_id: "ah-1", tick_at: "late" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: "success",
+          data: {
+            resultType: "streams",
+            result: [
+              {
+                stream: { service: "control", air_handler_id: "ah-1" },
+                // Loki's own newest-first order under direction=backward.
+                values: [
+                  [
+                    "2000000000",
+                    JSON.stringify({
+                      msg: "Control tick decision",
+                      decision: decisionLate,
+                    }),
+                  ],
+                  [
+                    "1000000000",
+                    JSON.stringify({
+                      msg: "Control tick decision",
+                      decision: decisionEarly,
+                    }),
+                  ],
+                ],
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    const points = await fetchTickDecisionHistory("ah-1", 0, 5000, 100);
+    expect(points).toEqual([
+      { loggedAtMs: 1000, decision: decisionEarly },
+      { loggedAtMs: 2000, decision: decisionLate },
+    ]);
   });
 });

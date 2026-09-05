@@ -192,7 +192,12 @@ function setupFlairFixture(
       ventId: r.ventId,
       percentOpen: r.percentOpen,
       ductTemperatureC: r.ductC,
-      createdAt: "2024-01-01T00:00:00.000Z",
+      // Fresh relative to NOW, not a fixed 2024-01-01 date — the duct
+      // fault/anomaly checks now actually enforce staleness (see
+      // isDuctReadingStale in tick.ts), so a reading fixed at midnight
+      // while every test tick runs at NOW (12:00 the same day) or a few
+      // minutes after would otherwise always read as stale.
+      createdAt: new Date(NOW).toISOString(),
     });
   }
 }
@@ -963,6 +968,57 @@ describe("runTick — emergency fail-safe", () => {
     // The fault short-circuit fetches no live Flair snapshot, so there's
     // no calibrated reading to report — null, not a stale/fabricated value.
     expect(decision.zones[0].temp_calibrated).toBeNull();
+  });
+
+  // Regression test for a real, confirmed bug found live via telemetry
+  // review: a stale duct reading used to be treated as live data (the
+  // exclusion filter always saw ductReadingStale: false, unconditionally),
+  // so an upstream Flair data-refresh gap — freezing the duct reading from
+  // before a call finished cooling, which reads *warm* once stale — could
+  // trip a real Emergency Fail-Safe with no genuine equipment problem at
+  // all. Confirmed live: two fail-safe triggers correlated exactly with
+  // every smart-vent zone's room reading also going stale in the same
+  // tick. A stale duct reading must be excluded ("dormant"), not treated
+  // as a failing one.
+  it("does not trigger the fail-safe on a stale duct reading that would otherwise look like a failure", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 23, // would fail the differential if treated as live
+        percentOpen: 20,
+      },
+    ]);
+    // Override the vent reading's own timestamp to be old enough to cross
+    // the default 15-minute staleness threshold as of `NOW`.
+    client.setVentReading({
+      ventId: "vent-1",
+      percentOpen: 20,
+      ductTemperatureC: 23,
+      createdAt: new Date(NOW - 20 * 60000).toISOString(),
+    });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(false);
+    expect(decision.narrative).not.toMatch(/Emergency fail-safe/);
   });
 });
 
