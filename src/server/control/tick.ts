@@ -134,6 +134,31 @@ function parseIsoOrNull(iso: string | null): number | null {
   return iso ? new Date(iso).getTime() : null;
 }
 
+// A real, confirmed bug found live via telemetry review: both
+// detectEquipmentFault and detectDuctAirflowAnomaly's own "usable" filter
+// exists specifically to exclude a stale duct-temperature reading from the
+// differential check (see emergency.ts's own doc comment) — but every
+// caller here used to hardcode `ductReadingStale: false` unconditionally,
+// so that exclusion could never actually fire. A duct reading frozen from
+// before a call finished cooling reads *warm* once stale, and with no
+// staleness filter that frozen-warm reading gets evaluated as if it were
+// live and failing — a plain upstream Flair data-refresh gap (already a
+// known, documented characteristic of this API) could then trip a real
+// Emergency Fail-Safe with no genuine equipment problem at all. Confirmed
+// live: two fail-safe triggers correlated exactly with every smart-vent
+// zone's *room* reading also going stale in the same tick, strongly
+// suggesting the same underlying Flair snapshot gap silently fed a frozen
+// duct reading into the "fault" conclusion too.
+function isDuctReadingStale(
+  createdAt: string | null,
+  nowMs: number,
+  staleThresholdMinutes: number,
+): boolean {
+  const createdAtMs = parseIsoOrNull(createdAt);
+  if (createdAtMs === null) return true;
+  return nowMs - createdAtMs > staleThresholdMinutes * 60000;
+}
+
 // One room-scoped reading (temperature/occupancy) plus one entry per
 // zone.config.flair_vents member, same order — see "Multi-Vent Zones".
 interface ZoneReadingBundle {
@@ -519,7 +544,11 @@ export async function runTick(
         ventId: v.flairVentId,
         hasSmartVent: true,
         ductTemperatureC: v.ductTemperatureC,
-        ductReadingStale: false,
+        ductReadingStale: isDuctReadingStale(
+          v.ductReadingCreatedAt,
+          startedAtMs,
+          ctx.settings.stale_threshold_minutes,
+        ),
         roomTemperatureC,
         demanding: false,
         commandedPositionPct: 0,
@@ -1106,7 +1135,11 @@ export async function runTick(
           ventId: v.flairVentId,
           hasSmartVent: true,
           ductTemperatureC: v.ductTemperatureC,
-          ductReadingStale: false,
+          ductReadingStale: isDuctReadingStale(
+            v.ductReadingCreatedAt,
+            startedAtMs,
+            ctx.settings.stale_threshold_minutes,
+          ),
           roomTemperatureC,
           demanding: pipelineResult.classifications[z.id] === "demanding",
           commandedPositionPct: pipelineResult.commandedPositions[z.id] ?? 0,
@@ -1471,10 +1504,24 @@ export async function runTick(
             minStepDeltaPct: effectiveMinStepDeltaPct,
           },
         );
+        // A real, confirmed bug found live via shadow-mode evaluation: this
+        // used to freeze last_reported_position (this app's own persisted
+        // "last thing we told this vent," which the step-delta suppressor
+        // above reads back as lastDispatchedPosition) whenever dryRun was
+        // true, instead of always advancing it like every other piece of
+        // ramp state does. Shadow mode's own stated guarantee is that
+        // dispatch state "advances exactly as it would live" — with this
+        // frozen, a shadowed zone's dispatch decision kept comparing
+        // against the exact same stale baseline forever, so once a zone's
+        // target drifted far enough from it to cross the threshold once,
+        // every subsequent tick recomputed the identical "would dispatch"
+        // answer indefinitely, never settling into "no change needed"
+        // even after the target itself stopped moving. The fail-safe
+        // dispatch path a few hundred lines up never had this bug — it
+        // always advances unconditionally, which is the correct behavior
+        // this now matches.
         vents = patchVentState(vents, ventReading.flairVentId, {
-          last_reported_position: dryRun
-            ? (priorVent?.last_reported_position ?? null)
-            : result.lastDispatchedPosition,
+          last_reported_position: result.lastDispatchedPosition,
         });
         currentVentsByZoneId.set(zone.id, vents);
       } catch (err) {

@@ -192,7 +192,12 @@ function setupFlairFixture(
       ventId: r.ventId,
       percentOpen: r.percentOpen,
       ductTemperatureC: r.ductC,
-      createdAt: "2024-01-01T00:00:00.000Z",
+      // Fresh relative to NOW, not a fixed 2024-01-01 date — the duct
+      // fault/anomaly checks now actually enforce staleness (see
+      // isDuctReadingStale in tick.ts), so a reading fixed at midnight
+      // while every test tick runs at NOW (12:00 the same day) or a few
+      // minutes after would otherwise always read as stale.
+      createdAt: new Date(NOW).toISOString(),
     });
   }
 }
@@ -964,6 +969,57 @@ describe("runTick — emergency fail-safe", () => {
     // no calibrated reading to report — null, not a stale/fabricated value.
     expect(decision.zones[0].temp_calibrated).toBeNull();
   });
+
+  // Regression test for a real, confirmed bug found live via telemetry
+  // review: a stale duct reading used to be treated as live data (the
+  // exclusion filter always saw ductReadingStale: false, unconditionally),
+  // so an upstream Flair data-refresh gap — freezing the duct reading from
+  // before a call finished cooling, which reads *warm* once stale — could
+  // trip a real Emergency Fail-Safe with no genuine equipment problem at
+  // all. Confirmed live: two fail-safe triggers correlated exactly with
+  // every smart-vent zone's room reading also going stale in the same
+  // tick. A stale duct reading must be excluded ("dormant"), not treated
+  // as a failing one.
+  it("does not trigger the fail-safe on a stale duct reading that would otherwise look like a failure", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 23, // would fail the differential if treated as live
+        percentOpen: 20,
+      },
+    ]);
+    // Override the vent reading's own timestamp to be old enough to cross
+    // the default 15-minute staleness threshold as of `NOW`.
+    client.setVentReading({
+      ventId: "vent-1",
+      percentOpen: 20,
+      ductTemperatureC: 23,
+      createdAt: new Date(NOW - 20 * 60000).toISOString(),
+    });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(false);
+    expect(decision.narrative).not.toMatch(/Emergency fail-safe/);
+  });
 });
 
 describe("runTick — hardware diagnostics (voltage/RSSI)", () => {
@@ -1091,6 +1147,69 @@ describe("runTick — shadow mode (dry run)", () => {
     );
     expect(client.getVentCommandHistory()).toHaveLength(0);
     expect(client.getSetpointCommandHistory()).toHaveLength(0);
+  });
+
+  // Regression test for a real, confirmed bug found live: a shadowed
+  // zone's persisted last_reported_position (this app's own record of
+  // "the last thing we told this vent," read back as lastDispatchedPosition
+  // — see dispatcher.ts) used to freeze in dry_run mode instead of
+  // advancing like every other piece of ramp state, contradicting shadow
+  // mode's own stated guarantee ("dispatch state advances exactly as it
+  // would live"). With it frozen, a zone whose target had drifted far
+  // enough from the frozen baseline to cross the dispatch threshold once
+  // kept recomputing that identical "would dispatch" answer every
+  // subsequent tick forever, even once its target stopped changing at
+  // all — confirmed live via a screenshot showing a zone stuck showing
+  // "sent" indefinitely while sitting at a stable position.
+  it("advances a shadowed zone's dispatch state across ticks, settling into 'no change needed' rather than re-dispatching forever", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 15, // well below the fallback cool setpoint -> satisfied, closes to floor
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+    ctx.globalDryRun = true;
+
+    const decision1 = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    // First tick ever for this zone — no prior dispatched position on
+    // record, so it unconditionally dispatches once.
+    expect(decision1.zones[0]?.vents[0]?.dispatch_decision).toBe("dispatched");
+    const settledPosition =
+      decision1.zones[0]?.vents[0]?.commanded_position_pct;
+
+    // Tick 2, same reading, same target — reload the zone from what tick 1
+    // actually persisted (mirroring every other multi-tick test's pattern).
+    const zonesTick2 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    const decision2 = await runTick(
+      makeAirHandler(),
+      zonesTick2,
+      ctx,
+      makeDeps(client, persisted, NOW + 60000),
+    );
+
+    expect(decision2.zones[0]?.vents[0]?.commanded_position_pct).toBe(
+      settledPosition,
+    );
+    // The fix under test: dispatch state advanced from tick 1, so tick 2
+    // correctly sees zero accumulated delta — not another "dispatched".
+    expect(decision2.zones[0]?.vents[0]?.dispatch_decision).toBe(
+      "suppressed_step_delta",
+    );
+    expect(decision2.zones[0]?.vents[0]?.step_delta_pct).toBe(0);
   });
 });
 

@@ -41,6 +41,10 @@ async function queryRange(params: {
   startNs: string;
   endNs: string;
   limit: number;
+  // Which end of the window Loki fills `limit` from when the range holds
+  // more matching lines than `limit` allows — see fetchTickDecisionHistory's
+  // own comment for why every current caller needs "backward" specifically.
+  direction: "forward" | "backward";
 }): Promise<LokiStreamResult[]> {
   const base = lokiBaseUrl();
   if (!base) {
@@ -53,7 +57,7 @@ async function queryRange(params: {
   url.searchParams.set("start", params.startNs);
   url.searchParams.set("end", params.endNs);
   url.searchParams.set("limit", String(params.limit));
-  url.searchParams.set("direction", "forward");
+  url.searchParams.set("direction", params.direction);
 
   const res = await fetch(url.toString());
   if (!res.ok) {
@@ -87,11 +91,22 @@ export async function fetchTickDecisionHistory(
   limit: number,
 ): Promise<TickDecisionHistoryPoint[]> {
   const query = `{service="control", air_handler_id=${quoteLogQlLiteral(airHandlerId)}} |= "Control tick decision"`;
+  // A real, confirmed bug found live: at the default 60s tick cadence, a
+  // 24h (or wider) window routinely holds far more matching lines than
+  // `limit`, and Loki's own `direction=forward` fills that cap from the
+  // *oldest* end of the window — so every chart silently plotted a stale
+  // slice ending hours before "now" with no truncation indicator, which
+  // looked exactly like a timezone bug (a correctly-local-formatted but
+  // very-old timestamp) rather than the pagination bug it actually was.
+  // "backward" fills from the newest end instead — every chart here cares
+  // about "closest to now," never "earliest in this window" — and the
+  // final sort below still puts the result back in chronological order.
   const streams = await queryRange({
     query,
     startNs: String(Math.floor(fromMs) * 1_000_000),
     endNs: String(Math.floor(toMs) * 1_000_000),
     limit,
+    direction: "backward",
   });
 
   const points: TickDecisionHistoryPoint[] = [];
