@@ -6,6 +6,7 @@ import { getInstallationById } from "~/server/util/routes/installation";
 import { listMembersForInstallation } from "~/server/util/routes/installationMember";
 import {
   inviteMemberToInstallation,
+  resendInviteToMember,
   updateInstallationMemberRole,
   revokeInstallationMember,
 } from "~/server/util/services/installationMemberService";
@@ -44,6 +45,25 @@ router.post(
         origin: `${req.protocol}://${req.get("host")}`,
       });
       res.status(201).json({ member: created });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/:id/resend-invite",
+  requirePermission("installationAdmin.inviteMember"),
+  async (req, res, next) => {
+    try {
+      const installation = await getInstallationById(req.actor!.installationId);
+      await resendInviteToMember({
+        installationId: req.actor!.installationId,
+        installationName: installation?.name ?? "your installation",
+        memberId: req.params.id as string,
+        origin: `${req.protocol}://${req.get("host")}`,
+      });
+      res.json({ message: "Invite resent." });
     } catch (error) {
       next(error);
     }

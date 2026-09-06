@@ -37,6 +37,7 @@ vi.mock("~/server/routes/signupVerification", () => ({ generateAndSendCode }));
 
 const {
   inviteMemberToInstallation,
+  resendInviteToMember,
   updateInstallationMemberRole,
   revokeInstallationMember,
 } = await import("~/server/util/services/installationMemberService");
@@ -126,11 +127,15 @@ describe("inviteMemberToInstallation", () => {
       id: "member-1",
       createdAt: new Date("2024-01-01T00:00:00.000Z"),
     });
-    await inviteMemberToInstallation(baseInviteOpts);
+    const result = await inviteMemberToInstallation(baseInviteOpts);
     expect(createUser).not.toHaveBeenCalled();
     expect(createInstallationMember).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "user-9" }),
     );
+    // Reusing an already-activated account means this brand-new membership
+    // isn't "pending" the way a genuinely fresh invite is — pending reflects
+    // the user's own real state, not just "was this row just created."
+    expect(result.pending).toBe(false);
   });
 
   it("sends an invite email with a link to /accept-invite and a 24h TTL", async () => {
@@ -154,7 +159,7 @@ describe("inviteMemberToInstallation", () => {
 
   it("returns the created member's full row", async () => {
     getUserByEmail.mockResolvedValue(null);
-    createUser.mockResolvedValue({ id: "user-2" });
+    createUser.mockResolvedValue({ id: "user-2", passwordHash: "" });
     createInstallationMember.mockResolvedValue({
       id: "member-1",
       createdAt: new Date("2024-01-01T00:00:00.000Z"),
@@ -165,10 +170,68 @@ describe("inviteMemberToInstallation", () => {
       installationId: "inst-1",
       userId: "user-2",
       email: "new@example.com",
+      pending: true,
       role: "write",
       scope: { air_handler_ids: "*" },
       createdAt: new Date("2024-01-01T00:00:00.000Z"),
     });
+  });
+});
+
+describe("resendInviteToMember", () => {
+  const baseResendOpts = {
+    installationId: "inst-1",
+    installationName: "Martin's Home",
+    memberId: "member-1",
+    origin: "http://localhost:5173",
+  };
+
+  it("404s (not 403) when the member belongs to a different installation", async () => {
+    getInstallationMemberById.mockResolvedValue({
+      id: "member-1",
+      installationId: "inst-other",
+      email: "invited@example.com",
+      role: "write",
+      pending: true,
+    });
+    await expect(resendInviteToMember(baseResendOpts)).rejects.toThrow(
+      /not found/,
+    );
+    expect(generateAndSendCode).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-activated member — there's no pending invite left", async () => {
+    getInstallationMemberById.mockResolvedValue({
+      id: "member-1",
+      installationId: "inst-1",
+      email: "active@example.com",
+      role: "write",
+      pending: false,
+    });
+    await expect(resendInviteToMember(baseResendOpts)).rejects.toThrow(
+      /already accepted/,
+    );
+    expect(generateAndSendCode).not.toHaveBeenCalled();
+  });
+
+  it("resends the invite code to a still-pending member", async () => {
+    getInstallationMemberById.mockResolvedValue({
+      id: "member-1",
+      installationId: "inst-1",
+      email: "invited@example.com",
+      role: "write",
+      pending: true,
+    });
+    await resendInviteToMember(baseResendOpts);
+    expect(generateAndSendCode).toHaveBeenCalledWith(
+      "invited@example.com",
+      expect.any(Function),
+      24 * 60,
+    );
+    const buildEmail = generateAndSendCode.mock.calls[0][1];
+    const email = buildEmail("654321");
+    expect(email.text).toContain("/accept-invite?email=invited%40example.com");
+    expect(email.text).toContain("654321");
   });
 });
 

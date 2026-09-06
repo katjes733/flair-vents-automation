@@ -118,6 +118,10 @@ export async function inviteMemberToInstallation(opts: {
     installationId: opts.installationId,
     userId: user.id,
     email: opts.email,
+    // Reusing an already-activated account (see the comment above) means
+    // this brand-new membership row can still belong to a non-pending
+    // user — pending reflects the user's own real state, not "just invited".
+    pending: user.passwordHash === "",
     role: opts.role,
     scope: opts.scope ?? { air_handler_ids: "*" },
     createdAt: created.createdAt,
@@ -136,6 +140,42 @@ async function getOwnMember(
     throw new HttpError(`Member ${memberId} not found.`, 404);
   }
   return member;
+}
+
+// Re-sends the same invite email/code a still-pending member was originally
+// sent — the real gap this closes: the invite code's 24h TTL (see
+// INVITE_CODE_TTL_MINUTES) can lapse, or the email can simply be lost,
+// with no way to get a fresh one short of an owner re-inviting the same
+// email from scratch (which inviteMemberToInstallation itself refuses,
+// since a membership row already exists for it). Rejected for an
+// already-activated member — there's no pending invite left to resend.
+export async function resendInviteToMember(opts: {
+  installationId: string;
+  installationName: string;
+  memberId: string;
+  origin: string;
+}): Promise<void> {
+  const member = await getOwnMember(opts.installationId, opts.memberId);
+  if (!member.pending) {
+    throw new HttpError(
+      `${member.email} has already accepted their invite.`,
+      400,
+    );
+  }
+
+  const acceptUrl = `${opts.origin}/accept-invite?email=${encodeURIComponent(member.email)}`;
+  await generateAndSendCode(
+    member.email,
+    (code) => ({
+      subject: `You've been invited to ${opts.installationName} on Flair Vents Automation`,
+      text: `You've been invited to join "${opts.installationName}" on Flair Vents Automation as a${member.role === "admin" ? "n" : ""} ${member.role}.\n\nYour verification code is: ${code}\n\nThis code is valid for 24 hours.\n\nAccept your invite: ${acceptUrl}`,
+      html: `<p>You've been invited to join <strong>${escapeHtml(opts.installationName)}</strong> on Flair Vents Automation as a${member.role === "admin" ? "n" : ""} <strong>${escapeHtml(member.role)}</strong>.</p>
+<p>Your verification code is: <strong>${code}</strong></p>
+<p>This code is valid for 24 hours.</p>
+<p><a href="${escapeHtml(acceptUrl)}">Accept your invite</a></p>`,
+    }),
+    INVITE_CODE_TTL_MINUTES,
+  );
 }
 
 export async function updateInstallationMemberRole(opts: {

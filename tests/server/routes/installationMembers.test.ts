@@ -34,15 +34,18 @@ vi.mock("~/server/util/routes/installationMember", () => ({
 
 const {
   inviteMemberToInstallation,
+  resendInviteToMember,
   updateInstallationMemberRole,
   revokeInstallationMember,
 } = vi.hoisted(() => ({
   inviteMemberToInstallation: vi.fn(),
+  resendInviteToMember: vi.fn(),
   updateInstallationMemberRole: vi.fn(),
   revokeInstallationMember: vi.fn(),
 }));
 vi.mock("~/server/util/services/installationMemberService", () => ({
   inviteMemberToInstallation,
+  resendInviteToMember,
   updateInstallationMemberRole,
   revokeInstallationMember,
 }));
@@ -65,6 +68,7 @@ beforeEach(() => {
   });
   listMembersForInstallation.mockReset();
   inviteMemberToInstallation.mockReset();
+  resendInviteToMember.mockReset();
   updateInstallationMemberRole.mockReset();
   revokeInstallationMember.mockReset();
 });
@@ -114,6 +118,33 @@ describe("POST /api/v1/installation-members/invite", () => {
       .post("/api/v1/installation-members/invite")
       .send({ email: "new@example.com", role: "owner" });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/v1/installation-members/:id/resend-invite", () => {
+  it("resends, scoped to the caller's installation", async () => {
+    resendInviteToMember.mockResolvedValue(undefined);
+    const res = await request(buildApp()).post(
+      "/api/v1/installation-members/member-1/resend-invite",
+    );
+    expect(res.status).toBe(200);
+    expect(resendInviteToMember).toHaveBeenCalledWith({
+      installationId: "inst-1",
+      installationName: "Martin's Home",
+      memberId: "member-1",
+      origin: expect.stringContaining("://"),
+    });
+  });
+
+  it("propagates a rejection (e.g. already-activated) as its own status code", async () => {
+    const { HttpError } = await import("~/server/util/httpError");
+    resendInviteToMember.mockRejectedValue(
+      new HttpError("a@example.com has already accepted their invite.", 400),
+    );
+    const res = await request(buildApp()).post(
+      "/api/v1/installation-members/member-1/resend-invite",
+    );
+    expect(res.status).toBe(400);
   });
 });
 

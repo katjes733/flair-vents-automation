@@ -14,18 +14,25 @@ afterEach(cleanup);
 const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
 vi.mock("~/client/session/useSession", () => ({ useSession }));
 
-const { fetchMembers, inviteMember, updateMemberRole, revokeMember } =
-  vi.hoisted(() => ({
-    fetchMembers: vi.fn(),
-    inviteMember: vi.fn(),
-    updateMemberRole: vi.fn(),
-    revokeMember: vi.fn(),
-  }));
+const {
+  fetchMembers,
+  inviteMember,
+  updateMemberRole,
+  revokeMember,
+  resendInvite,
+} = vi.hoisted(() => ({
+  fetchMembers: vi.fn(),
+  inviteMember: vi.fn(),
+  updateMemberRole: vi.fn(),
+  revokeMember: vi.fn(),
+  resendInvite: vi.fn(),
+}));
 vi.mock("~/client/api/installationMemberApi", () => ({
   fetchMembers,
   inviteMember,
   updateMemberRole,
   revokeMember,
+  resendInvite,
 }));
 
 const { default: MembersPage } =
@@ -46,6 +53,7 @@ beforeEach(() => {
   inviteMember.mockReset();
   updateMemberRole.mockReset();
   revokeMember.mockReset();
+  resendInvite.mockReset();
   useSession.mockReturnValue({ user: OWNER_USER });
 });
 
@@ -168,5 +176,68 @@ describe("MembersPage", () => {
       screen.getByRole("button", { name: "Remove delegate@example.com" }),
     );
     await waitFor(() => expect(revokeMember).toHaveBeenCalledWith("member-2"));
+  });
+
+  it("shows a Pending chip and a resend action only for a not-yet-activated member", async () => {
+    fetchMembers.mockResolvedValue([
+      {
+        id: "member-1",
+        installationId: "inst-1",
+        userId: "user-1",
+        email: "owner@example.com",
+        role: "owner",
+        scope: { air_handler_ids: "*" },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        pending: false,
+      },
+      {
+        id: "member-2",
+        installationId: "inst-1",
+        userId: "user-2",
+        email: "invited@example.com",
+        role: "write",
+        scope: { air_handler_ids: "*" },
+        createdAt: "2024-01-02T00:00:00.000Z",
+        pending: true,
+      },
+    ]);
+    renderPage();
+    await screen.findByText("invited@example.com");
+
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Resend invite to invited@example.com",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Resend invite to owner@example.com",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resends the invite when the resend action is clicked", async () => {
+    fetchMembers.mockResolvedValue([
+      {
+        id: "member-2",
+        installationId: "inst-1",
+        userId: "user-2",
+        email: "invited@example.com",
+        role: "write",
+        scope: { air_handler_ids: "*" },
+        createdAt: "2024-01-02T00:00:00.000Z",
+        pending: true,
+      },
+    ]);
+    resendInvite.mockResolvedValue(undefined);
+    renderPage();
+    await screen.findByText("invited@example.com");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Resend invite to invited@example.com",
+      }),
+    );
+    await waitFor(() => expect(resendInvite).toHaveBeenCalledWith("member-2"));
   });
 });

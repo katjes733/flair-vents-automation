@@ -13,6 +13,10 @@ export interface InstallationMember {
   role: MemberRole;
   scope: InstallationMemberScope;
   createdAt: string;
+  // True until this member accepts their invite (the "" password_hash
+  // placeholder sentinel, server-side) — an owner/admin never sees this
+  // for themselves, only for someone they've invited.
+  pending: boolean;
 }
 
 export async function fetchMembers(): Promise<InstallationMember[]> {
@@ -42,4 +46,10 @@ export async function updateMemberRole(
 
 export async function revokeMember(id: string): Promise<void> {
   await httpClient.delete(`/installation-members/${id}`);
+}
+
+// Rejected (400) by the server if this member has already accepted their
+// invite — see the route's own comment for why.
+export async function resendInvite(id: string): Promise<void> {
+  await httpClient.post(`/installation-members/${id}/resend-invite`);
 }

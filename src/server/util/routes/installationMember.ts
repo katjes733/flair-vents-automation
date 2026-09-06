@@ -82,6 +82,32 @@ export interface InstallationMemberRow {
   role: InstallationMemberRole;
   scope: IInstallationMemberScope;
   createdAt: Date;
+  // True for the "" password_hash placeholder sentinel (see user.ts's own
+  // comment) — an invited member who hasn't accepted yet. Derived from the
+  // same join every caller already needs, not a separate lookup.
+  pending: boolean;
+}
+
+function toInstallationMemberRow(row: {
+  id: string;
+  installation_id: string;
+  user_id: string;
+  email: string;
+  role: InstallationMemberRole;
+  scope: IInstallationMemberScope;
+  creation_time: Date;
+  password_hash: string;
+}): InstallationMemberRow {
+  return {
+    id: row.id,
+    installationId: row.installation_id,
+    userId: row.user_id,
+    email: row.email,
+    role: row.role,
+    scope: row.scope,
+    createdAt: row.creation_time,
+    pending: row.password_hash === "",
+  };
 }
 
 // The Members page's own listing — the inverse join of
@@ -92,32 +118,14 @@ export async function listMembersForInstallation(
 ): Promise<InstallationMemberRow[]> {
   const dataSource = await AppDataSource.getInstance();
   const rows = await dataSource.query(
-    `SELECT im.id, im.installation_id, im.user_id, u.email, im.role, im.scope, im.creation_time
+    `SELECT im.id, im.installation_id, im.user_id, u.email, u.password_hash, im.role, im.scope, im.creation_time
      FROM ${qualifiedTable("installation_members")} im
      JOIN ${qualifiedTable("users")} u ON u.id = im.user_id
      WHERE im.installation_id = $1
      ORDER BY im.creation_time ASC`,
     [installationId],
   );
-  return rows.map(
-    (row: {
-      id: string;
-      installation_id: string;
-      user_id: string;
-      email: string;
-      role: InstallationMemberRole;
-      scope: IInstallationMemberScope;
-      creation_time: Date;
-    }) => ({
-      id: row.id,
-      installationId: row.installation_id,
-      userId: row.user_id,
-      email: row.email,
-      role: row.role,
-      scope: row.scope,
-      createdAt: row.creation_time,
-    }),
-  );
+  return rows.map(toInstallationMemberRow);
 }
 
 export async function getInstallationMemberById(
@@ -125,23 +133,14 @@ export async function getInstallationMemberById(
 ): Promise<InstallationMemberRow | null> {
   const dataSource = await AppDataSource.getInstance();
   const rows = await dataSource.query(
-    `SELECT im.id, im.installation_id, im.user_id, u.email, im.role, im.scope, im.creation_time
+    `SELECT im.id, im.installation_id, im.user_id, u.email, u.password_hash, im.role, im.scope, im.creation_time
      FROM ${qualifiedTable("installation_members")} im
      JOIN ${qualifiedTable("users")} u ON u.id = im.user_id
      WHERE im.id = $1`,
     [id],
   );
   const row = rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    installationId: row.installation_id,
-    userId: row.user_id,
-    email: row.email,
-    role: row.role,
-    scope: row.scope,
-    createdAt: row.creation_time,
-  };
+  return row ? toInstallationMemberRow(row) : null;
 }
 
 export async function updateInstallationMember(

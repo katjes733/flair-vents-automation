@@ -13,7 +13,10 @@ import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
 import ListItemText from "@mui/material/ListItemText";
 import IconButton from "@mui/material/IconButton";
+import Chip from "@mui/material/Chip";
+import Tooltip from "@mui/material/Tooltip";
 import DeleteIcon from "@mui/icons-material/Delete";
+import MailOutlineIcon from "@mui/icons-material/MailOutline";
 import { usePermission } from "~/client/permissions/usePermission";
 import { useSession } from "~/client/session/useSession";
 import { useNotification } from "~/client/components/notification/useNotification";
@@ -23,6 +26,7 @@ import {
   inviteMember,
   updateMemberRole,
   revokeMember,
+  resendInvite,
   type InstallationMember,
 } from "~/client/api/installationMemberApi";
 import type { MemberRole } from "~/client/api/sessionApi";
@@ -48,6 +52,7 @@ export default function MembersPage() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<MemberRole>("write");
   const [inviting, setInviting] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,6 +115,21 @@ export default function MembersPage() {
     }
   };
 
+  const handleResendInvite = async (memberId: string) => {
+    setResendingId(memberId);
+    try {
+      await resendInvite(memberId);
+      showNotification("Invite resent.", "success");
+    } catch (err) {
+      showNotification(
+        extractErrorMessage(err) ?? "Couldn't resend the invite.",
+        "error",
+      );
+    } finally {
+      setResendingId(null);
+    }
+  };
+
   const handleRevoke = async (memberId: string) => {
     try {
       await revokeMember(memberId);
@@ -155,18 +175,43 @@ export default function MembersPage() {
                       // the selector as ListItemText's sibling instead
                       // avoids the nesting entirely.
                       secondaryAction={
-                        <IconButton
-                          edge="end"
-                          aria-label={`Remove ${member.email}`}
-                          disabled={!canRevoke || isLastOwner}
-                          onClick={() => handleRevoke(member.id)}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
+                        <Stack direction="row" spacing={0.5}>
+                          {member.pending && (
+                            <Tooltip title="Resend invite">
+                              <span>
+                                <IconButton
+                                  edge="end"
+                                  aria-label={`Resend invite to ${member.email}`}
+                                  disabled={
+                                    !canInvite || resendingId === member.id
+                                  }
+                                  onClick={() => handleResendInvite(member.id)}
+                                >
+                                  <MailOutlineIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          )}
+                          <IconButton
+                            edge="end"
+                            aria-label={`Remove ${member.email}`}
+                            disabled={!canRevoke || isLastOwner}
+                            onClick={() => handleRevoke(member.id)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Stack>
                       }
                       sx={{ flexDirection: "column", alignItems: "flex-start" }}
                     >
-                      <ListItemText primary={member.email} />
+                      <Box
+                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                      >
+                        <ListItemText primary={member.email} />
+                        {member.pending && (
+                          <Chip label="Pending" size="small" />
+                        )}
+                      </Box>
                       <TextField
                         select
                         size="small"

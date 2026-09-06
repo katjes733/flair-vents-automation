@@ -100,6 +100,7 @@ describe("installationMember accessor", () => {
         installation_id: "inst-1",
         user_id: "user-1",
         email: "a@example.com",
+        password_hash: "some-real-hash",
         role: "owner",
         scope: { air_handler_ids: "*" },
         creation_time: new Date("2024-01-01T00:00:00.000Z"),
@@ -118,8 +119,26 @@ describe("installationMember accessor", () => {
         role: "owner",
         scope: { air_handler_ids: "*" },
         createdAt: new Date("2024-01-01T00:00:00.000Z"),
+        pending: false,
       },
     ]);
+  });
+
+  it("reports pending: true for a member with the '' invited-but-not-activated password hash", async () => {
+    query.mockResolvedValue([
+      {
+        id: "member-2",
+        installation_id: "inst-1",
+        user_id: "user-2",
+        email: "invited@example.com",
+        password_hash: "",
+        role: "write",
+        scope: { air_handler_ids: "*" },
+        creation_time: new Date("2024-01-01T00:00:00.000Z"),
+      },
+    ]);
+    const [result] = await listMembersForInstallation("inst-1");
+    expect(result.pending).toBe(true);
   });
 
   it("getInstallationMemberById returns null when no row matches", async () => {
@@ -134,6 +153,7 @@ describe("installationMember accessor", () => {
         installation_id: "inst-1",
         user_id: "user-1",
         email: "a@example.com",
+        password_hash: "some-real-hash",
         role: "write",
         scope: { air_handler_ids: "*" },
         creation_time: new Date("2024-01-01T00:00:00.000Z"),
@@ -147,6 +167,7 @@ describe("installationMember accessor", () => {
       role: "write",
       scope: { air_handler_ids: "*" },
       createdAt: new Date("2024-01-01T00:00:00.000Z"),
+      pending: false,
     });
   });
 
