@@ -810,10 +810,22 @@ export async function runTick(
       : new Set<string>(),
     nativeAwayZoneIds: new Set(ctx.settings.away_native_zone_ids),
   };
+  // A per-air-handler override (System Parameters is the installation-wide
+  // fallback) — undefined on the handler's own config means "use the
+  // global value," mirroring blower_rated_flow_rate_lps/
+  // minimum_aggregate_flow_lps's identical undefined-means-fall-back shape.
   const awayTargets = applyAwayTargets({
-    awaySetpointCool: asAbsoluteTemp(ctx.settings.away_setpoint_cool),
-    awaySetpointHeat: asAbsoluteTemp(ctx.settings.away_setpoint_heat),
-    awayTolerance: asTempDelta(ctx.settings.away_tolerance),
+    awaySetpointCool: asAbsoluteTemp(
+      airHandler.config.away_setpoint_cool_override ??
+        ctx.settings.away_setpoint_cool,
+    ),
+    awaySetpointHeat: asAbsoluteTemp(
+      airHandler.config.away_setpoint_heat_override ??
+        ctx.settings.away_setpoint_heat,
+    ),
+    awayTolerance: asTempDelta(
+      airHandler.config.away_tolerance_override ?? ctx.settings.away_tolerance,
+    ),
     state: effectiveCallState,
   });
   const fallback = {

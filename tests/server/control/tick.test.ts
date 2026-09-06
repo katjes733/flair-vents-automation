@@ -1988,6 +1988,40 @@ describe("runTick — Away Mode (partial house)", () => {
         ?.commanded_position_pct,
     ).toBeGreaterThan(0);
   });
+
+  it("uses this air handler's own away-override setpoint/tolerance instead of the global System Parameters value when set", async () => {
+    const client = new FakeFlairClient();
+    // 25°C is comfortably within the global away band (27.78°C ± 2.78°C)
+    // but NOT within a much tighter, colder per-handler override (22°C ±
+    // 0.5°C) — so which one actually governs is directly observable via
+    // the resulting classification, not just an internal field.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 25,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const ctx = makeCtx({ away_native_zone_ids: ["z1"] });
+    const airHandler = makeAirHandler({
+      away_setpoint_cool_override: 22,
+      away_tolerance_override: 0.5,
+    });
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      ctx,
+      makeDeps(client, new Map(), NOW),
+    );
+
+    expect(decision.zones.find((z) => z.zone_id === "z1")?.classification).toBe(
+      "demanding",
+    );
+  });
 });
 
 // Regression coverage for a real, confirmed bug found live: awayTargets and

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { genuinePartial } from "~/shared/schemas/zodPartial";
 
 export const TOPOLOGY_MODES = [
   "single_stage",
@@ -47,6 +48,18 @@ export const airHandlerConfigSchema = z.object({
   // back to the tonnage-derived estimate in that case.
   minimum_aggregate_flow_lps: z.number().positive().optional(),
   minimum_aggregate_flow_is_estimate: z.boolean().default(true),
+  // Optional, per-air-handler overrides for the global (system_settings)
+  // Away Mode setpoints/tolerance — undefined means "use the
+  // installation-wide System Parameters value," exactly the same
+  // undefined-means-fall-back-to-a-broader-default shape already used
+  // above for the two flow-rate fields. A house with more than one active
+  // air handler may want a different away comfort target per wing (e.g. a
+  // rarely-used guest wing set warmer/more relaxed than the primary living
+  // area) without changing the global default every other handler falls
+  // back to.
+  away_setpoint_cool_override: z.number().optional(),
+  away_setpoint_heat_override: z.number().optional(),
+  away_tolerance_override: z.number().positive().optional(),
 });
 
 export type AirHandlerConfig = z.infer<typeof airHandlerConfigSchema>;
@@ -54,3 +67,14 @@ export type AirHandlerConfig = z.infer<typeof airHandlerConfigSchema>;
 export function resolveAirHandlerConfig(stored: unknown): AirHandlerConfig {
   return airHandlerConfigSchema.parse(stored ?? {});
 }
+
+// `.partial()` alone doesn't suppress a field's `.default()` — a minimal
+// PATCH would otherwise be silently expanded to every default value
+// (topology_mode back to "variable_speed", both `_is_estimate` flags back
+// to true) once merged onto the existing row, wiping real, researched
+// per-handler data on every edit that doesn't happen to touch every
+// field. See zoneConfigPartialSchema/systemSettingsConfigPartialSchema for
+// the identical, already-fixed bug in the other two config schemas.
+export const airHandlerConfigPartialSchema = genuinePartial(
+  airHandlerConfigSchema,
+);
