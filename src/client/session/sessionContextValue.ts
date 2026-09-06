@@ -8,6 +8,7 @@ export interface SessionContextValue {
   loading: boolean;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
+  logoutEverywhere: () => Promise<void>;
 }
 
 export const SessionContext = createContext<SessionContextValue>({
@@ -15,4 +16,5 @@ export const SessionContext = createContext<SessionContextValue>({
   loading: true,
   refresh: async () => {},
   logout: async () => {},
+  logoutEverywhere: async () => {},
 });

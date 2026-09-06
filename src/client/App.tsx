@@ -11,6 +11,7 @@ import ProtectedRoute from "~/client/session/ProtectedRoute";
 import GuestOnlyRoute from "~/client/session/GuestOnlyRoute";
 import LoginPage from "~/client/components/auth/LoginPage";
 import SignupPage from "~/client/components/auth/SignupPage";
+import ForgotPasswordPage from "~/client/components/auth/ForgotPasswordPage";
 import AcceptInvitePage from "~/client/components/auth/AcceptInvitePage";
 import MembersPage from "~/client/components/members/MembersPage";
 import DashboardPage from "~/client/components/dashboard/DashboardPage";
@@ -51,6 +52,14 @@ function App() {
                     element={
                       <GuestOnlyRoute>
                         <AcceptInvitePage />
+                      </GuestOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/forgot-password"
+                    element={
+                      <GuestOnlyRoute>
+                        <ForgotPasswordPage />
                       </GuestOnlyRoute>
                     }
                   />

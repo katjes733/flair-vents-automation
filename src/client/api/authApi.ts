@@ -44,3 +44,24 @@ export async function activateInvite(opts: {
   );
   return data;
 }
+
+// Always resolves the same way regardless of whether the email has a real
+// account — see the server route's own comment on why (anti-enumeration).
+export async function forgotPassword(email: string): Promise<void> {
+  await httpClient.post("/auth/forgot-password", { email });
+}
+
+// A successful reset invalidates every session for the account server-side
+// — this deliberately does NOT return a SessionResult the way login/
+// activateInvite do; the caller is expected to send the user to /login.
+export async function resetPassword(opts: {
+  email: string;
+  code: string;
+  newPassword: string;
+}): Promise<void> {
+  await httpClient.post("/auth/reset-password", {
+    email: opts.email,
+    code: opts.code,
+    new_password: opts.newPassword,
+  });
+}

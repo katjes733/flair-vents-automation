@@ -27,6 +27,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [passkeySubmitting, setPasskeySubmitting] = useState(false);
+  const resetSuccess = Boolean(
+    (location.state as { resetSuccess?: boolean } | null)?.resetSuccess,
+  );
 
   const goInAfterLogin = async () => {
     await refresh();
@@ -72,6 +75,11 @@ export default function LoginPage() {
           <Typography variant="h5" fontWeight={600} sx={{ mb: 2 }}>
             Log in
           </Typography>
+          {resetSuccess && !error && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              Password reset. Log in with your new password.
+            </Alert>
+          )}
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}
@@ -95,6 +103,14 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 fullWidth
               />
+              <Link
+                component={RouterLink}
+                to="/forgot-password"
+                variant="body2"
+                sx={{ alignSelf: "flex-end" }}
+              >
+                Forgot password?
+              </Link>
               <Button
                 type="submit"
                 variant="contained"

@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { resolveActor } from "~/server/util/resolveActor";
 import { clearLockout } from "~/server/util/authLockout";
 import { getInstallationById } from "~/server/util/routes/installation";
+import { registerSession } from "~/server/util/sessionRegistry";
 
 // Resolves the extra fields the client needs alongside the login identity.
 // A login with no accessible installation yet is a legitimate transient
@@ -49,6 +50,7 @@ export async function establishSession(req: Request, email: string) {
   if (!req.session.expiry) {
     req.session.expiry = Date.now() + (req.session.cookie.maxAge || 3600000);
   }
+  await registerSession(email, req.sessionID);
   return {
     message: "Logged in",
     user: await buildSessionUser(email),

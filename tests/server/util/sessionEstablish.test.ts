@@ -11,12 +11,16 @@ const { getInstallationById } = vi.hoisted(() => ({
 }));
 vi.mock("~/server/util/routes/installation", () => ({ getInstallationById }));
 
+const { registerSession } = vi.hoisted(() => ({ registerSession: vi.fn() }));
+vi.mock("~/server/util/sessionRegistry", () => ({ registerSession }));
+
 const { buildSessionUser, establishSession } =
   await import("~/server/util/sessionEstablish");
 
 beforeEach(() => {
   resolveActor.mockReset();
   clearLockout.mockReset().mockResolvedValue(undefined);
+  registerSession.mockReset().mockResolvedValue(undefined);
   getInstallationById.mockReset().mockResolvedValue({
     id: "inst-1",
     name: "Martin's Home",
@@ -78,16 +82,18 @@ describe("buildSessionUser", () => {
 describe("establishSession", () => {
   function fakeReq() {
     return {
+      sessionID: "sid-1",
       session: { cookie: { maxAge: 4 * 60 * 60 * 1000 } },
     } as any;
   }
 
-  it("clears any lockout and sets the session's login identity", async () => {
+  it("clears any lockout, sets the session's login identity, and registers the session id", async () => {
     resolveActor.mockResolvedValue({ error: "no_access" });
     const req = fakeReq();
     await establishSession(req, "a@example.com");
     expect(clearLockout).toHaveBeenCalledWith("a@example.com");
     expect(req.session.user).toBe("a@example.com");
+    expect(registerSession).toHaveBeenCalledWith("a@example.com", "sid-1");
   });
 
   it("sets a session expiry only if one isn't already present", async () => {

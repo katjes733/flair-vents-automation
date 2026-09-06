@@ -18,6 +18,7 @@ import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { getStoredActor, setStoredActor } from "~/client/api/controlApi";
 import { useNotification } from "~/client/components/notification/useNotification";
 import PasskeySettingsCard from "~/client/components/settings/PasskeySettingsCard";
+import AccountDangerZoneCard from "~/client/components/settings/AccountDangerZoneCard";
 import { AIRFLOW_UNIT_LABELS, type AirflowUnit } from "~/shared/types/airflow";
 import type { TemperatureUnit } from "~/shared/types/temperature";
 
@@ -207,6 +208,7 @@ export default function SettingsPage() {
         </Card>
 
         <PasskeySettingsCard />
+        <AccountDangerZoneCard />
       </Stack>
     </Container>
   );

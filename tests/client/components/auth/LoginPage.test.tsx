@@ -59,6 +59,28 @@ describe("LoginPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("links to /forgot-password", () => {
+    renderPage();
+    expect(
+      screen.getByRole("link", { name: "Forgot password?" }),
+    ).toHaveAttribute("href", "/forgot-password");
+  });
+
+  it("shows a success banner when navigated here with resetSuccess state", () => {
+    render(
+      <MemoryRouter
+        initialEntries={[{ pathname: "/login", state: { resetSuccess: true } }]}
+      >
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByText("Password reset. Log in with your new password."),
+    ).toBeInTheDocument();
+  });
+
   it("logs in and navigates to the dashboard on success", async () => {
     login.mockResolvedValue({
       message: "Logged in",

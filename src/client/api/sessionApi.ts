@@ -46,3 +46,10 @@ export async function login(
 export async function logout(): Promise<void> {
   await httpClient.post("/session/logout");
 }
+
+// Destroys every session this login currently has, including the one
+// making this call — there is no "log out every OTHER device" variant, see
+// the server route's own comment for why.
+export async function logoutEverywhere(): Promise<void> {
+  await httpClient.post("/session/logout-everywhere");
+}

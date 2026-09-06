@@ -4,6 +4,7 @@ import { SessionContext } from "~/client/session/sessionContextValue";
 import {
   fetchMe,
   logout as logoutRequest,
+  logoutEverywhere as logoutEverywhereRequest,
   type SessionUser,
 } from "~/client/api/sessionApi";
 import { setUnauthorizedHandler } from "~/client/api/httpClient";
@@ -45,6 +46,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [navigate]);
 
+  // Destroys every session this login has, including this one — same
+  // local-state/redirect shape as logout() above, just hitting the
+  // logout-everywhere endpoint instead of the plain one.
+  const logoutEverywhere = useCallback(async () => {
+    try {
+      await logoutEverywhereRequest();
+    } catch {
+      // Best-effort, same reasoning as logout() above.
+    } finally {
+      setUser(null);
+      navigate("/login", { replace: true });
+    }
+  }, [navigate]);
+
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setUser(null);
@@ -60,7 +75,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   return (
-    <SessionContext.Provider value={{ user, loading, refresh, logout }}>
+    <SessionContext.Provider
+      value={{ user, loading, refresh, logout, logoutEverywhere }}
+    >
       {children}
     </SessionContext.Provider>
   );

@@ -11,6 +11,11 @@ import {
   buildSessionUser,
   establishSession,
 } from "~/server/util/sessionEstablish";
+import {
+  unregisterSession,
+  invalidateAllSessionsForUser,
+} from "~/server/util/sessionRegistry";
+import { requireAuth } from "~/server/middleware/auth";
 
 // Extend express-session types to include the fields this app actually
 // uses. `user` is deliberately just the login email, nothing richer —
@@ -131,9 +136,12 @@ router.get("/me", async (req, res) => {
   res.status(401).json({ message: "Not authenticated." });
 });
 
-router.post("/logout", (req, res) => {
+router.post("/logout", async (req, res) => {
   const email = req.session.user;
   const ip = req.ip;
+  if (email) {
+    await unregisterSession(email, req.sessionID);
+  }
   req.session.destroy((err) => {
     if (err) {
       res.status(500).json({ message: "Failed to logout." });
@@ -146,4 +154,22 @@ router.post("/logout", (req, res) => {
     res.clearCookie("connect.sid");
     res.json({ message: "Logged out." });
   });
+});
+
+// Destroys every session this login currently has, including whichever one
+// made this very request — deliberately no "log out every OTHER device"
+// variant. This is also the exact mechanism a password reset/account
+// deletion needs (see passwordReset.ts and accountService.ts), so keeping
+// one unqualified behavior means only one code path to reason about,
+// rather than two subtly different session-teardown semantics.
+router.post("/logout-everywhere", requireAuth, async (req, res) => {
+  const email = req.session.user!;
+  const ip = req.ip;
+  await invalidateAllSessionsForUser(email);
+  authLog.info(
+    { event: "auth.logout_everywhere", email: maskEmail(email), ip },
+    "User logged out of every session",
+  );
+  res.clearCookie("connect.sid");
+  res.json({ message: "Logged out of every device." });
 });

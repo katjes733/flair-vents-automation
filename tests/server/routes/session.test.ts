@@ -29,6 +29,15 @@ vi.mock("~/server/util/sessionEstablish", () => ({
   buildSessionUser,
 }));
 
+const { unregisterSession, invalidateAllSessionsForUser } = vi.hoisted(() => ({
+  unregisterSession: vi.fn(),
+  invalidateAllSessionsForUser: vi.fn(),
+}));
+vi.mock("~/server/util/sessionRegistry", () => ({
+  unregisterSession,
+  invalidateAllSessionsForUser,
+}));
+
 const argon2 = await import("argon2");
 const { router } = await import("~/server/routes/session");
 
@@ -43,6 +52,13 @@ function buildApp() {
       cookie: { secure: false },
     }),
   );
+  // Test-only shortcut to get a real, cookie-backed req.session.user without
+  // going through the mocked /login route — establishSession is mocked
+  // above precisely so it never touches req.session itself.
+  app.post("/test/login-as", (req, res) => {
+    req.session.user = req.body.email;
+    res.json({});
+  });
   app.use("/api/v1/session", router);
   app.use(errorHandler);
   return app;
@@ -55,6 +71,8 @@ beforeEach(() => {
   recordFailure.mockReset().mockResolvedValue(undefined);
   establishSession.mockReset();
   buildSessionUser.mockReset();
+  unregisterSession.mockReset().mockResolvedValue(undefined);
+  invalidateAllSessionsForUser.mockReset().mockResolvedValue(undefined);
 });
 
 describe("POST /api/v1/session/login", () => {
@@ -145,5 +163,35 @@ describe("POST /api/v1/session/logout", () => {
   it("succeeds even with no active session", async () => {
     const res = await request(buildApp()).post("/api/v1/session/logout");
     expect(res.status).toBe(200);
+    expect(unregisterSession).not.toHaveBeenCalled();
+  });
+
+  it("unregisters the session id for an active session", async () => {
+    const agent = request.agent(buildApp());
+    await agent.post("/test/login-as").send({ email: "a@example.com" });
+    const res = await agent.post("/api/v1/session/logout");
+    expect(res.status).toBe(200);
+    expect(unregisterSession).toHaveBeenCalledWith(
+      "a@example.com",
+      expect.any(String),
+    );
+  });
+});
+
+describe("POST /api/v1/session/logout-everywhere", () => {
+  it("401s with no active session", async () => {
+    const res = await request(buildApp()).post(
+      "/api/v1/session/logout-everywhere",
+    );
+    expect(res.status).toBe(401);
+    expect(invalidateAllSessionsForUser).not.toHaveBeenCalled();
+  });
+
+  it("invalidates every session for the logged-in user", async () => {
+    const agent = request.agent(buildApp());
+    await agent.post("/test/login-as").send({ email: "a@example.com" });
+    const res = await agent.post("/api/v1/session/logout-everywhere");
+    expect(res.status).toBe(200);
+    expect(invalidateAllSessionsForUser).toHaveBeenCalledWith("a@example.com");
   });
 });

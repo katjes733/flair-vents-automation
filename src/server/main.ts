@@ -22,6 +22,8 @@ import { router as SyncRouter } from "~/server/routes/sync";
 import { router as TelemetryRouter } from "~/server/routes/telemetry";
 import { router as SessionRouter } from "~/server/routes/session";
 import { router as SignupVerificationRouter } from "~/server/routes/signupVerification";
+import { router as PasswordResetRouter } from "~/server/routes/passwordReset";
+import { router as AccountRouter } from "~/server/routes/account";
 import { router as InstallationMembersRouter } from "~/server/routes/installationMembers";
 import { router as WebauthnRouter } from "~/server/routes/webauthn";
 import { getWebauthnConfig } from "~/server/util/requestOrigin";
@@ -173,6 +175,8 @@ app.use(
 app.use("/api/v1/health", HealthRouter);
 app.use("/api/v1/session", SessionRouter);
 app.use("/api/v1/auth", SignupVerificationRouter);
+app.use("/api/v1/auth", PasswordResetRouter);
+app.use("/api/v1/account", AccountRouter);
 app.use("/api/v1/webauthn", WebauthnRouter);
 app.use("/api/v1/flair-auth", FlairAuthRouter);
 app.use("/api/v1/air-handlers", AirHandlersRouter);
