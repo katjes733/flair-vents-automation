@@ -21,7 +21,10 @@
 // with a clear message rather than erroring or duplicating.
 //
 // Run with:
-//   bun run scripts/createProductionOwner.ts <email> <password>
+//   bun run scripts/createProductionOwner.ts <email>
+// The password is never a CLI argument — it's read via a masked interactive
+// prompt (twice, to catch typos), so the real production password never
+// lands in shell history or a `ps` listing.
 //
 // This writes to whichever database the current environment (.env) points
 // at — confirm that's really production (or a deliberate migration
@@ -42,12 +45,66 @@ import {
   setFlairCredentials,
 } from "~/server/util/routes/flairToken";
 
+const ENTER_KEYS = new Set(["\n", "\r"]);
+const BACKSPACE_KEYS = new Set(["\u007f", "\b"]);
+const CTRL_C = "\u0003";
+const CTRL_D = "\u0004";
+
+// Reads a password from stdin without echoing it, masking each keystroke
+// with "*" instead — the whole reason this exists rather than an argv
+// param is to keep a real production password out of shell history/`ps`.
+function promptPassword(label: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(label);
+    const stdin = process.stdin;
+    stdin.resume();
+    stdin.setRawMode?.(true);
+    stdin.setEncoding("utf8");
+
+    let password = "";
+    const onData = (char: string): void => {
+      if (ENTER_KEYS.has(char) || char === CTRL_D) {
+        stdin.setRawMode?.(false);
+        stdin.pause();
+        stdin.removeListener("data", onData);
+        process.stdout.write("\n");
+        resolve(password);
+      } else if (char === CTRL_C) {
+        stdin.setRawMode?.(false);
+        stdin.pause();
+        stdin.removeListener("data", onData);
+        process.stdout.write("\n");
+        reject(new Error("Cancelled."));
+      } else if (BACKSPACE_KEYS.has(char)) {
+        if (password.length > 0) {
+          password = password.slice(0, -1);
+          process.stdout.write("\b \b");
+        }
+      } else {
+        password += char;
+        process.stdout.write("*");
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
+
+async function promptNewPassword(): Promise<string> {
+  const password = await promptPassword("New owner password: ");
+  const confirmation = await promptPassword("Confirm password: ");
+  if (password !== confirmation) {
+    throw new Error("Passwords didn't match — run the script again.");
+  }
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+  return password;
+}
+
 async function main(): Promise<void> {
-  const [email, password] = process.argv.slice(2);
-  if (!email || !password) {
-    console.error(
-      "Usage: bun run scripts/createProductionOwner.ts <email> <password>",
-    );
+  const [email] = process.argv.slice(2);
+  if (!email) {
+    console.error("Usage: bun run scripts/createProductionOwner.ts <email>");
     process.exit(1);
   }
 
@@ -63,6 +120,7 @@ async function main(): Promise<void> {
   if (user) {
     console.log(`User ${email} already exists (${user.id}) — reusing it.`);
   } else {
+    const password = await promptNewPassword();
     user = await createUser({
       email,
       passwordHash: await argon2.hash(password),
