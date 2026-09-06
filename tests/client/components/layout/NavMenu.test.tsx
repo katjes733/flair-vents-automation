@@ -94,4 +94,38 @@ describe("NavMenu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
     expect(logout).toHaveBeenCalledOnce();
   });
+
+  it("hides the Members nav entry for a write/read-profile member", () => {
+    useSession.mockReturnValue({
+      user: {
+        loginEmail: "a@example.com",
+        installationName: "Martin's Home",
+        installationLinked: true,
+        profile: "write",
+      },
+      logout,
+    });
+    renderNavMenu();
+    fireEvent.click(screen.getByRole("button", { name: "menu" }));
+    expect(
+      screen.queryByRole("menuitem", { name: "Members" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Members nav entry for an admin-profile member", () => {
+    useSession.mockReturnValue({
+      user: {
+        loginEmail: "a@example.com",
+        installationName: "Martin's Home",
+        installationLinked: true,
+        profile: "admin",
+      },
+      logout,
+    });
+    renderNavMenu();
+    fireEvent.click(screen.getByRole("button", { name: "menu" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Members" }),
+    ).toBeInTheDocument();
+  });
 });

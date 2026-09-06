@@ -9,6 +9,16 @@ export interface IInstallation {
   // instead, since a structure contains multiple zones. See
   // docs/flair-api-schema.md.
   flair_structure_id: string | null;
+  // Whether the control loop should tick this installation at all — see
+  // the SaaS Transformation plan's "Migration Path From the Existing
+  // Scheduler". Not yet exposed via any route (no "pause an installation"
+  // UI exists), but getActiveInstallations() already filters on it so
+  // that feature is "flip this column," not a schema change, once built.
+  // A real DB-level default (unlike this app's own jsonb columns, which
+  // never get one — see user.ts's comment) is safe and needed here: it's
+  // what lets `synchronize()` add this NOT NULL column to the two
+  // installations already in the table without a manual backfill.
+  is_active: boolean;
 }
 
 // The tenant boundary — one row per physical house/Flair account. Every
@@ -27,5 +37,6 @@ export const Installation = new EntitySchema<IBasicEntity & IInstallation>({
       nullable: true,
       unique: true,
     },
+    is_active: { type: "boolean", nullable: false, default: true },
   },
 });

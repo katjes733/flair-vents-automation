@@ -30,3 +30,17 @@ export async function connectFlair(opts: {
   );
   return data;
 }
+
+// The invite-acceptance flow's own single step — turns an invited member's
+// placeholder ("") password into a real one and logs them in, all at once.
+export async function activateInvite(opts: {
+  email: string;
+  code: string;
+  password: string;
+}): Promise<SessionResult> {
+  const { data } = await httpClient.post<SessionResult>(
+    "/auth/activate-invite",
+    opts,
+  );
+  return data;
+}

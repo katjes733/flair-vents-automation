@@ -27,17 +27,20 @@ vi.mock("~/server/util/services/settingsService", () => ({
   updateSettingsForInstallation,
 }));
 
-const { triggerImmediateTick, getFlairClient, fakeClient } = vi.hoisted(() => ({
-  triggerImmediateTick: vi.fn(),
+const { getFlairClient, fakeClient } = vi.hoisted(() => ({
   getFlairClient: vi.fn(),
   fakeClient: {
     getOutageState: vi.fn(),
     getTokenRefreshFailureState: vi.fn(),
   },
 }));
-vi.mock("~/server/control/scheduler", () => ({
-  triggerImmediateTick,
-  getFlairClient,
+vi.mock("~/server/control/scheduler", () => ({ getFlairClient }));
+
+const { processInstallationTick: triggerImmediateTick } = vi.hoisted(() => ({
+  processInstallationTick: vi.fn(),
+}));
+vi.mock("~/server/control/tickProcessor", () => ({
+  processInstallationTick: triggerImmediateTick,
 }));
 
 const { getTokenCallsToday } = vi.hoisted(() => ({
@@ -64,11 +67,11 @@ beforeEach(() => {
     warnings: [],
   });
   triggerImmediateTick.mockReset().mockResolvedValue(undefined);
-  fakeClient.getOutageState.mockReset().mockReturnValue({
+  fakeClient.getOutageState.mockReset().mockResolvedValue({
     failing: false,
     sinceMs: null,
   });
-  fakeClient.getTokenRefreshFailureState.mockReset().mockReturnValue(null);
+  fakeClient.getTokenRefreshFailureState.mockReset().mockResolvedValue(null);
   getFlairClient.mockReset().mockReturnValue(fakeClient);
   getTokenCallsToday.mockReset().mockResolvedValue(3);
 });
@@ -108,10 +111,10 @@ describe("POST /api/v1/control/rearm", () => {
 });
 
 describe("POST /api/v1/control/trigger-tick", () => {
-  it("runs an immediate tick cycle and returns 200", async () => {
+  it("runs an immediate tick cycle scoped to the caller's own installation, and returns 200", async () => {
     const res = await request(buildApp()).post("/api/v1/control/trigger-tick");
     expect(res.status).toBe(200);
-    expect(triggerImmediateTick).toHaveBeenCalledOnce();
+    expect(triggerImmediateTick).toHaveBeenCalledWith("inst-1");
   });
 });
 
@@ -130,11 +133,11 @@ describe("GET /api/v1/control/flair-status", () => {
   });
 
   it("surfaces an active outage and a terminal token-refresh failure", async () => {
-    fakeClient.getOutageState.mockReturnValue({
+    fakeClient.getOutageState.mockResolvedValue({
       failing: true,
       sinceMs: 1700000000000,
     });
-    fakeClient.getTokenRefreshFailureState.mockReturnValue({
+    fakeClient.getTokenRefreshFailureState.mockResolvedValue({
       terminal: true,
       message: "invalid_grant",
     });

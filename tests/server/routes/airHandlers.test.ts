@@ -265,7 +265,7 @@ describe("GET /api/v1/air-handlers/:id/tick-decision", () => {
       id: "ah-1",
       installationId: "inst-1",
     });
-    getCachedTickDecision.mockReturnValue(null);
+    getCachedTickDecision.mockResolvedValue(null);
     const res = await request(buildApp()).get(
       "/api/v1/air-handlers/ah-1/tick-decision",
     );
@@ -277,7 +277,7 @@ describe("GET /api/v1/air-handlers/:id/tick-decision", () => {
       id: "ah-1",
       installationId: "inst-1",
     });
-    getCachedTickDecision.mockReturnValue({ air_handler_id: "ah-1" });
+    getCachedTickDecision.mockResolvedValue({ air_handler_id: "ah-1" });
     const res = await request(buildApp()).get(
       "/api/v1/air-handlers/ah-1/tick-decision",
     );

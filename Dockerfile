@@ -39,4 +39,9 @@ USER bun
 EXPOSE 3001
 ENV NODE_ENV=production
 
+# The default command runs the API server. The worker container (see
+# .github/workflows/deploy.yml) is the exact same image, deployed a
+# second time with this CMD overridden at `docker run` time to
+# `bun src/server/worker.ts` instead — no separate build/target needed,
+# per the SaaS Transformation plan's "Horizontal Scaling" section.
 CMD ["bun", "src/server/main.ts"]

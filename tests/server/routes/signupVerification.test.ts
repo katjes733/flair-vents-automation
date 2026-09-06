@@ -8,8 +8,19 @@ vi.mock("~/server/middleware/rateLimiter", () => ({
   createRateLimiter: () => (_req: any, _res: any, next: any) => next(),
 }));
 
-const { getUserByEmail } = vi.hoisted(() => ({ getUserByEmail: vi.fn() }));
-vi.mock("~/server/util/routes/user", () => ({ getUserByEmail }));
+const { getUserByEmail, updateUserPassword } = vi.hoisted(() => ({
+  getUserByEmail: vi.fn(),
+  updateUserPassword: vi.fn(),
+}));
+vi.mock("~/server/util/routes/user", () => ({
+  getUserByEmail,
+  updateUserPassword,
+}));
+
+const { establishSession } = vi.hoisted(() => ({
+  establishSession: vi.fn(),
+}));
+vi.mock("~/server/util/sessionEstablish", () => ({ establishSession }));
 
 const { storePendingSignup } = vi.hoisted(() => ({
   storePendingSignup: vi.fn(),
@@ -53,6 +64,8 @@ function buildApp() {
 
 beforeEach(() => {
   getUserByEmail.mockReset();
+  updateUserPassword.mockReset().mockResolvedValue(undefined);
+  establishSession.mockReset();
   sendEmail.mockReset().mockResolvedValue(undefined);
   findOneBy.mockReset();
   insert.mockReset().mockResolvedValue(undefined);
@@ -235,6 +248,106 @@ describe("POST /api/v1/auth/connect-flair", () => {
         flairClientSecret: "csecret",
       });
     expect(res.status).toBe(200);
+    expect(res.body.user.loginEmail).toBe("a@example.com");
+  });
+});
+
+describe("POST /api/v1/auth/activate-invite", () => {
+  it("rejects an invalid body (short password)", async () => {
+    const res = await request(buildApp())
+      .post("/api/v1/auth/activate-invite")
+      .send({ email: "a@example.com", code: "123456", password: "short" });
+    expect(res.status).toBe(400);
+  });
+
+  it("404s when no invited (placeholder) user exists for the email", async () => {
+    getUserByEmail.mockResolvedValue(null);
+    const res = await request(buildApp())
+      .post("/api/v1/auth/activate-invite")
+      .send({
+        email: "a@example.com",
+        code: "123456",
+        password: "a-real-password",
+      });
+    expect(res.status).toBe(404);
+    expect(updateUserPassword).not.toHaveBeenCalled();
+  });
+
+  it("404s when the user already has a real password (not actually a pending invite)", async () => {
+    getUserByEmail.mockResolvedValue({
+      id: "user-1",
+      email: "a@example.com",
+      passwordHash: "real-hash",
+      userDetails: {},
+    });
+    const res = await request(buildApp())
+      .post("/api/v1/auth/activate-invite")
+      .send({
+        email: "a@example.com",
+        code: "123456",
+        password: "a-real-password",
+      });
+    expect(res.status).toBe(404);
+    expect(updateUserPassword).not.toHaveBeenCalled();
+  });
+
+  it("400s on an incorrect code", async () => {
+    getUserByEmail.mockResolvedValue({
+      id: "user-1",
+      email: "a@example.com",
+      passwordHash: "",
+      userDetails: {},
+    });
+    findOneBy.mockResolvedValue({
+      email: "a@example.com",
+      code: await argon2.hash("111111"),
+      expires_at: new Date(Date.now() + 60_000),
+    });
+    const res = await request(buildApp())
+      .post("/api/v1/auth/activate-invite")
+      .send({
+        email: "a@example.com",
+        code: "222222",
+        password: "a-real-password",
+      });
+    expect(res.status).toBe(400);
+    expect(updateUserPassword).not.toHaveBeenCalled();
+  });
+
+  it("sets the real password and establishes a session on success", async () => {
+    getUserByEmail.mockResolvedValue({
+      id: "user-1",
+      email: "a@example.com",
+      passwordHash: "",
+      userDetails: {},
+    });
+    findOneBy.mockResolvedValue({
+      email: "a@example.com",
+      code: await argon2.hash("111111"),
+      expires_at: new Date(Date.now() + 60_000),
+    });
+    establishSession.mockResolvedValue({
+      message: "Logged in",
+      user: { loginEmail: "a@example.com" },
+      sessionExpiry: 12345,
+    });
+    const res = await request(buildApp())
+      .post("/api/v1/auth/activate-invite")
+      .send({
+        email: "a@example.com",
+        code: "111111",
+        password: "a-real-password",
+      });
+    expect(res.status).toBe(200);
+    expect(updateUserPassword).toHaveBeenCalledWith(
+      "user-1",
+      expect.any(String),
+    );
+    expect(updateUserPassword.mock.calls[0][1]).not.toBe("a-real-password");
+    expect(establishSession).toHaveBeenCalledWith(
+      expect.anything(),
+      "a@example.com",
+    );
     expect(res.body.user.loginEmail).toBe("a@example.com");
   });
 });

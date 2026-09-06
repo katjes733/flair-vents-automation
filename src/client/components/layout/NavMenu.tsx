@@ -19,6 +19,7 @@ import { useNavigate, useLocation } from "react-router";
 import { useThemeMode } from "~/client/theme/useThemeMode";
 import { useDiagnosticMode } from "~/client/theme/useDiagnosticMode";
 import { useSession } from "~/client/session/useSession";
+import { usePermission } from "~/client/permissions/usePermission";
 
 interface NavItem {
   path: string;
@@ -26,7 +27,10 @@ interface NavItem {
 }
 
 // One array drives both the page title lookup and the nav menu, so they
-// can't drift apart — same convention as wake-on-lan's NavMenu.
+// can't drift apart — same convention as wake-on-lan's NavMenu. "Members"
+// stays in this same list (so its page title still resolves) but is
+// filtered out of the rendered menu below for anyone without
+// installationAdmin access — read/write roles never see it at all.
 const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard" },
   { path: "/schedules", label: "Schedules" },
@@ -34,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: "/telemetry", label: "Telemetry" },
   { path: "/settings", label: "Settings" },
   { path: "/system-parameters", label: "System Parameters" },
+  { path: "/members", label: "Members" },
 ];
 
 const PAGE_TITLES: Record<string, string> = Object.fromEntries(
@@ -47,6 +52,10 @@ export default function NavMenu() {
   const { mode, toggle: toggleThemeMode } = useThemeMode();
   const { diagnosticMode, toggle: toggleDiagnosticMode } = useDiagnosticMode();
   const { user, logout } = useSession();
+  const canAccessMembers = usePermission("installationAdmin.access") !== "none";
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => item.path !== "/members" || canAccessMembers,
+  );
   const pageTitle = PAGE_TITLES[location.pathname] ?? "";
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(
@@ -126,7 +135,7 @@ export default function NavMenu() {
                 open={Boolean(mainMenuAnchor)}
                 onClose={handleMainMenuClose}
               >
-                {NAV_ITEMS.map((item) => (
+                {visibleNavItems.map((item) => (
                   <MenuItem
                     key={item.path}
                     onClick={() => handleNavigate(item.path)}

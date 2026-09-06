@@ -63,6 +63,14 @@ describe("Installation", () => {
       nullable: false,
     });
   });
+
+  it("is_active is NOT NULL with a real DB-level default (unlike this app's jsonb columns)", () => {
+    expect(Installation.options.columns.is_active).toMatchObject({
+      type: "boolean",
+      nullable: false,
+      default: true,
+    });
+  });
 });
 
 describe("AirHandler", () => {

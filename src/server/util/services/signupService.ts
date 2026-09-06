@@ -9,6 +9,7 @@ import {
 } from "~/server/util/pendingSignup";
 import { establishSession } from "~/server/util/sessionEstablish";
 import { validateFlairCredentials } from "~/server/util/flair/bootstrapValidate";
+import { registerInstallationTick } from "~/server/control/queue";
 
 // The real, load-bearing onboarding mechanism — see the SaaS
 // Transformation plan's "Flair BYO-Credentials Onboarding" section.
@@ -36,6 +37,7 @@ export async function completeByoFlairSignup(opts: {
     clientSecret: opts.flairClientSecret,
   });
 
+  let newInstallationId = "";
   const dataSource = await AppDataSource.getInstance();
   await dataSource.transaction(async (manager) => {
     const now = new Date();
@@ -48,6 +50,7 @@ export async function completeByoFlairSignup(opts: {
       now,
     );
     await manager.getRepository("Installation").insert(installationFields);
+    newInstallationId = installationFields.id;
 
     const userFields = withTimestamps(
       {
@@ -93,6 +96,21 @@ export async function completeByoFlairSignup(opts: {
   // throws, the pending signup survives in Redis so the user can simply
   // retry rather than needing to restart from the email-verification step.
   await deletePendingSignup(opts.email);
+
+  // Starts this installation ticking immediately — without this, a fresh
+  // signup would silently wait until the API server's next restart (when
+  // reconcileInstallationSchedulers() would have picked it up) before its
+  // first tick ever ran. A failure here shouldn't fail signup itself
+  // (the account is already real at this point) — the next boot's
+  // reconciliation is the backstop.
+  try {
+    await registerInstallationTick(newInstallationId);
+  } catch (err) {
+    logger.error(
+      { err, installation_id: newInstallationId },
+      "Failed to register tick job scheduler for new installation — the next server restart will pick it up",
+    );
+  }
 
   return establishSession(opts.req, opts.email);
 }

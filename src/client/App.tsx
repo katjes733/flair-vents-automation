@@ -11,6 +11,8 @@ import ProtectedRoute from "~/client/session/ProtectedRoute";
 import GuestOnlyRoute from "~/client/session/GuestOnlyRoute";
 import LoginPage from "~/client/components/auth/LoginPage";
 import SignupPage from "~/client/components/auth/SignupPage";
+import AcceptInvitePage from "~/client/components/auth/AcceptInvitePage";
+import MembersPage from "~/client/components/members/MembersPage";
 import DashboardPage from "~/client/components/dashboard/DashboardPage";
 import SchedulesPage from "~/client/components/dashboard/SchedulesPage";
 import SettingsPage from "~/client/components/settings/SettingsPage";
@@ -42,6 +44,22 @@ function App() {
                       <GuestOnlyRoute>
                         <SignupPage />
                       </GuestOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/accept-invite"
+                    element={
+                      <GuestOnlyRoute>
+                        <AcceptInvitePage />
+                      </GuestOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/members"
+                    element={
+                      <ProtectedRoute>
+                        <MembersPage />
+                      </ProtectedRoute>
                     }
                   />
                   <Route

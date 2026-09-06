@@ -16,6 +16,11 @@ import {
   createOutageTracker,
   type OutageTracker,
 } from "~/server/util/flair/outage";
+import {
+  getTokenRefreshFailureState as getStoredTokenRefreshFailureState,
+  setTokenRefreshFailureState,
+  type TokenRefreshFailureState,
+} from "~/server/util/flair/outageStore";
 
 // --- Semantic, fully-fakeable interface ---------------------------------
 // Every domain/control test above this layer codes against these shapes,
@@ -136,10 +141,10 @@ export interface FlairClient {
   ): Promise<FlairRemoteSensorReading>;
   setVentPercentOpen(ventId: string, percentOpen: number): Promise<void>;
   setStructureSetpointC(structureId: string, setpointC: number): Promise<void>;
-  /** Polled by the scheduler once per cycle for the "extended Flair outage" alert — see outage.ts. */
-  getOutageState(): { failing: boolean; sinceMs: number | null };
-  /** Polled by the scheduler once per cycle for the "Flair OAuth refresh failure" alert. Null once a refresh has since succeeded. */
-  getTokenRefreshFailureState(): { terminal: boolean; message: string } | null;
+  /** Polled by the scheduler once per cycle for the "extended Flair outage" alert — see outage.ts. Redis-backed (outageStore.ts), hence async. */
+  getOutageState(): Promise<{ failing: boolean; sinceMs: number | null }>;
+  /** Polled by the scheduler once per cycle for the "Flair OAuth refresh failure" alert. Null once a refresh has since succeeded. Redis-backed, hence async. */
+  getTokenRefreshFailureState(): Promise<TokenRefreshFailureState | null>;
 }
 
 // Refresh only on demonstrated need — within this margin of the persisted
@@ -157,8 +162,6 @@ export class FlairApiClient implements FlairClient {
   private tokenRefreshPromise: Promise<string> | null = null;
   private readonly outage: OutageTracker;
   private readonly log: ReturnType<typeof logger.child>;
-  private lastRefreshFailure: { terminal: boolean; message: string } | null =
-    null;
 
   constructor(private readonly installationId: string) {
     this.outage = createOutageTracker(installationId);
@@ -168,15 +171,15 @@ export class FlairApiClient implements FlairClient {
     });
   }
 
-  getOutageState(): { failing: boolean; sinceMs: number | null } {
-    return {
-      failing: this.outage.isFailing(),
-      sinceMs: this.outage.failingSinceMs(),
-    };
+  async getOutageState(): Promise<{
+    failing: boolean;
+    sinceMs: number | null;
+  }> {
+    return this.outage.getState();
   }
 
-  getTokenRefreshFailureState(): { terminal: boolean; message: string } | null {
-    return this.lastRefreshFailure;
+  async getTokenRefreshFailureState(): Promise<TokenRefreshFailureState | null> {
+    return getStoredTokenRefreshFailureState(this.installationId);
   }
 
   async getAccessToken(): Promise<string> {
@@ -252,7 +255,10 @@ export class FlairApiClient implements FlairClient {
         { status: response.status, terminal },
         "Flair token refresh failed",
       );
-      this.lastRefreshFailure = { terminal, message: errorMsg };
+      await setTokenRefreshFailureState(this.installationId, {
+        terminal,
+        message: errorMsg,
+      });
       await recordFlairRefreshError(this.installationId, errorMsg);
       throw new Error(errorMsg);
     }
@@ -273,7 +279,7 @@ export class FlairApiClient implements FlairClient {
       scope: tokenData.scope ?? null,
     });
     this.log.info("Flair token refreshed successfully");
-    this.lastRefreshFailure = null;
+    await setTokenRefreshFailureState(this.installationId, null);
     return this.accessToken;
   }
 
@@ -306,14 +312,14 @@ export class FlairApiClient implements FlairClient {
     }
 
     if (!res.ok) {
-      this.outage.recordFailure();
+      await this.outage.recordFailure();
       this.log.warn({ endpoint: path, status: res.status }, "Flair API error");
       throw new Error(
         `Flair API error: ${method} ${path} -> ${res.status} ${res.statusText}`,
       );
     }
 
-    this.outage.recordSuccess();
+    await this.outage.recordSuccess();
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }

@@ -21,6 +21,18 @@ import { createInMemoryZoneDemandTrackingStore } from "~/server/control/zoneDema
 import { createInMemoryAlertingClient } from "~/server/util/alerting";
 import { FakeFlairClient } from "../../helpers/fakeFlairClient";
 
+// tickDecision.ts's cache is Redis-backed (see its own comment on why a
+// worker-process/API-server split made an in-memory Map wrong) — runTick()
+// calls it unconditionally on every return path via finalize(), so every
+// test in this file needs this mocked, not just ones that care about the
+// cached record's own content.
+vi.mock("~/server/util/redis", () => ({
+  redis: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+  },
+}));
+
 const STRUCTURE_ID = "structure-1";
 const FLAIR_ZONE_ID = "flair-zone-1";
 const NOW = Date.UTC(2024, 0, 1, 12, 0);

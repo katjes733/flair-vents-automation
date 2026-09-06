@@ -1,9 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   runTick,
   type TickContext,
   type TickDeps,
 } from "~/server/control/tick";
+
+// tickDecision.ts's cache is Redis-backed — runTick() calls it
+// unconditionally via finalize() on every return path. See tick.test.ts's
+// own identical mock for the full reasoning.
+vi.mock("~/server/util/redis", () => ({
+  redis: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+  },
+}));
 import type { AirHandlerData } from "~/server/util/routes/airHandler";
 import type { ZoneData } from "~/server/util/routes/zone";
 import { resolveAirHandlerConfig } from "~/shared/schemas/airHandlerConfig";

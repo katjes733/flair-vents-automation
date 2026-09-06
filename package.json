@@ -8,7 +8,7 @@
     "flair-vents-automation": "build/main.js"
   },
   "scripts": {
-    "dev": "concurrently -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
+    "dev": "concurrently -n server,client,worker -c blue,green,magenta \"bun run dev:server\" \"bun run dev:client\" \"bun run dev:worker\"",
     "docker:up": "docker-compose --env-file .env up -d",
     "docker:down": "docker-compose --env-file .env down",
     "build": "bun build src/server/main.ts --outdir build --target bun --minify",
@@ -21,6 +21,7 @@
     "prettier:fix": "bun x prettier --write src/* tests/*",
     "start": "bun run src/server/main.ts",
     "dev:server": "cross-env NODE_ENV=development nodemon --watch src/server --watch src/shared --watch .env --ext ts,env --exec 'bun src/server/main.ts'",
+    "dev:worker": "cross-env NODE_ENV=development nodemon --watch src/server --watch src/shared --watch .env --ext ts,env --exec 'bun src/server/worker.ts'",
     "stylelint": "stylelint 'src/**/*.{css,scss}' --allow-empty-input",
     "stylelint:fix": "bun run stylelint -- --fix",
     "test": "vitest run",
@@ -93,6 +94,7 @@
     "@simplewebauthn/server": "^13.3.2",
     "argon2": "^0.44.0",
     "axios": "^1.20.0",
+    "bullmq": "^6.3.4",
     "connect-redis": "^9.0.0",
     "cors": "^2.8.6",
     "dayjs": "^1.11.23",

@@ -1,23 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findOneBy, insert } = vi.hoisted(() => ({
+const { findOneBy, insert, update } = vi.hoisted(() => ({
   findOneBy: vi.fn(),
   insert: vi.fn(),
+  update: vi.fn(),
 }));
 const { getRepository } = vi.hoisted(() => ({
-  getRepository: vi.fn(() => ({ findOneBy, insert })),
+  getRepository: vi.fn(() => ({ findOneBy, insert, update })),
 }));
 vi.mock("~/server/database/datasource", () => ({
   default: { getInstance: vi.fn().mockResolvedValue({ getRepository }) },
 }));
 
-const { getUserByEmail, getUserById, createUser } =
+const { getUserByEmail, getUserById, createUser, updateUserPassword } =
   await import("~/server/util/routes/user");
 
 describe("user accessor", () => {
   beforeEach(() => {
     findOneBy.mockReset();
     insert.mockReset().mockResolvedValue(undefined);
+    update.mockReset().mockResolvedValue(undefined);
   });
 
   it("returns null when no user exists for the email", async () => {
@@ -63,5 +65,13 @@ describe("user accessor", () => {
     expect(inserted.user_details).toEqual({});
     expect(result.id).toBe(inserted.id);
     expect(result.userDetails).toEqual({});
+  });
+
+  it("updates a user's password hash", async () => {
+    await updateUserPassword("user-1", "new-hash");
+    expect(update).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ password_hash: "new-hash" }),
+    );
   });
 });

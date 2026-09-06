@@ -22,12 +22,14 @@ jobs:
         run: |
           docker push 192.168.2.106:5000/flair-vents-automation:latest
 
-      - name: Stop and remove existing container
+      - name: Stop and remove existing containers
         run: |
           docker stop flair-vents-automation || true
           docker rm flair-vents-automation || true
+          docker stop flair-vents-automation-worker || true
+          docker rm flair-vents-automation-worker || true
 
-      - name: Start new container
+      - name: Start API server container
         run: |
           LOKI_PIPELINE='- json:
               expressions:
@@ -65,8 +67,9 @@ jobs:
             -e REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
             -e REDIS_KEY_PREFIX=fva: \
             -e TOKEN_ENCRYPTION_KEY="${{ secrets.TOKEN_ENCRYPTION_KEY }}" \
-            -e FLAIR_CLIENT_ID="${{ secrets.FLAIR_CLIENT_ID }}" \
-            -e FLAIR_CLIENT_SECRET="${{ secrets.FLAIR_CLIENT_SECRET }}" \
+            -e SESSION_SECRET="${{ secrets.SESSION_SECRET }}" \
+            -e WEBAUTHN_RP_ID="${{ secrets.WEBAUTHN_RP_ID }}" \
+            -e WEBAUTHN_EXPECTED_ORIGINS="${{ secrets.WEBAUTHN_EXPECTED_ORIGINS }}" \
             -e FLAIR_API_BASE_URL=https://api.flair.co \
             -e FLAIR_GRANT_MODE=client_credentials \
             -e SMTP_HOST="${{ secrets.SMTP_HOST }}" \
@@ -78,7 +81,66 @@ jobs:
             -e SSL_KEY_PATH=ssl/key.pem \
             -e SSL_CERT_PATH=ssl/cert.pem \
             -e ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
-            -e CONTROL_LOOP_ENABLED=true \
             -e LOG_LEVEL=info \
             -e LOKI_URL=http://192.168.2.103:3100 \
             192.168.2.106:5000/flair-vents-automation:latest
+
+      # A separate container from the API server, same image — differs
+      # only in its command (bun src/server/worker.ts, overriding the
+      # image's own default CMD) and its env: no PORT/SSL_*/ALLOWED_ORIGINS
+      # (no HTTP server here), no SESSION_SECRET/WEBAUTHN_* (no sessions or
+      # passkeys here), no fixed macvlan IP (no inbound traffic ever
+      # reaches this container — see the SaaS Transformation plan's
+      # "Horizontal Scaling" → "Docker and Infra Shape"). It DOES need the
+      # same DB/Redis/Flair/SMTP config as the API server: it talks to the
+      # same database, decrypts the same Flair tokens, and sends the same
+      # alert emails (control-loop alerts — token budget, outage, OAuth
+      # refresh failure — now fire from here, not the API process).
+      # CONTROL_LOOP_ENABLED lives here now too, not on the API container,
+      # since ticking no longer happens there at all.
+      - name: Start worker container
+        run: |
+          LOKI_PIPELINE='- json:
+              expressions:
+                service: service
+                air_handler_id: air_handler_id
+          - labels:
+              service:
+              air_handler_id:'
+          docker run -d \
+            --name flair-vents-automation-worker \
+            --restart unless-stopped \
+            --log-driver loki \
+            --log-opt loki-url="http://192.168.2.103:3100/loki/api/v1/push" \
+            --log-opt loki-batch-size="400" \
+            --log-opt loki-retries="3" \
+            --log-opt loki-timeout="2s" \
+            --log-opt keep-file="true" \
+            --log-opt "loki-pipeline-stages=${LOKI_PIPELINE}" \
+            -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
+            -e NODE_ENV=production \
+            -e DB_HOST="${{ secrets.DB_HOST }}" \
+            -e DB_PORT="${{ secrets.DB_PORT }}" \
+            -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+            -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            -e DB_NAME="${{ secrets.DB_NAME }}" \
+            -e DB_SCHEMA="${{ secrets.DB_SCHEMA }}" \
+            -e DB_SSL=true \
+            -e DB_SSL_CA_PATH=/app/db-certs/ca.crt \
+            -e REDIS_HOST="${{ secrets.REDIS_HOST }}" \
+            -e REDIS_PORT="${{ secrets.REDIS_PORT }}" \
+            -e REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            -e REDIS_KEY_PREFIX=fva: \
+            -e TOKEN_ENCRYPTION_KEY="${{ secrets.TOKEN_ENCRYPTION_KEY }}" \
+            -e FLAIR_API_BASE_URL=https://api.flair.co \
+            -e FLAIR_GRANT_MODE=client_credentials \
+            -e SMTP_HOST="${{ secrets.SMTP_HOST }}" \
+            -e SMTP_PORT="${{ secrets.SMTP_PORT }}" \
+            -e SMTP_SENDER_EMAIL="${{ secrets.SMTP_SENDER_EMAIL }}" \
+            -e SMTP_SENDER_PASSWORD="${{ secrets.SMTP_SENDER_PASSWORD }}" \
+            -e RECIPIENT_EMAIL="${{ secrets.RECIPIENT_EMAIL }}" \
+            -e CONTROL_LOOP_ENABLED=true \
+            -e LOG_LEVEL=info \
+            -e LOKI_URL=http://192.168.2.103:3100 \
+            192.168.2.106:5000/flair-vents-automation:latest \
+            bun src/server/worker.ts

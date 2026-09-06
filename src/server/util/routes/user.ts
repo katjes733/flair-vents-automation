@@ -1,5 +1,5 @@
 import AppDataSource from "~/server/database/datasource";
-import { withTimestamps } from "~/server/util/entityTimestamps";
+import { withTimestamps, touch } from "~/server/util/entityTimestamps";
 import type { IUser } from "~/server/database/models/user";
 
 export interface UserData {
@@ -48,4 +48,16 @@ export async function createUser(opts: {
     passwordHash: fields.password_hash,
     userDetails: fields.user_details,
   };
+}
+
+// The invite-acceptance flow's own write path — an invited member's row
+// already exists (created with the "" placeholder sentinel at invite
+// time), so accepting the invite is a password update, never a second
+// insert.
+export async function updateUserPassword(
+  userId: string,
+  passwordHash: string,
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("User");
+  await repo.update(userId, { password_hash: passwordHash, ...touch() });
 }

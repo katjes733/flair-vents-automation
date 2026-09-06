@@ -19,6 +19,11 @@ vi.mock("~/server/util/flair/bootstrapValidate", () => ({
 const { establishSession } = vi.hoisted(() => ({ establishSession: vi.fn() }));
 vi.mock("~/server/util/sessionEstablish", () => ({ establishSession }));
 
+const { registerInstallationTick } = vi.hoisted(() => ({
+  registerInstallationTick: vi.fn(),
+}));
+vi.mock("~/server/control/queue", () => ({ registerInstallationTick }));
+
 const { insertCalls, transaction } = vi.hoisted(() => {
   const insertCalls: Array<{ entity: string; row: Record<string, unknown> }> =
     [];
@@ -59,6 +64,7 @@ beforeEach(() => {
     user: { loginEmail: "a@example.com" },
     sessionExpiry: 12345,
   });
+  registerInstallationTick.mockReset().mockResolvedValue(undefined);
 });
 
 describe("completeByoFlairSignup", () => {
@@ -163,5 +169,29 @@ describe("completeByoFlairSignup", () => {
       user: { loginEmail: "a@example.com" },
       sessionExpiry: 12345,
     });
+
+    // Starts the new installation ticking immediately, rather than
+    // waiting for the API server's next restart.
+    expect(registerInstallationTick).toHaveBeenCalledWith(installationRow.id);
+  });
+
+  it("still completes signup even if registering the tick job scheduler fails", async () => {
+    getPendingSignup.mockResolvedValue({ passwordHash: "hashed-pw" });
+    validateFlairCredentials.mockResolvedValue(VALIDATED);
+    registerInstallationTick.mockRejectedValue(new Error("redis down"));
+
+    const result = await completeByoFlairSignup({
+      req: { session: {} } as any,
+      email: "a@example.com",
+      flairClientId: "cid-1",
+      flairClientSecret: "raw-secret",
+    });
+
+    expect(result).toEqual({
+      message: "Logged in",
+      user: { loginEmail: "a@example.com" },
+      sessionExpiry: 12345,
+    });
+    expect(deletePendingSignup).toHaveBeenCalledWith("a@example.com");
   });
 });

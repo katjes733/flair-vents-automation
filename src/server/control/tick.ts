@@ -248,7 +248,7 @@ export async function runTick(
         confidence: "unknown",
       },
     );
-    finalize(log, decision);
+    await finalize(log, decision);
     return decision;
   }
 
@@ -525,7 +525,7 @@ export async function runTick(
       callStartedAtMs,
       ticksSinceDriftCheck: nextTicksSinceDriftCheck,
     });
-    finalize(log, decision);
+    await finalize(log, decision);
     return decision;
   }
 
@@ -676,7 +676,7 @@ export async function runTick(
       hvac,
       zones,
     );
-    finalize(log, decision);
+    await finalize(log, decision);
     return decision;
   }
 
@@ -1685,15 +1685,15 @@ export async function runTick(
     zones_evaluated: zones.length,
     commands_dispatched: commandsDispatched,
   });
-  finalize(log, decision);
+  await finalize(log, decision);
   return decision;
 }
 
-function finalize(
+async function finalize(
   log: ReturnType<typeof logger.child>,
   decision: AirHandlerTickDecision,
-): void {
-  cacheTickDecision(decision);
+): Promise<void> {
+  await cacheTickDecision(decision);
   logControlTickDecision(log, decision);
 }
 

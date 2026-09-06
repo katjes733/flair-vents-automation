@@ -388,3 +388,25 @@ export function logZoneDegradedHardwareRemoved(
 ): void {
   log.warn(fields, "Zone degraded — hardware removed");
 }
+
+// A low-frequency (default every 30s), fleet-wide snapshot of the BullMQ
+// tick queue's own health — not per-installation, since the queue is a
+// single shared fleet resource (see the SaaS Transformation plan's
+// "Fleet and Per-Installation Observability" section on why this panel
+// deliberately has no $installation filter). This is the concrete signal
+// the plan names as the correct "add a worker" trigger — queue lag, not
+// CPU/memory.
+export interface QueueHealthSnapshotFields {
+  waiting_count: number;
+  active_count: number;
+  delayed_count: number;
+  failed_count: number;
+  connected_worker_count: number;
+  active_installations_count: number;
+}
+export function logQueueHealthSnapshot(
+  log: Logger,
+  fields: QueueHealthSnapshotFields,
+): void {
+  log.info(fields, "Queue health snapshot");
+}

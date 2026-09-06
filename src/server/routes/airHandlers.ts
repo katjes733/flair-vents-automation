@@ -144,7 +144,7 @@ router.get("/:id/tick-decision", async (req, res) => {
   if (!airHandler || airHandler.installationId !== req.actor!.installationId) {
     throw new HttpError(`Air handler ${req.params.id} not found.`, 404);
   }
-  const decision = getCachedTickDecision(req.params.id);
+  const decision = await getCachedTickDecision(req.params.id);
   if (!decision) {
     throw new HttpError(
       `No tick decision cached yet for air handler ${req.params.id}.`,

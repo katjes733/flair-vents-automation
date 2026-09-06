@@ -6,9 +6,10 @@ import { v4 } from "uuid";
 import AppDataSource from "~/server/database/datasource";
 import { sendEmail, escapeHtml } from "~/server/util/mailing";
 import { hmac } from "~/server/util/totp";
-import { getUserByEmail } from "~/server/util/routes/user";
+import { getUserByEmail, updateUserPassword } from "~/server/util/routes/user";
 import { storePendingSignup } from "~/server/util/pendingSignup";
 import { completeByoFlairSignup } from "~/server/util/services/signupService";
+import { establishSession } from "~/server/util/sessionEstablish";
 import { createRateLimiter } from "~/server/middleware/rateLimiter";
 import { validateBody } from "~/server/middleware/validateBody";
 import {
@@ -17,6 +18,7 @@ import {
   SignupSchema,
   ConnectFlairSchema,
 } from "~/shared/schemas/auth";
+import { ActivateInviteSchema } from "~/shared/schemas/installationMember";
 import type { ISignupVerification } from "~/server/database/models/signupVerification";
 
 const authLog = logger.child({ service: "auth" });
@@ -45,6 +47,11 @@ const signupLimiter = createRateLimiter("signup", {
   message: "Too many signup attempts. Try again in 15 minutes.",
 });
 const connectFlairLimiter = createRateLimiter("connect-flair", {
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  message: "Too many attempts. Try again in 15 minutes.",
+});
+const activateInviteLimiter = createRateLimiter("activate-invite", {
   windowMs: 15 * 60 * 1000,
   limit: 10,
   message: "Too many attempts. Try again in 15 minutes.",
@@ -132,41 +139,57 @@ async function upsert(record: ISignupVerification) {
   }
 }
 
+// Shared by /verify-code (below) and the invite-acceptance flow's
+// /activate-invite — the exact same argon2/expiry check either way, since
+// both are just "does this code, right now, match what was emailed for
+// this address." Deliberately doesn't consume/delete the row on success —
+// this app's own established behavior (a self-signup client calls
+// /verify-code, then separately /signup, without needing to re-send the
+// code) already relies on a validated code staying valid until it expires
+// or a fresh one overwrites it.
+export async function verifyStoredCode(
+  email: string,
+  code: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "SignupVerification",
+  );
+  const existing = await repo.findOneBy({ email });
+
+  if (!existing) {
+    return { ok: false, status: 404, error: "Verification record not found" };
+  }
+
+  const { code: storedCode, expires_at } = existing;
+
+  let isValid: boolean;
+  try {
+    isValid = await argon2.verify(storedCode, code);
+  } catch {
+    isValid = false;
+  }
+  if (!isValid) {
+    return { ok: false, status: 400, error: "Invalid verification code" };
+  }
+
+  if (expires_at < new Date()) {
+    return { ok: false, status: 410, error: "Verification code expired" };
+  }
+
+  return { ok: true };
+}
+
 router.post(
   "/verify-code",
   verifyCodeLimiter,
   validateBody(VerifyCodeSchema),
   async (req, res) => {
     const { email, code } = req.body;
-
-    const repo = (await AppDataSource.getInstance()).getRepository(
-      "SignupVerification",
-    );
-    const existing = await repo.findOneBy({ email });
-
-    if (!existing) {
-      res.status(404).json({ error: "Verification record not found" });
+    const result = await verifyStoredCode(email, code);
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
       return;
     }
-
-    const { code: storedCode, expires_at } = existing;
-
-    let isValid: boolean;
-    try {
-      isValid = await argon2.verify(storedCode, code);
-    } catch {
-      isValid = false;
-    }
-    if (!isValid) {
-      res.status(400).json({ error: "Invalid verification code" });
-      return;
-    }
-
-    if (expires_at < new Date()) {
-      res.status(410).json({ error: "Verification code expired" });
-      return;
-    }
-
     res.json({ message: "Verification code is valid" });
   },
 );
@@ -207,6 +230,42 @@ router.post(
         flairClientId: req.body.flairClientId,
         flairClientSecret: req.body.flairClientSecret,
       });
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// The invite-acceptance flow's own single step — see the SaaS
+// Transformation plan's "Delegate and Multi-User Access" section. Unlike
+// self-signup, there's no installation to create here: the invited
+// member's users row already exists (the "" password_hash placeholder set
+// at invite time, per installationMemberService.ts), and their
+// installation_members row already grants them real access — this route
+// only ever turns that placeholder into a real, usable password.
+router.post(
+  "/activate-invite",
+  activateInviteLimiter,
+  validateBody(ActivateInviteSchema),
+  async (req, res, next) => {
+    try {
+      const { email, code, password } = req.body;
+
+      const user = await getUserByEmail(email);
+      if (!user || user.passwordHash !== "") {
+        res.status(404).json({ error: "No pending invite for this email." });
+        return;
+      }
+
+      const verified = await verifyStoredCode(email, code);
+      if (!verified.ok) {
+        res.status(verified.status).json({ error: verified.error });
+        return;
+      }
+
+      await updateUserPassword(user.id, await argon2.hash(password));
+      const result = await establishSession(req, email);
       res.json(result);
     } catch (error) {
       next(error);

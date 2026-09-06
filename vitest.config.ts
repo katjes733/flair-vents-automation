@@ -29,13 +29,20 @@ export default defineConfig({
         "src/server/main.ts",
         // Same reasoning as main.ts, one level down: this wires runTick's
         // already-tested pure orchestration up to the real DB/Redis/Flair
-        // accessors and a real setTimeout-based scheduler with no injected
-        // fakes (unlike tick.ts's TickContext/TickDeps seam) — it's the
-        // production wiring point, not logic with a second caller to
-        // generalize for. Verified live (startup reconciliation logs,
-        // watchdog behavior) per the Verification Plan's smoke test, not
-        // unit-tested.
-        "src/server/control/scheduler.ts",
+        // accessors with no injected fakes (unlike tick.ts's TickContext/
+        // TickDeps seam) — it's the production wiring point, not logic
+        // with a second caller to generalize for. Verified live (startup
+        // reconciliation logs, watchdog behavior) per the Verification
+        // Plan's smoke test, not unit-tested.
+        "src/server/control/tickProcessor.ts",
+        // A second, dedicated ioredis connection with no logic of its own
+        // beyond construction options — same exemption as util/redis.ts.
+        "src/server/control/queueConnection.ts",
+        // The BullMQ Worker entrypoint — same reasoning as main.ts/
+        // worker.ts's own top-of-file comment: real process wiring (env
+        // checks, AppDataSource init, Worker construction, SIGTERM), no
+        // injected fakes, verified live rather than unit-tested.
+        "src/server/worker.ts",
       ],
       reporter: ["text"],
       thresholds: {

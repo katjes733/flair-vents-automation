@@ -28,13 +28,19 @@ describe("getOrCreateDefaultInstallation", () => {
 
   it("returns the existing installation without inserting a new one", async () => {
     find.mockResolvedValue([
-      { id: "inst-1", name: "Existing", flair_structure_id: "92514" },
+      {
+        id: "inst-1",
+        name: "Existing",
+        flair_structure_id: "92514",
+        is_active: true,
+      },
     ]);
     const result = await getOrCreateDefaultInstallation();
     expect(result).toEqual({
       id: "inst-1",
       name: "Existing",
       flairStructureId: "92514",
+      isActive: true,
     });
     expect(insert).not.toHaveBeenCalled();
   });
@@ -60,6 +66,12 @@ describe("getOrCreateDefaultInstallation", () => {
     const result = await getOrCreateDefaultInstallation();
     expect(result.flairStructureId).toBeNull();
   });
+
+  it("marks a newly created installation active", async () => {
+    find.mockResolvedValue([]);
+    const result = await getOrCreateDefaultInstallation();
+    expect(result.isActive).toBe(true);
+  });
 });
 
 describe("getActiveInstallations", () => {
@@ -69,29 +81,71 @@ describe("getActiveInstallations", () => {
 
   it("filters out an installation with no linked Flair structure", async () => {
     find.mockResolvedValue([
-      { id: "inst-1", name: "Default Installation", flair_structure_id: null },
-      { id: "inst-2", name: "Real Home", flair_structure_id: "92514" },
+      {
+        id: "inst-1",
+        name: "Default Installation",
+        flair_structure_id: null,
+        is_active: true,
+      },
+      {
+        id: "inst-2",
+        name: "Real Home",
+        flair_structure_id: "92514",
+        is_active: true,
+      },
     ]);
     expect(await getActiveInstallations()).toEqual([
-      { id: "inst-2", name: "Real Home", flairStructureId: "92514" },
+      {
+        id: "inst-2",
+        name: "Real Home",
+        flairStructureId: "92514",
+        isActive: true,
+      },
     ]);
   });
 
-  it("returns an empty array when nothing is linked yet", async () => {
+  it("filters out a deactivated installation even if it has a linked Flair structure", async () => {
     find.mockResolvedValue([
-      { id: "inst-1", name: "Default Installation", flair_structure_id: null },
+      {
+        id: "inst-1",
+        name: "Paused Home",
+        flair_structure_id: "92514",
+        is_active: false,
+      },
     ]);
     expect(await getActiveInstallations()).toEqual([]);
   });
 
-  it("returns every linked installation when there's more than one", async () => {
+  it("returns an empty array when nothing is linked yet", async () => {
     find.mockResolvedValue([
-      { id: "inst-1", name: "Home A", flair_structure_id: "1" },
-      { id: "inst-2", name: "Home B", flair_structure_id: "2" },
+      {
+        id: "inst-1",
+        name: "Default Installation",
+        flair_structure_id: null,
+        is_active: true,
+      },
+    ]);
+    expect(await getActiveInstallations()).toEqual([]);
+  });
+
+  it("returns every linked, active installation when there's more than one", async () => {
+    find.mockResolvedValue([
+      {
+        id: "inst-1",
+        name: "Home A",
+        flair_structure_id: "1",
+        is_active: true,
+      },
+      {
+        id: "inst-2",
+        name: "Home B",
+        flair_structure_id: "2",
+        is_active: true,
+      },
     ]);
     expect(await getActiveInstallations()).toEqual([
-      { id: "inst-1", name: "Home A", flairStructureId: "1" },
-      { id: "inst-2", name: "Home B", flairStructureId: "2" },
+      { id: "inst-1", name: "Home A", flairStructureId: "1", isActive: true },
+      { id: "inst-2", name: "Home B", flairStructureId: "2", isActive: true },
     ]);
   });
 });
@@ -111,11 +165,13 @@ describe("getInstallationById", () => {
       id: "inst-1",
       name: "Home",
       flair_structure_id: "92514",
+      is_active: true,
     });
     expect(await getInstallationById("inst-1")).toEqual({
       id: "inst-1",
       name: "Home",
       flairStructureId: "92514",
+      isActive: true,
     });
     expect(findOneBy).toHaveBeenCalledWith({ id: "inst-1" });
   });

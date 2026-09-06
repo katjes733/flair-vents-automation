@@ -22,6 +22,7 @@ import { router as SyncRouter } from "~/server/routes/sync";
 import { router as TelemetryRouter } from "~/server/routes/telemetry";
 import { router as SessionRouter } from "~/server/routes/session";
 import { router as SignupVerificationRouter } from "~/server/routes/signupVerification";
+import { router as InstallationMembersRouter } from "~/server/routes/installationMembers";
 import { router as WebauthnRouter } from "~/server/routes/webauthn";
 import { getWebauthnConfig } from "~/server/util/requestOrigin";
 import { errorHandler } from "~/server/middleware/errorHandler";
@@ -37,10 +38,7 @@ import {
 } from "~/server/util/auth";
 import { upsertFlairToken } from "~/server/util/routes/flairToken";
 import { renderOAuthCallbackPage } from "~/server/util/oauthCallbackPage";
-import {
-  runStartupReconciliationForInstallation,
-  startControlLoop,
-} from "~/server/control/scheduler";
+import { reconcileInstallationSchedulers } from "~/server/control/queue";
 
 // Fail-fast: required env vars are checked synchronously at module load,
 // not lazily on first request.
@@ -185,6 +183,7 @@ app.use("/api/v1/settings", SettingsRouter);
 app.use("/api/v1/control", ControlRouter);
 app.use("/api/v1/sync", SyncRouter);
 app.use("/api/v1/telemetry", TelemetryRouter);
+app.use("/api/v1/installation-members", InstallationMembersRouter);
 
 // Bare (not /api/v1) — this must match the OAuth redirect_uri Flair itself
 // is configured with, and is only ever reached in authorization_code mode.
@@ -327,28 +326,26 @@ server.listen(port, () => {
   logger.info({ port, ssl: sslEnabled }, "Server listening");
 });
 
-// Startup reconciliation runs once, before the loop's first tick, so the
-// first ramp starts from where the vents actually are rather than
-// whatever the DB held across a restart — see "Reconciliation & startup
-// reconciliation". A failure here (e.g. Flair unreachable at boot) must
-// not prevent the server from serving the API/UI, so it's logged and the
-// loop starts regardless — the loop's own per-handler try/catch and the
-// next tick's own reconciliation sweep are what actually recover from it.
+// Registers (or updates) a BullMQ tick job scheduler for every active
+// installation, and removes any stale ones — see queue.ts's own comment.
+// Actual ticking now happens in a separate worker process (worker.ts)
+// consuming these jobs, not here; a failure here must not prevent the API
+// server from serving the UI, so it's logged and the server starts
+// regardless — the next boot's reconciliation, or a future signup's own
+// immediate registerInstallationTick() call, still recovers from it.
 try {
-  await runStartupReconciliationForInstallation();
+  await reconcileInstallationSchedulers();
 } catch (err) {
   logger.error(
     { err },
-    "Startup reconciliation failed — starting the control loop anyway",
+    "Job scheduler reconciliation failed — starting the API server anyway",
   );
 }
-const controlLoop = startControlLoop();
 
-// Stops accepting new connections and stops scheduling further ticks
-// without moving anything — holding last position is this app's own
-// stated safe default for any outage, so shutdown behaves the same way.
+// Stops accepting new connections — startup/shutdown of the actual tick
+// processing lives in worker.ts's own process now, with its own SIGTERM
+// handler.
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received, shutting down gracefully");
-  controlLoop.stop();
   server.close(() => process.exit(0));
 });

@@ -1,5 +1,5 @@
 import AppDataSource, { qualifiedTable } from "~/server/database/datasource";
-import { withTimestamps } from "~/server/util/entityTimestamps";
+import { withTimestamps, touch } from "~/server/util/entityTimestamps";
 import type {
   IInstallationMemberScope,
   InstallationMemberRole,
@@ -47,26 +47,24 @@ export async function createInstallationMember(opts: {
   userId: string;
   role: InstallationMemberRole;
   scope?: IInstallationMemberScope;
-}): Promise<void> {
+}): Promise<{ id: string; createdAt: Date }> {
   const repo = (await AppDataSource.getInstance()).getRepository(
     "InstallationMember",
   );
-  await repo.insert(
-    withTimestamps({
-      installation_id: opts.installationId,
-      user_id: opts.userId,
-      role: opts.role,
-      scope: opts.scope ?? { air_handler_ids: "*" },
-    }),
-  );
+  const fields = withTimestamps({
+    installation_id: opts.installationId,
+    user_id: opts.userId,
+    role: opts.role,
+    scope: opts.scope ?? { air_handler_ids: "*" },
+  });
+  await repo.insert(fields);
+  return { id: fields.id, createdAt: fields.creation_time };
 }
 
 // Counts owner rows for an installation — used to enforce "an installation
 // must always retain at least one owner" before a revoke/role-change is
 // allowed to proceed (see the SaaS Transformation plan's "Delegate and
-// Multi-User Access" section). Not yet called from any route — the invite/
-// revoke UI itself is a later, deferred stage — but the accessor exists now
-// so that stage is "add routes," not "add routes and this query."
+// Multi-User Access" section).
 export async function countOwners(installationId: string): Promise<number> {
   const repo = (await AppDataSource.getInstance()).getRepository(
     "InstallationMember",
@@ -74,4 +72,91 @@ export async function countOwners(installationId: string): Promise<number> {
   return repo.count({
     where: { installation_id: installationId, role: "owner" },
   });
+}
+
+export interface InstallationMemberRow {
+  id: string;
+  installationId: string;
+  userId: string;
+  email: string;
+  role: InstallationMemberRole;
+  scope: IInstallationMemberScope;
+  createdAt: Date;
+}
+
+// The Members page's own listing — the inverse join of
+// listAccessibleInstallations (by installation instead of by user),
+// including each member's email since a raw user_id means nothing in a UI.
+export async function listMembersForInstallation(
+  installationId: string,
+): Promise<InstallationMemberRow[]> {
+  const dataSource = await AppDataSource.getInstance();
+  const rows = await dataSource.query(
+    `SELECT im.id, im.installation_id, im.user_id, u.email, im.role, im.scope, im.creation_time
+     FROM ${qualifiedTable("installation_members")} im
+     JOIN ${qualifiedTable("users")} u ON u.id = im.user_id
+     WHERE im.installation_id = $1
+     ORDER BY im.creation_time ASC`,
+    [installationId],
+  );
+  return rows.map(
+    (row: {
+      id: string;
+      installation_id: string;
+      user_id: string;
+      email: string;
+      role: InstallationMemberRole;
+      scope: IInstallationMemberScope;
+      creation_time: Date;
+    }) => ({
+      id: row.id,
+      installationId: row.installation_id,
+      userId: row.user_id,
+      email: row.email,
+      role: row.role,
+      scope: row.scope,
+      createdAt: row.creation_time,
+    }),
+  );
+}
+
+export async function getInstallationMemberById(
+  id: string,
+): Promise<InstallationMemberRow | null> {
+  const dataSource = await AppDataSource.getInstance();
+  const rows = await dataSource.query(
+    `SELECT im.id, im.installation_id, im.user_id, u.email, im.role, im.scope, im.creation_time
+     FROM ${qualifiedTable("installation_members")} im
+     JOIN ${qualifiedTable("users")} u ON u.id = im.user_id
+     WHERE im.id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    installationId: row.installation_id,
+    userId: row.user_id,
+    email: row.email,
+    role: row.role,
+    scope: row.scope,
+    createdAt: row.creation_time,
+  };
+}
+
+export async function updateInstallationMember(
+  id: string,
+  patch: { role?: InstallationMemberRole; scope?: IInstallationMemberScope },
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "InstallationMember",
+  );
+  await repo.update(id, { ...patch, ...touch() });
+}
+
+export async function deleteInstallationMember(id: string): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "InstallationMember",
+  );
+  await repo.delete(id);
 }
