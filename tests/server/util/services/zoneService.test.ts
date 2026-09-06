@@ -264,6 +264,29 @@ describe("updateZoneWithValidation", () => {
     expect(updateZone).not.toHaveBeenCalled();
   });
 
+  // A caller converting a zone to flair_smart_vent must explicitly clear
+  // any pre-existing manual_vents (see syncService.ts's matched_retrofit
+  // case, which does this for exactly this reason) — this is the safety
+  // net that catches a caller that forgets to: the merge onto the
+  // existing row keeps a stale manual_vents entry, and validateConfig
+  // correctly rejects the combination rather than silently allowing it.
+  it("rejects converting to flair_smart_vent via a patch that doesn't clear a pre-existing manual_vents entry", async () => {
+    getZoneById.mockResolvedValue({
+      id: "z1",
+      installationId: "inst-1",
+      ventHardwareType: "manual_fixed_vent",
+      flairRoomId: "room-1",
+      config: { ...BASE_CONFIG, manual_vents: [{ position: 75 }] },
+    });
+    await expect(
+      updateZoneWithValidation("inst-1", "z1", {
+        ventHardwareType: "flair_smart_vent",
+        config: { flair_vents: [{ flair_vent_id: "vent-new" }] },
+      }),
+    ).rejects.toThrow(/manual_vents/);
+    expect(updateZone).not.toHaveBeenCalled();
+  });
+
   it("merges config onto the existing row rather than replacing it", async () => {
     getZoneById
       .mockResolvedValueOnce({

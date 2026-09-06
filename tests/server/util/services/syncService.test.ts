@@ -182,6 +182,59 @@ describe("runSync", () => {
     );
   });
 
+  // Regression test: a real user question ("does adding a Flair vent to a
+  // room I'd converted to manual get picked up on re-sync?") surfaced a
+  // real bug here — this zone's manual_vents wasn't being cleared by the
+  // retrofit patch, so the merge in the real updateZoneWithValidation
+  // would leave a stale manual_vents entry on a now-flair_smart_vent zone,
+  // which validateConfig rejects outright (see zoneService.test.ts's own
+  // "rejects converting to flair_smart_vent via a patch that doesn't
+  // clear a pre-existing manual_vents entry"). updateZoneWithValidation
+  // is mocked here, so this only asserts the *patch shape* syncService
+  // sends — the real merge/validate interaction is covered there.
+  it("clears manual_vents when a matched_retrofit conversion comes from a manual_fixed_vent zone", async () => {
+    fetchSyncCandidates.mockResolvedValue([
+      room({ liveVentIds: ["vent-new"] }),
+    ]);
+    getZonesForAirHandler.mockResolvedValue([
+      {
+        id: "z1",
+        name: "Martin Office",
+        flairRoomId: "room-1",
+        ventHardwareType: "manual_fixed_vent",
+        config: {
+          flair_vents: [],
+          manual_vents: [{ position: 75 }],
+          has_temperature_sensor: true,
+          has_occupancy_sensor: false,
+        },
+      },
+    ]);
+
+    await runSync({
+      installationId: "inst-1",
+      airHandlerId: "ah-1",
+      structureId: "s1",
+      flairZoneId: "fz1",
+      client: fakeClient(),
+      alerting: createInMemoryAlertingClient(),
+      rateFloorMinutes: 15,
+      nowMs: 1000,
+    });
+
+    expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
+      "z1",
+      expect.objectContaining({
+        ventHardwareType: "flair_smart_vent",
+        config: expect.objectContaining({
+          flair_vents: [{ flair_vent_id: "vent-new" }],
+          manual_vents: [],
+        }),
+      }),
+    );
+  });
+
   it("returns unmatched rooms without touching the DB", async () => {
     fetchSyncCandidates.mockResolvedValue([
       room({ flairRoomId: "room-2", name: "Garage" }),
