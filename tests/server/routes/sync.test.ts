@@ -3,12 +3,27 @@ import express from "express";
 import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
+
+const { getInstallationById } = vi.hoisted(() => ({
+  getInstallationById: vi.fn(),
+}));
+vi.mock("~/server/util/routes/installation", () => ({ getInstallationById }));
 
 const { getAirHandlerById } = vi.hoisted(() => ({
   getAirHandlerById: vi.fn(),
@@ -62,15 +77,17 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
+  getInstallationById
     .mockReset()
     .mockResolvedValue({ id: "inst-1", flairStructureId: "s1" });
   ensureFlairStructureLinked
     .mockReset()
     .mockResolvedValue({ id: "inst-1", flairStructureId: "s1" });
-  getAirHandlerById
-    .mockReset()
-    .mockResolvedValue({ id: "ah-1", flairZoneId: "fz1" });
+  getAirHandlerById.mockReset().mockResolvedValue({
+    id: "ah-1",
+    installationId: "inst-1",
+    flairZoneId: "fz1",
+  });
   getSystemSettings
     .mockReset()
     .mockResolvedValue({ email_rate_floor_minutes: 15 });
@@ -90,8 +107,25 @@ describe("POST /api/v1/sync/:airHandlerId/run", () => {
     expect(runSync).not.toHaveBeenCalled();
   });
 
+  // Regression test: a column-level FK guarantees the air handler exists,
+  // not that it belongs to the caller's own installation.
+  it("404s (not 403) when the air handler belongs to a different installation", async () => {
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-other",
+      flairZoneId: "fz1",
+    });
+    const res = await request(buildApp()).post("/api/v1/sync/ah-1/run");
+    expect(res.status).toBe(404);
+    expect(runSync).not.toHaveBeenCalled();
+  });
+
   it("400s when the air handler has no Flair zone linked yet", async () => {
-    getAirHandlerById.mockResolvedValue({ id: "ah-1", flairZoneId: null });
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-1",
+      flairZoneId: null,
+    });
     const res = await request(buildApp()).post("/api/v1/sync/ah-1/run");
     expect(res.status).toBe(400);
     expect(runSync).not.toHaveBeenCalled();
@@ -125,7 +159,7 @@ describe("POST /api/v1/sync/:airHandlerId/link", () => {
     expect(linkRoomToZone).not.toHaveBeenCalled();
   });
 
-  it("links the room to the given zone", async () => {
+  it("links the room to the given zone, passing the caller's installationId", async () => {
     fetchSyncCandidates.mockResolvedValue([
       {
         flairRoomId: "room-1",
@@ -145,6 +179,7 @@ describe("POST /api/v1/sync/:airHandlerId/link", () => {
     expect(res.status).toBe(200);
     expect(linkRoomToZone).toHaveBeenCalledWith(
       expect.objectContaining({
+        installationId: "inst-1",
         zoneId: "11111111-1111-4111-8111-111111111111",
       }),
     );
@@ -192,7 +227,10 @@ describe("POST /api/v1/sync/:airHandlerId/create", () => {
       .send({ flair_room_id: "room-1" });
     expect(res.status).toBe(201);
     expect(createZoneFromRoom).toHaveBeenCalledWith(
-      expect.objectContaining({ airHandlerId: "ah-1" }),
+      expect.objectContaining({
+        installationId: "inst-1",
+        airHandlerId: "ah-1",
+      }),
     );
   });
 

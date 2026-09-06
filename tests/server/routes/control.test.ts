@@ -3,11 +3,21 @@ import express from "express";
 import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 const { updateSettingsForInstallation } = vi.hoisted(() => ({
@@ -49,9 +59,6 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
-    .mockReset()
-    .mockResolvedValue({ id: "inst-1" });
   updateSettingsForInstallation.mockReset().mockResolvedValue({
     config: {},
     warnings: [],
@@ -75,7 +82,7 @@ describe("POST /api/v1/control/disarm", () => {
     expect(updateSettingsForInstallation).not.toHaveBeenCalled();
   });
 
-  it("sets control_disarmed true with a valid actor", async () => {
+  it("sets control_disarmed true with a valid actor, scoped to the caller's installation", async () => {
     const res = await request(buildApp())
       .post("/api/v1/control/disarm")
       .send({ actor: "Martin" });
@@ -88,7 +95,7 @@ describe("POST /api/v1/control/disarm", () => {
 });
 
 describe("POST /api/v1/control/rearm", () => {
-  it("sets control_disarmed false with a valid actor", async () => {
+  it("sets control_disarmed false with a valid actor, scoped to the caller's installation", async () => {
     const res = await request(buildApp())
       .post("/api/v1/control/rearm")
       .send({ actor: "Martin" });
@@ -109,7 +116,7 @@ describe("POST /api/v1/control/trigger-tick", () => {
 });
 
 describe("GET /api/v1/control/flair-status", () => {
-  it("returns a healthy connection's status", async () => {
+  it("returns a healthy connection's status, scoped to the caller's installation", async () => {
     const res = await request(buildApp()).get("/api/v1/control/flair-status");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -118,6 +125,8 @@ describe("GET /api/v1/control/flair-status", () => {
       tokenCallsToday: 3,
       tokenDailyBudget: 50,
     });
+    expect(getFlairClient).toHaveBeenCalledWith("inst-1");
+    expect(getTokenCallsToday).toHaveBeenCalledWith("inst-1");
   });
 
   it("surfaces an active outage and a terminal token-refresh failure", async () => {

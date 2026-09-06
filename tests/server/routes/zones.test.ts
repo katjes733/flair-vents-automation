@@ -3,11 +3,21 @@ import express from "express";
 import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 const { getZonesForInstallation, getZoneById } = vi.hoisted(() => ({
@@ -45,9 +55,6 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
-    .mockReset()
-    .mockResolvedValue({ id: "inst-1" });
   getZonesForInstallation.mockReset();
   getZoneById.mockReset();
   createZoneForInstallation.mockReset();
@@ -56,11 +63,12 @@ beforeEach(() => {
 });
 
 describe("GET /api/v1/zones", () => {
-  it("lists every zone for the installation", async () => {
+  it("lists every zone for the caller's own installation", async () => {
     getZonesForInstallation.mockResolvedValue([{ id: "z1" }]);
     const res = await request(buildApp()).get("/api/v1/zones");
     expect(res.status).toBe(200);
     expect(res.body).toEqual([{ id: "z1" }]);
+    expect(getZonesForInstallation).toHaveBeenCalledWith("inst-1");
   });
 });
 
@@ -71,11 +79,21 @@ describe("GET /api/v1/zones/:id", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns the zone when found", async () => {
-    getZoneById.mockResolvedValue({ id: "z1" });
+  // Regression test: a column-level FK guarantees the row exists, not
+  // that it belongs to the caller's own installation — 404 (not 403) so
+  // a cross-tenant guess can't be distinguished from a genuinely unknown
+  // id.
+  it("404s (not 403) when the zone belongs to a different installation", async () => {
+    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-other" });
+    const res = await request(buildApp()).get("/api/v1/zones/z1");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns the zone when found and owned", async () => {
+    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
     const res = await request(buildApp()).get("/api/v1/zones/z1");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: "z1" });
+    expect(res.body).toEqual({ id: "z1", installationId: "inst-1" });
   });
 });
 
@@ -98,7 +116,7 @@ describe("POST /api/v1/zones", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates a zone with a well-formed body", async () => {
+  it("creates a zone with a well-formed body, scoped to the caller's installation", async () => {
     createZoneForInstallation.mockResolvedValue({ id: "z1" });
     const res = await request(buildApp()).post("/api/v1/zones").send({
       air_handler_id: "11111111-1111-4111-8111-111111111111",
@@ -128,13 +146,18 @@ describe("PATCH /api/v1/zones/:id", () => {
     expect(res.status).toBe(404);
   });
 
-  it("updates with a well-formed partial body", async () => {
+  it("updates with a well-formed partial body, passing the caller's installationId", async () => {
     updateZoneWithValidation.mockResolvedValue({ id: "z1", name: "New name" });
     const res = await request(buildApp())
       .patch("/api/v1/zones/z1")
       .send({ name: "New name" });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: "z1", name: "New name" });
+    expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
+      "z1",
+      expect.objectContaining({ name: "New name" }),
+    );
   });
 
   // Regression test: a genuinely minimal config patch (just
@@ -155,6 +178,7 @@ describe("PATCH /api/v1/zones/:id", () => {
       .send({ config: { display_order: 1 } });
     expect(res.status).toBe(200);
     expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
       "z1",
       expect.objectContaining({ config: { display_order: 1 } }),
     );
@@ -170,9 +194,10 @@ describe("PATCH /api/v1/zones/:id", () => {
 });
 
 describe("DELETE /api/v1/zones/:id", () => {
-  it("deletes and returns 204", async () => {
+  it("deletes and returns 204, scoped to the caller's installation", async () => {
     deleteZoneWithValidation.mockResolvedValue(undefined);
     const res = await request(buildApp()).delete("/api/v1/zones/z1");
     expect(res.status).toBe(204);
+    expect(deleteZoneWithValidation).toHaveBeenCalledWith("inst-1", "z1");
   });
 });

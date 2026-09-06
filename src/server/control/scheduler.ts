@@ -1,4 +1,8 @@
-import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
+import {
+  getOrCreateDefaultInstallation,
+  getActiveInstallations,
+  type InstallationData,
+} from "~/server/util/routes/installation";
 import { getActiveAirHandlers } from "~/server/util/routes/airHandler";
 import {
   getZonesForAirHandler,
@@ -65,11 +69,15 @@ export function getFlairClient(installationId: string): FlairApiClient {
 }
 
 /**
- * Runs one full cycle — every active air handler on the one configured
- * installation, sequentially, sharing a single FlairClient (and therefore
- * a single OAuth token / rate-limit budget) across all of them, per "Loop
- * mechanism": more air handlers under the same account is a within-tick
- * concern, not a horizontal-scaling one.
+ * Runs one full cycle across every active (Flair-linked) installation,
+ * sequentially — each installation's own air handlers, in turn, share a
+ * single FlairClient (and therefore a single OAuth token / rate-limit
+ * budget) across all of them, per "Loop mechanism": more air handlers
+ * under the same account is a within-tick concern, not a
+ * horizontal-scaling one. Iterating multiple *installations* sequentially
+ * in one process is a deliberate, minimal fix (not the real horizontal-
+ * scaling story) — see the "Migration Path" comment on
+ * runHandlersForInstallation below.
  */
 // Coalesces every caller of a tick cycle — the scheduled loop below and
 // any explicit `triggerImmediateTick()` call (e.g. right after a Sync
@@ -105,9 +113,40 @@ export async function triggerImmediateTick(): Promise<void> {
 }
 
 export async function runAllHandlers(): Promise<void> {
-  const installation = await getOrCreateDefaultInstallation();
+  const installations = await getActiveInstallations();
+  for (const installation of installations) {
+    try {
+      await runHandlersForInstallation(installation);
+    } catch (err) {
+      log.error(
+        { installation_id: installation.id, err },
+        "Tick cycle failed for installation — continuing with remaining installations",
+      );
+    }
+  }
+}
+
+/**
+ * One installation's own full cycle — everything runAllHandlers() used to
+ * do inline against a single hardcoded installation, now parameterized.
+ * Migration Path: today this just means "loop over however many
+ * installations exist, one process, sequentially" — correct, but every
+ * installation still shares this one process's CPU/memory and (via
+ * runOneCycle's own single settings-sourced interval, see below) the same
+ * tick cadence. Genuinely distributing installations across worker
+ * processes with independent cadences is the real horizontal-scaling
+ * story (BullMQ, per the plan's own "Horizontal Scaling" section) — not
+ * needed at today's installation count, but this is the seam that work
+ * would replace.
+ */
+async function runHandlersForInstallation(
+  installation: InstallationData,
+): Promise<void> {
   if (!installation.flairStructureId) {
-    log.debug("No Flair structure linked yet — skipping this cycle");
+    log.debug(
+      { installation_id: installation.id },
+      "No Flair structure linked yet — skipping this cycle",
+    );
     return;
   }
 
@@ -126,7 +165,7 @@ export async function runAllHandlers(): Promise<void> {
   // client), checked once per cycle here rather than once per air
   // handler inside runTick(), which would just redundantly dedup N times.
   const tokenBudgetAlertKey = `alert:tokenBudget:${installation.id}`;
-  const callsToday = await getTokenCallsToday();
+  const callsToday = await getTokenCallsToday(installation.id);
   const budgetUsedPct = (callsToday / FLAIR_TOKEN_DAILY_BUDGET) * 100;
   if (budgetUsedPct >= settings.token_budget_alert_threshold_pct) {
     await alerting.alertOnce({
@@ -233,15 +272,36 @@ export async function runAllHandlers(): Promise<void> {
 }
 
 /**
- * Runs once, before the first scheduled tick — seeds each zone's ramp
- * origin from the vent's actual reported position (not whatever the DB
- * happened to hold across a restart), and enters a genuine drift beyond
- * min_step_delta_pct into the normal retry/degrade path exactly as a live
- * reconciliation failure would. See "Reconciliation & startup
- * reconciliation".
+ * Runs once, before the first scheduled tick — across every active
+ * (Flair-linked) installation, same reasoning as runAllHandlers() above:
+ * this used to assume a single hardcoded installation, which meant a
+ * second installation's zones never got their startup-reconciliation seed
+ * at all. One installation's failure here must not skip the rest.
  */
 export async function runStartupReconciliationForInstallation(): Promise<void> {
-  const installation = await getOrCreateDefaultInstallation();
+  const installations = await getActiveInstallations();
+  for (const installation of installations) {
+    try {
+      await runStartupReconciliationForOneInstallation(installation);
+    } catch (err) {
+      log.error(
+        { installation_id: installation.id, err },
+        "Startup reconciliation failed for installation — continuing with remaining installations",
+      );
+    }
+  }
+}
+
+/**
+ * Seeds each zone's ramp origin from the vent's actual reported position
+ * (not whatever the DB happened to hold across a restart), and enters a
+ * genuine drift beyond min_step_delta_pct into the normal retry/degrade
+ * path exactly as a live reconciliation failure would. See
+ * "Reconciliation & startup reconciliation".
+ */
+async function runStartupReconciliationForOneInstallation(
+  installation: InstallationData,
+): Promise<void> {
   if (!installation.flairStructureId) return;
 
   const settings = await getSystemSettings(installation.id);
@@ -334,7 +394,17 @@ export function startControlLoop(): ControlLoopHandle {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   async function runOneCycle(): Promise<number> {
-    const installation = await getOrCreateDefaultInstallation();
+    // Known, deliberate simplification: every installation shares this one
+    // process's single tick cadence, sourced from whichever active
+    // installation happens to be first — a real per-installation cadence
+    // is the actual horizontal-scaling story (see runHandlersForInstallation's
+    // own comment above). Prefer a genuinely active installation's own
+    // settings over the vestigial "Default Installation" placeholder when
+    // one exists; fall back to it only when nothing real has been created
+    // yet (a fresh dev DB with no signups at all).
+    const installations = await getActiveInstallations();
+    const installation =
+      installations[0] ?? (await getOrCreateDefaultInstallation());
     const settings = await getSystemSettings(installation.id);
     const intervalMs = settings.control_tick_interval_seconds * 1000;
     const watchdogMs = settings.tick_watchdog_seconds * 1000;

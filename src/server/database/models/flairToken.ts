@@ -13,6 +13,17 @@ export interface IFlairToken {
   scope: string | null;
   last_refresh_error: string | null;
   last_refresh_error_at: Date | null;
+  // BYO-credentials onboarding (see the SaaS Transformation plan's "Flair
+  // BYO-Credentials Onboarding" section): each installation brings its own
+  // Client ID/Secret, generated in its own Flair app's Developer Settings —
+  // unlike access_token/refresh_token, client_secret is a long-lived
+  // credential, not a rotating one, but gets the identical encrypted-at-
+  // rest treatment since it's equally sensitive. Both nullable: the one
+  // pre-existing production installation (migrated, not BYO-onboarded)
+  // has these backfilled from its current .env values; a genuinely new
+  // installation always has them from the moment its row is created.
+  client_id: string | null;
+  client_secret: string | null;
 }
 
 // One Flair account per installation — superseding an earlier free-text
@@ -34,6 +45,8 @@ export const FlairToken = new EntitySchema<IBasicEntity & IFlairToken>({
     scope: { type: "varchar", length: 255, nullable: true },
     last_refresh_error: { type: "varchar", nullable: true },
     last_refresh_error_at: { type: "timestamp with time zone", nullable: true },
+    client_id: { type: "varchar", length: 255, nullable: true },
+    client_secret: { type: "text", nullable: true },
   },
   foreignKeys: [
     {

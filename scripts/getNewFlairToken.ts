@@ -6,7 +6,12 @@
 import http from "http";
 import { randomUUID } from "crypto";
 import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
-import { getTokenWithClientCredentials, getTokenWithAuthorizationCode, buildFlairAuthorizeUrl } from "~/server/util/auth";
+import {
+  getTokenWithClientCredentials,
+  getTokenWithAuthorizationCode,
+  buildFlairAuthorizeUrl,
+  getEnvFlairCredentials,
+} from "~/server/util/auth";
 import { upsertFlairToken } from "~/server/util/routes/flairToken";
 
 interface FlairTokenResponseBody {
@@ -29,7 +34,7 @@ async function saveFromResponse(installationId: string, response: Response): Pro
 
 async function runClientCredentials(installationId: string): Promise<void> {
   console.log("Requesting a Flair access token via client_credentials...");
-  const response = await getTokenWithClientCredentials();
+  const response = await getTokenWithClientCredentials(getEnvFlairCredentials());
   if (!response.ok) {
     console.error(`Failed: ${response.status} ${response.statusText}`);
     console.error(await response.text());
@@ -43,7 +48,10 @@ async function runAuthorizationCode(installationId: string): Promise<void> {
   const port = 3299;
   const redirectUri = `http://localhost:${port}/callback`;
   const state = randomUUID();
-  const authorizeUrl = buildFlairAuthorizeUrl({ redirectUri, state });
+  const authorizeUrl = buildFlairAuthorizeUrl(getEnvFlairCredentials(), {
+    redirectUri,
+    state,
+  });
 
   console.log("Open this URL in your browser to authorize:");
   console.log(authorizeUrl);
@@ -66,7 +74,11 @@ async function runAuthorizationCode(installationId: string): Promise<void> {
           return;
         }
         try {
-          const response = await getTokenWithAuthorizationCode(code, redirectUri);
+          const response = await getTokenWithAuthorizationCode(
+            getEnvFlairCredentials(),
+            code,
+            redirectUri,
+          );
           if (!response.ok) {
             const text = await response.text();
             res.writeHead(500).end(`Token exchange failed: ${response.status}`);

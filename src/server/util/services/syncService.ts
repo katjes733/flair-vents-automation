@@ -67,6 +67,7 @@ function mergeFlairVents(
  * whether `ventHardwareType` also changes. See "Flair Sync Engine".
  */
 async function applyMatchedEntry(
+  installationId: string,
   entry: SyncDiffEntry,
   zoneName: string,
   existingFlairVents: FlairVentConfig[],
@@ -76,7 +77,7 @@ async function applyMatchedEntry(
 ): Promise<void> {
   switch (entry.kind) {
     case "matched_sensor_drift":
-      await updateZoneWithValidation(entry.zoneId, {
+      await updateZoneWithValidation(installationId, entry.zoneId, {
         config: {
           has_temperature_sensor: entry.hasTemperatureSensor,
           has_occupancy_sensor: entry.hasOccupancySensor,
@@ -89,7 +90,7 @@ async function applyMatchedEntry(
       });
       return;
     case "matched_vent_set_changed":
-      await updateZoneWithValidation(entry.zoneId, {
+      await updateZoneWithValidation(installationId, entry.zoneId, {
         config: {
           flair_vents: mergeFlairVents(existingFlairVents, entry.liveVentIds),
         },
@@ -100,7 +101,7 @@ async function applyMatchedEntry(
       });
       return;
     case "matched_retrofit":
-      await updateZoneWithValidation(entry.zoneId, {
+      await updateZoneWithValidation(installationId, entry.zoneId, {
         ventHardwareType: "flair_smart_vent",
         config: {
           flair_vents: mergeFlairVents(existingFlairVents, entry.liveVentIds),
@@ -113,7 +114,7 @@ async function applyMatchedEntry(
       });
       return;
     case "matched_hardware_removed":
-      await updateZoneWithValidation(entry.zoneId, {
+      await updateZoneWithValidation(installationId, entry.zoneId, {
         ventHardwareType: "no_vent",
         config: { flair_vents: [] },
       });
@@ -183,6 +184,7 @@ export async function runSync(params: {
     }
     if (entry.kind !== "matched_unchanged") {
       await applyMatchedEntry(
+        params.installationId,
         entry,
         zoneNameById.get(entry.zoneId) ?? entry.zoneId,
         zoneById.get(entry.zoneId)?.config.flair_vents ?? [],
@@ -230,6 +232,7 @@ function resolveImportedVentHardwareType(
  * since there's no real physical value to infer it from.
  */
 export async function linkRoomToZone(params: {
+  installationId: string;
   zoneId: string;
   room: SyncCandidateRoom;
   assumedFixedPosition?: number;
@@ -237,7 +240,7 @@ export async function linkRoomToZone(params: {
   const ventHardwareType = resolveImportedVentHardwareType(
     params.room.liveVentIds,
   );
-  return updateZoneWithValidation(params.zoneId, {
+  return updateZoneWithValidation(params.installationId, params.zoneId, {
     flairRoomId: params.room.flairRoomId,
     ventHardwareType,
     config: {

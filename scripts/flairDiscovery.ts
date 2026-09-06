@@ -4,7 +4,10 @@
 // Phase 0 section for why a write test is handled as a separate, deliberate
 // step, not part of this script. Run with:
 //   bun run scripts/flairDiscovery.ts
-import { getTokenWithClientCredentials } from "~/server/util/auth";
+import {
+  getTokenWithClientCredentials,
+  getEnvFlairCredentials,
+} from "~/server/util/auth";
 import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
 import { upsertFlairToken } from "~/server/util/routes/flairToken";
 
@@ -20,7 +23,7 @@ async function authenticate(): Promise<string> {
       `flairDiscovery.ts currently only drives client_credentials directly — FLAIR_GRANT_MODE=${grantMode} needs the browser-based getNewFlairToken.ts flow first, then re-run this against the persisted token.`,
     );
   }
-  const response = await getTokenWithClientCredentials();
+  const response = await getTokenWithClientCredentials(getEnvFlairCredentials());
   const bodyText = await response.text();
   if (!response.ok) {
     console.error(`Token request failed: ${response.status} ${response.statusText}`);

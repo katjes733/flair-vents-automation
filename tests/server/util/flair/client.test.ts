@@ -1,30 +1,42 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getTokenWithClientCredentials, getTokenWithRefreshToken } = vi.hoisted(
-  () => ({
-    getTokenWithClientCredentials: vi.fn(),
-    getTokenWithRefreshToken: vi.fn(),
-  }),
-);
+const {
+  getTokenWithClientCredentials,
+  getTokenWithRefreshToken,
+  getEnvFlairCredentials,
+} = vi.hoisted(() => ({
+  getTokenWithClientCredentials: vi.fn(),
+  getTokenWithRefreshToken: vi.fn(),
+  getEnvFlairCredentials: vi.fn(),
+}));
 vi.mock("~/server/util/auth", () => ({
   getTokenWithClientCredentials,
   getTokenWithRefreshToken,
+  getEnvFlairCredentials,
 }));
 
 const {
   getFlairTokenByInstallation,
   upsertFlairToken,
   recordFlairRefreshError,
+  resolveFlairCredentials,
 } = vi.hoisted(() => ({
   getFlairTokenByInstallation: vi.fn(),
   upsertFlairToken: vi.fn(),
   recordFlairRefreshError: vi.fn(),
+  resolveFlairCredentials: vi.fn(),
 }));
 vi.mock("~/server/util/routes/flairToken", () => ({
   getFlairTokenByInstallation,
   upsertFlairToken,
   recordFlairRefreshError,
+  resolveFlairCredentials,
 }));
+
+const TEST_CREDENTIALS = {
+  clientId: "test-client-id",
+  clientSecret: "test-client-secret",
+};
 
 const { recordTokenCall } = vi.hoisted(() => ({ recordTokenCall: vi.fn() }));
 vi.mock("~/server/util/flair/tokenBudget", () => ({ recordTokenCall }));
@@ -39,11 +51,27 @@ describe("FlairApiClient token management", () => {
   beforeEach(() => {
     getTokenWithClientCredentials.mockReset();
     getTokenWithRefreshToken.mockReset();
+    getEnvFlairCredentials.mockReset();
     getFlairTokenByInstallation.mockReset().mockResolvedValue(null);
+    resolveFlairCredentials.mockReset().mockResolvedValue(TEST_CREDENTIALS);
     upsertFlairToken.mockReset().mockResolvedValue(undefined);
     recordFlairRefreshError.mockReset().mockResolvedValue(undefined);
     recordTokenCall.mockReset().mockResolvedValue(1);
     delete process.env.FLAIR_GRANT_MODE;
+  });
+
+  it("falls back to the global env-configured credentials, with a warning, when this installation has none of its own", async () => {
+    resolveFlairCredentials.mockResolvedValue(null);
+    getEnvFlairCredentials.mockReturnValue(TEST_CREDENTIALS);
+    getTokenWithClientCredentials.mockResolvedValue(
+      tokenResponse({ access_token: "at-1", expires_in: 3600 }),
+    );
+    const client = new FlairApiClient("inst-1");
+    await client.getAccessToken();
+    expect(getEnvFlairCredentials).toHaveBeenCalledOnce();
+    expect(getTokenWithClientCredentials).toHaveBeenCalledWith(
+      TEST_CREDENTIALS,
+    );
   });
 
   it("mints a fresh token via client_credentials when nothing is persisted", async () => {
@@ -117,7 +145,10 @@ describe("FlairApiClient token management", () => {
     );
     const client = new FlairApiClient("inst-1");
     await client.getAccessToken();
-    expect(getTokenWithRefreshToken).toHaveBeenCalledWith("the-refresh-token");
+    expect(getTokenWithRefreshToken).toHaveBeenCalledWith(
+      TEST_CREDENTIALS,
+      "the-refresh-token",
+    );
   });
 
   it("marks a 400/401 token failure as terminal and records the refresh error", async () => {

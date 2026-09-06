@@ -6,6 +6,10 @@ import { Schedule } from "~/server/database/models/schedule";
 import { ManualOverride } from "~/server/database/models/manualOverride";
 import { FlairToken } from "~/server/database/models/flairToken";
 import { SystemSettings } from "~/server/database/models/systemSettings";
+import { User } from "~/server/database/models/user";
+import { InstallationMember } from "~/server/database/models/installationMember";
+import { WebauthnCredential } from "~/server/database/models/webauthnCredential";
+import { SignupVerification } from "~/server/database/models/signupVerification";
 
 // Structural checks, not integration tests against a real DB (that's the
 // live smoke test, per the Verification Plan) — these catch the class of
@@ -27,6 +31,10 @@ describe("EntitySchema base entity columns", () => {
     ManualOverride,
     FlairToken,
     SystemSettings,
+    User,
+    InstallationMember,
+    WebauthnCredential,
+    SignupVerification,
   ];
 
   it.each(entities)("carries id/creation_time/modified_time", (entity) => {
@@ -149,5 +157,62 @@ describe("SystemSettings", () => {
     expect(SystemSettings.options.columns.installation_id).toMatchObject({
       unique: true,
     });
+  });
+});
+
+describe("User", () => {
+  it("enforces a unique, non-null email", () => {
+    expect(User.options.columns.email).toMatchObject({
+      nullable: false,
+      unique: true,
+    });
+  });
+});
+
+describe("InstallationMember", () => {
+  it("FKs installation_id and user_id both with ON DELETE RESTRICT — not CASCADE", () => {
+    const fks = InstallationMember.options.foreignKeys ?? [];
+    const installationFk = fks.find((f) =>
+      f.columnNames.includes("installation_id"),
+    );
+    const userFk = fks.find((f) => f.columnNames.includes("user_id"));
+    expect(installationFk?.target).toBe(Installation);
+    expect(installationFk?.onDelete).toBe("RESTRICT");
+    expect(userFk?.target).toBe(User);
+    expect(userFk?.onDelete).toBe("RESTRICT");
+  });
+
+  it("enforces a unique (installation_id, user_id) index — one membership row per pair", () => {
+    const index = InstallationMember.options.indices?.find(
+      (i) => i.name === "idx_installation_members_installation_user",
+    );
+    expect(index?.columns).toEqual(["installation_id", "user_id"]);
+    expect(index?.unique).toBe(true);
+  });
+});
+
+describe("WebauthnCredential", () => {
+  it("FKs user_id to User with ON DELETE CASCADE — unlike InstallationMember's RESTRICT", () => {
+    const fk = WebauthnCredential.options.foreignKeys?.find((f) =>
+      f.columnNames.includes("user_id"),
+    );
+    expect(fk?.target).toBe(User);
+    expect(fk?.onDelete).toBe("CASCADE");
+  });
+
+  it("enforces a unique credential_id", () => {
+    expect(WebauthnCredential.options.columns.credential_id).toMatchObject({
+      unique: true,
+    });
+  });
+});
+
+describe("SignupVerification", () => {
+  it("enforces a unique email — one pending code per address", () => {
+    const index = SignupVerification.options.indices?.find(
+      (i) => i.name === "idx_signup_verification_email",
+    );
+    expect(index?.columns).toEqual(["email"]);
+    expect(index?.unique).toBe(true);
   });
 });

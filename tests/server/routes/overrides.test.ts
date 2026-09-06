@@ -4,11 +4,21 @@ import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 import { HttpError } from "~/server/util/httpError";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 const { getZonesForInstallation } = vi.hoisted(() => ({
@@ -45,9 +55,6 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
-    .mockReset()
-    .mockResolvedValue({ id: "inst-1" });
   getZonesForInstallation.mockReset().mockResolvedValue([{ id: "z1" }]);
   createOverrideForZone.mockReset();
   revokeOverride.mockReset();
@@ -56,6 +63,12 @@ beforeEach(() => {
 });
 
 describe("GET /api/v1/overrides", () => {
+  it("scopes the zone list to the caller's own installation", async () => {
+    getLatestOverridesForZones.mockResolvedValue(new Map());
+    await request(buildApp()).get("/api/v1/overrides");
+    expect(getZonesForInstallation).toHaveBeenCalledWith("inst-1");
+  });
+
   it("marks a not-yet-expired, not-revoked override as active", async () => {
     getLatestOverridesForZones.mockResolvedValue(
       new Map([
@@ -127,7 +140,7 @@ describe("POST /api/v1/overrides", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates with a well-formed body", async () => {
+  it("creates with a well-formed body, scoped to the caller's installation", async () => {
     createOverrideForZone.mockResolvedValue({ id: "mo-1" });
     const res = await request(buildApp()).post("/api/v1/overrides").send({
       kind: "position",
@@ -138,15 +151,21 @@ describe("POST /api/v1/overrides", () => {
     });
     expect(res.status).toBe(201);
     expect(res.body).toEqual({ id: "mo-1" });
+    expect(createOverrideForZone).toHaveBeenCalledWith(
+      "inst-1",
+      expect.objectContaining({
+        zone_id: "11111111-1111-4111-8111-111111111111",
+      }),
+    );
   });
 });
 
 describe("POST /api/v1/overrides/:id/revoke", () => {
-  it("revokes and returns 204", async () => {
+  it("revokes and returns 204, scoped to the caller's installation", async () => {
     revokeOverride.mockResolvedValue(undefined);
     const res = await request(buildApp()).post("/api/v1/overrides/mo-1/revoke");
     expect(res.status).toBe(204);
-    expect(revokeOverride).toHaveBeenCalledWith("mo-1");
+    expect(revokeOverride).toHaveBeenCalledWith("inst-1", "mo-1");
   });
 });
 
@@ -182,13 +201,18 @@ describe("GET /api/v1/overrides/:zoneId/history", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns the zone's override history for the given range", async () => {
+  it("returns the zone's override history for the given range, scoped to the caller's installation", async () => {
     getOverrideHistoryForZone.mockResolvedValue([{ id: "mo-1" }]);
     const res = await request(buildApp()).get(
       "/api/v1/overrides/z1/history?fromMs=0&toMs=1000",
     );
     expect(res.status).toBe(200);
     expect(res.body).toEqual([{ id: "mo-1" }]);
-    expect(getOverrideHistoryForZone).toHaveBeenCalledWith("z1", 0, 1000);
+    expect(getOverrideHistoryForZone).toHaveBeenCalledWith(
+      "inst-1",
+      "z1",
+      0,
+      1000,
+    );
   });
 });

@@ -8,6 +8,10 @@ import { Schedule } from "~/server/database/models/schedule";
 import { ManualOverride } from "~/server/database/models/manualOverride";
 import { FlairToken } from "~/server/database/models/flairToken";
 import { SystemSettings } from "~/server/database/models/systemSettings";
+import { User } from "~/server/database/models/user";
+import { InstallationMember } from "~/server/database/models/installationMember";
+import { WebauthnCredential } from "~/server/database/models/webauthnCredential";
+import { SignupVerification } from "~/server/database/models/signupVerification";
 
 // TypeORM's own repository/query-builder APIs apply the DataSource's
 // configured `schema` automatically, but raw dataSource.query() calls
@@ -75,6 +79,10 @@ class AppDataSource {
               ManualOverride,
               FlairToken,
               SystemSettings,
+              User,
+              InstallationMember,
+              WebauthnCredential,
+              SignupVerification,
             ],
           })
         : (() => {

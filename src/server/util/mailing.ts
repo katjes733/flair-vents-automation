@@ -10,16 +10,16 @@ function getMailTransporter(): Transporter | null {
     !mailTransporter &&
     process.env.SMTP_HOST &&
     process.env.SMTP_PORT &&
-    process.env.SENDER_EMAIL &&
-    process.env.SENDER_PASSWORD
+    process.env.SMTP_SENDER_EMAIL &&
+    process.env.SMTP_SENDER_PASSWORD
   ) {
     mailTransporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT), // Typically 587 for TLS
       secure: Number(process.env.SMTP_PORT) === 465, // true for port 465
       auth: {
-        user: process.env.SENDER_EMAIL,
-        pass: process.env.SENDER_PASSWORD,
+        user: process.env.SMTP_SENDER_EMAIL,
+        pass: process.env.SMTP_SENDER_PASSWORD,
       },
     });
   }
@@ -61,7 +61,7 @@ export async function sendEmail(
   if (transporter && recipient) {
     try {
       const info = await transporter.sendMail({
-        from: `"Flair Vents Automation" <${process.env.SENDER_EMAIL || "your_email@example.com"}>`,
+        from: `"Flair Vents Automation" <${process.env.SMTP_SENDER_EMAIL || "your_email@example.com"}>`,
         to: recipient,
         subject: subject,
         text: text,

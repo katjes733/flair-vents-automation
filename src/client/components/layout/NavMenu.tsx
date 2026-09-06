@@ -4,18 +4,21 @@ import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
+import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import AppsIcon from "@mui/icons-material/Apps";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import BugReportIcon from "@mui/icons-material/BugReport";
+import AccountCircleIcon from "@mui/icons-material/AccountCircle";
 import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useCallback, useState, type MouseEvent } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { useThemeMode } from "~/client/theme/useThemeMode";
 import { useDiagnosticMode } from "~/client/theme/useDiagnosticMode";
+import { useSession } from "~/client/session/useSession";
 
 interface NavItem {
   path: string;
@@ -43,9 +46,13 @@ export default function NavMenu() {
   const theme = useTheme();
   const { mode, toggle: toggleThemeMode } = useThemeMode();
   const { diagnosticMode, toggle: toggleDiagnosticMode } = useDiagnosticMode();
+  const { user, logout } = useSession();
   const pageTitle = PAGE_TITLES[location.pathname] ?? "";
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(
+    null,
+  );
+  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(
     null,
   );
 
@@ -64,6 +71,19 @@ export default function NavMenu() {
     },
     [navigate],
   );
+
+  const handleUserMenuOpen = (event: MouseEvent<HTMLElement>) => {
+    setUserMenuAnchor(event.currentTarget);
+  };
+
+  const handleUserMenuClose = () => {
+    setUserMenuAnchor(null);
+  };
+
+  const handleLogout = () => {
+    handleUserMenuClose();
+    logout();
+  };
 
   return (
     <AppBar
@@ -84,31 +104,39 @@ export default function NavMenu() {
             alignItems: "center",
             flexShrink: 1,
             flexGrow: 0,
+            // Reserve the same width whether or not the hamburger renders,
+            // so the centered title doesn't jump between the login/signup
+            // pages (no user yet) and the rest of the app.
+            minWidth: { xs: 40, sm: 48 },
           }}
         >
-          <IconButton
-            edge="start"
-            color="inherit"
-            aria-label="menu"
-            onClick={handleMainMenuOpen}
-            sx={{ mr: 1 }}
-          >
-            <AppsIcon />
-          </IconButton>
-          <Menu
-            anchorEl={mainMenuAnchor}
-            open={Boolean(mainMenuAnchor)}
-            onClose={handleMainMenuClose}
-          >
-            {NAV_ITEMS.map((item) => (
-              <MenuItem
-                key={item.path}
-                onClick={() => handleNavigate(item.path)}
+          {user && (
+            <>
+              <IconButton
+                edge="start"
+                color="inherit"
+                aria-label="menu"
+                onClick={handleMainMenuOpen}
+                sx={{ mr: 1 }}
               >
-                {item.label}
-              </MenuItem>
-            ))}
-          </Menu>
+                <AppsIcon />
+              </IconButton>
+              <Menu
+                anchorEl={mainMenuAnchor}
+                open={Boolean(mainMenuAnchor)}
+                onClose={handleMainMenuClose}
+              >
+                {NAV_ITEMS.map((item) => (
+                  <MenuItem
+                    key={item.path}
+                    onClick={() => handleNavigate(item.path)}
+                  >
+                    {item.label}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </>
+          )}
         </Box>
         <Box
           sx={{
@@ -132,21 +160,23 @@ export default function NavMenu() {
           )}
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-          <Tooltip
-            title={
-              diagnosticMode
-                ? "Turn off Diagnostic Mode"
-                : "Turn on Diagnostic Mode"
-            }
-          >
-            <IconButton
-              color={diagnosticMode ? "primary" : "inherit"}
-              onClick={toggleDiagnosticMode}
-              aria-label="Toggle Diagnostic Mode"
+          {user && (
+            <Tooltip
+              title={
+                diagnosticMode
+                  ? "Turn off Diagnostic Mode"
+                  : "Turn on Diagnostic Mode"
+              }
             >
-              <BugReportIcon />
-            </IconButton>
-          </Tooltip>
+              <IconButton
+                color={diagnosticMode ? "primary" : "inherit"}
+                onClick={toggleDiagnosticMode}
+                aria-label="Toggle Diagnostic Mode"
+              >
+                <BugReportIcon />
+              </IconButton>
+            </Tooltip>
+          )}
           <IconButton
             color="inherit"
             onClick={toggleThemeMode}
@@ -154,6 +184,37 @@ export default function NavMenu() {
           >
             {mode === "light" ? <DarkModeIcon /> : <LightModeIcon />}
           </IconButton>
+          {user && (
+            <>
+              <Tooltip title={user.loginEmail}>
+                <IconButton
+                  color="inherit"
+                  onClick={handleUserMenuOpen}
+                  aria-label="Account menu"
+                >
+                  <AccountCircleIcon />
+                </IconButton>
+              </Tooltip>
+              <Menu
+                anchorEl={userMenuAnchor}
+                open={Boolean(userMenuAnchor)}
+                onClose={handleUserMenuClose}
+              >
+                <MenuItem disabled sx={{ opacity: "1 !important" }}>
+                  <Box>
+                    <Typography variant="body2">{user.loginEmail}</Typography>
+                    {user.installationName && (
+                      <Typography variant="caption" color="text.secondary">
+                        {user.installationName}
+                      </Typography>
+                    )}
+                  </Box>
+                </MenuItem>
+                <Divider />
+                <MenuItem onClick={handleLogout}>Log out</MenuItem>
+              </Menu>
+            </>
+          )}
         </Box>
       </Toolbar>
     </AppBar>

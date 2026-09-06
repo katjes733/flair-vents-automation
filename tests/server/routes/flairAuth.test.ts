@@ -1,12 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
 import request from "supertest";
+import { errorHandler } from "~/server/middleware/errorHandler";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 const { getFlairTokenByInstallation } = vi.hoisted(() => ({
@@ -16,10 +27,14 @@ vi.mock("~/server/util/routes/flairToken", () => ({
   getFlairTokenByInstallation,
 }));
 
-const { buildFlairAuthorizeUrl } = vi.hoisted(() => ({
+const { buildFlairAuthorizeUrl, getEnvFlairCredentials } = vi.hoisted(() => ({
   buildFlairAuthorizeUrl: vi.fn(),
+  getEnvFlairCredentials: vi.fn(),
 }));
-vi.mock("~/server/util/auth", () => ({ buildFlairAuthorizeUrl }));
+vi.mock("~/server/util/auth", () => ({
+  buildFlairAuthorizeUrl,
+  getEnvFlairCredentials,
+}));
 
 const { redisSet } = vi.hoisted(() => ({ redisSet: vi.fn() }));
 vi.mock("~/server/util/redis", () => ({ redis: { set: redisSet } }));
@@ -29,14 +44,12 @@ const { router } = await import("~/server/routes/flairAuth");
 function buildApp() {
   const app = express();
   app.use("/api/v1/flair-auth", router);
+  app.use(errorHandler);
   return app;
 }
 
 describe("GET /api/v1/flair-auth/status", () => {
   beforeEach(() => {
-    getOrCreateDefaultInstallation
-      .mockReset()
-      .mockResolvedValue({ id: "inst-1", name: "Home" });
     getFlairTokenByInstallation.mockReset();
   });
 
@@ -45,6 +58,7 @@ describe("GET /api/v1/flair-auth/status", () => {
     const res = await request(buildApp()).get("/api/v1/flair-auth/status");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ authenticated: false });
+    expect(getFlairTokenByInstallation).toHaveBeenCalledWith("inst-1");
   });
 
   it("reports authenticated when a token exists with no recorded refresh error", async () => {
@@ -78,10 +92,10 @@ describe("GET /api/v1/flair-auth/authorize", () => {
   const originalEnv = process.env.FLAIR_GRANT_MODE;
 
   beforeEach(() => {
-    getOrCreateDefaultInstallation
-      .mockReset()
-      .mockResolvedValue({ id: "inst-1", name: "Home" });
     redisSet.mockReset().mockResolvedValue("OK");
+    getEnvFlairCredentials
+      .mockReset()
+      .mockReturnValue({ clientId: "cid", clientSecret: "csecret" });
     buildFlairAuthorizeUrl
       .mockReset()
       .mockReturnValue("https://api.flair.co/oauth2/authorize?mock=1");

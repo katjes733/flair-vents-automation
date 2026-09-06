@@ -78,12 +78,13 @@ describe("runSync", () => {
     });
 
     expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
       "z1",
       expect.objectContaining({
         config: expect.objectContaining({ has_occupancy_sensor: true }),
       }),
     );
-    expect(updateZoneWithValidation.mock.calls[0][1]).not.toHaveProperty(
+    expect(updateZoneWithValidation.mock.calls[0][2]).not.toHaveProperty(
       "name",
     );
     expect(result.applied).toHaveLength(1);
@@ -119,6 +120,7 @@ describe("runSync", () => {
     });
 
     expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
       "z1",
       expect.objectContaining({
         ventHardwareType: "no_vent",
@@ -167,6 +169,7 @@ describe("runSync", () => {
     });
 
     expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
       "z1",
       expect.objectContaining({
         config: expect.objectContaining({
@@ -210,8 +213,13 @@ describe("linkRoomToZone", () => {
   });
 
   it("preserves name/schedules — the patch never includes name", async () => {
-    await linkRoomToZone({ zoneId: "z1", room: room() });
-    const patch = updateZoneWithValidation.mock.calls[0][1];
+    await linkRoomToZone({
+      installationId: "inst-1",
+      zoneId: "z1",
+      room: room(),
+    });
+    expect(updateZoneWithValidation.mock.calls[0][0]).toBe("inst-1");
+    const patch = updateZoneWithValidation.mock.calls[0][2];
     expect(patch).not.toHaveProperty("name");
     expect(patch.flairRoomId).toBe("room-1");
     expect(patch.ventHardwareType).toBe("flair_smart_vent");
@@ -225,11 +233,12 @@ describe("linkRoomToZone", () => {
   // through (never guessed here).
   it("links as manual_fixed_vent (a single vent at the given fixed position) when the room has no live vents", async () => {
     await linkRoomToZone({
+      installationId: "inst-1",
       zoneId: "z1",
       room: room({ liveVentIds: [] }),
       assumedFixedPosition: 30,
     });
-    const patch = updateZoneWithValidation.mock.calls[0][1];
+    const patch = updateZoneWithValidation.mock.calls[0][2];
     expect(patch.ventHardwareType).toBe("manual_fixed_vent");
     expect(patch.config.manual_vents).toEqual([{ position: 30 }]);
     // flair_room_id stays linked either way — it only ever anchors
@@ -238,8 +247,12 @@ describe("linkRoomToZone", () => {
   });
 
   it("clears a stale manual_vents when linking converts a zone to flair_smart_vent", async () => {
-    await linkRoomToZone({ zoneId: "z1", room: room() });
-    const patch = updateZoneWithValidation.mock.calls[0][1];
+    await linkRoomToZone({
+      installationId: "inst-1",
+      zoneId: "z1",
+      room: room(),
+    });
+    const patch = updateZoneWithValidation.mock.calls[0][2];
     expect(patch.ventHardwareType).toBe("flair_smart_vent");
     expect(patch.config.manual_vents).toEqual([]);
   });

@@ -1,10 +1,13 @@
 import {
   getTokenWithClientCredentials,
   getTokenWithRefreshToken,
+  getEnvFlairCredentials,
+  type FlairCredentials,
 } from "~/server/util/auth";
 import {
   getFlairTokenByInstallation,
   recordFlairRefreshError,
+  resolveFlairCredentials,
   upsertFlairToken,
 } from "~/server/util/routes/flairToken";
 import { recordTokenCall } from "~/server/util/flair/tokenBudget";
@@ -194,6 +197,26 @@ export class FlairApiClient implements FlairClient {
     return this.tokenRefreshPromise;
   }
 
+  // Every genuinely BYO-onboarded installation has its own client_id/
+  // client_secret (see the SaaS Transformation plan's "Flair BYO-
+  // Credentials Onboarding" section) — resolved and used here regardless
+  // of grant mode. The env-var fallback exists for exactly one legitimate
+  // case: the single pre-existing production installation, migrated
+  // rather than BYO-onboarded, whose flair_tokens row has these columns
+  // still null until its own one-time backfill runs. Logged at warn every
+  // time it's used specifically so this never becomes an unnoticed,
+  // permanent multi-tenant escape hatch.
+  private async resolveCredentials(): Promise<FlairCredentials> {
+    const perInstallation = await resolveFlairCredentials(this.installationId);
+    if (perInstallation) return perInstallation;
+    this.log.warn(
+      "No BYO Flair credentials set for this installation — falling back " +
+        "to the global FLAIR_CLIENT_ID/FLAIR_CLIENT_SECRET env vars. " +
+        "Expected only for the one migrated pre-BYO installation.",
+    );
+    return getEnvFlairCredentials();
+  }
+
   private async mintOrRefreshToken(): Promise<string> {
     const stored = await getFlairTokenByInstallation(this.installationId);
     if (
@@ -206,13 +229,14 @@ export class FlairApiClient implements FlairClient {
       return this.accessToken;
     }
 
+    const credentials = await this.resolveCredentials();
     const grantMode = process.env.FLAIR_GRANT_MODE || "client_credentials";
     const response =
       grantMode === "refresh_token" && stored?.refreshToken
-        ? await getTokenWithRefreshToken(stored.refreshToken)
-        : await getTokenWithClientCredentials();
+        ? await getTokenWithRefreshToken(credentials, stored.refreshToken)
+        : await getTokenWithClientCredentials(credentials);
 
-    const callsToday = await recordTokenCall();
+    const callsToday = await recordTokenCall(this.installationId);
     this.log.debug(
       { grant_type: grantMode, calls_today: callsToday },
       "Flair token call recorded",

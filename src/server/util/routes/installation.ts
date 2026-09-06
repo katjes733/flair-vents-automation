@@ -31,6 +31,44 @@ export async function getOrCreateDefaultInstallation(
   return { id: row.id, name: row.name, flairStructureId: null };
 }
 
+// Every installation the control loop should actually tick — filters out
+// one still missing a linked Flair structure (a stale pre-auth row, or a
+// signup that never finished connecting Flair), the same gate every
+// caller previously had to apply itself against a single hardcoded
+// installation. See scheduler.ts's own "Migration Path" comment — this is
+// the minimal fix that makes ticking correct for however many
+// installations exist today; genuinely distributing that work across
+// processes (BullMQ) is still the separate, deferred horizontal-scaling
+// stage.
+export async function getActiveInstallations(): Promise<InstallationData[]> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "Installation",
+  );
+  const rows = await repo.find();
+  return rows
+    .filter((row) => row.flair_structure_id)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      flairStructureId: row.flair_structure_id,
+    }));
+}
+
+export async function getInstallationById(
+  id: string,
+): Promise<InstallationData | null> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "Installation",
+  );
+  const row = await repo.findOneBy({ id });
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    flairStructureId: row.flair_structure_id,
+  };
+}
+
 export async function setInstallationFlairStructureId(
   installationId: string,
   flairStructureId: string,

@@ -4,11 +4,21 @@ import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 import { resolveSystemSettings } from "~/shared/schemas/systemSettings";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 const { getSystemSettings } = vi.hoisted(() => ({
@@ -34,19 +44,17 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
-    .mockReset()
-    .mockResolvedValue({ id: "inst-1" });
   getSystemSettings.mockReset();
   updateSettingsForInstallation.mockReset();
 });
 
 describe("GET /api/v1/settings", () => {
-  it("returns the resolved config", async () => {
+  it("returns the resolved config for the caller's own installation", async () => {
     getSystemSettings.mockResolvedValue(resolveSystemSettings({}));
     const res = await request(buildApp()).get("/api/v1/settings");
     expect(res.status).toBe(200);
     expect(res.body.control_tick_interval_seconds).toBe(60);
+    expect(getSystemSettings).toHaveBeenCalledWith("inst-1");
   });
 });
 

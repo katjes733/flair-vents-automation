@@ -81,3 +81,56 @@ export async function getFlairTokenByInstallation(
     lastRefreshErrorAt: record.last_refresh_error_at,
   };
 }
+
+export interface FlairCredentials {
+  clientId: string;
+  clientSecret: string;
+}
+
+// Reads and decrypts this installation's own BYO Flair Client ID/Secret —
+// null if this installation hasn't set them (only the one migrated
+// pre-existing production installation should ever legitimately be in
+// that state; see FlairApiClient's own fallback-with-a-warning handling
+// of that case in src/server/util/flair/client.ts).
+export async function resolveFlairCredentials(
+  installationId: string,
+): Promise<FlairCredentials | null> {
+  const repo = (await AppDataSource.getInstance()).getRepository("FlairToken");
+  const record = await repo.findOne({
+    where: { installation_id: installationId },
+  });
+  if (!record?.client_id || !record?.client_secret) return null;
+  return {
+    clientId: record.client_id,
+    clientSecret: decryptIfEncrypted(record.client_secret),
+  };
+}
+
+// Sets (or replaces) an installation's own BYO Flair Client ID/Secret —
+// called once, during onboarding, after a live token-mint call with the
+// submitted credentials has already succeeded (see the SaaS Transformation
+// plan's "Flair BYO-Credentials Onboarding" section for why validation
+// comes first). Deliberately separate from upsertFlairToken(): that
+// function is called on every token refresh and has no reason to touch
+// these long-lived credential fields at all.
+export async function setFlairCredentials(opts: {
+  installationId: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository("FlairToken");
+  const existing = await repo.findOne({
+    where: { installation_id: opts.installationId },
+  });
+  const fields = {
+    client_id: opts.clientId,
+    client_secret: encrypt(opts.clientSecret),
+  };
+  if (existing) {
+    await repo.update(existing.id, { ...fields, ...touch() });
+  } else {
+    await repo.insert(
+      withTimestamps({ installation_id: opts.installationId, ...fields }),
+    );
+  }
+}

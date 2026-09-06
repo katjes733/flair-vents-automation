@@ -6,6 +6,11 @@ import NavMenu from "~/client/components/layout/NavMenu";
 import MainContainer from "~/client/components/layout/MainContainer";
 import Footer from "~/client/components/layout/Footer";
 import { NotificationProvider } from "~/client/components/notification/NotificationContext";
+import { SessionProvider } from "~/client/session/SessionProvider";
+import ProtectedRoute from "~/client/session/ProtectedRoute";
+import GuestOnlyRoute from "~/client/session/GuestOnlyRoute";
+import LoginPage from "~/client/components/auth/LoginPage";
+import SignupPage from "~/client/components/auth/SignupPage";
 import DashboardPage from "~/client/components/dashboard/DashboardPage";
 import SchedulesPage from "~/client/components/dashboard/SchedulesPage";
 import SettingsPage from "~/client/components/settings/SettingsPage";
@@ -19,22 +24,79 @@ function App() {
       <DiagnosticModeProvider>
         <DisplayUnitProvider>
           <NotificationProvider>
-            <NavMenu />
-            <MainContainer>
-              <Routes>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/schedules" element={<SchedulesPage />} />
-                <Route path="/diagnostics" element={<DiagnosticsPage />} />
-                <Route path="/telemetry" element={<TelemetryPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route
-                  path="/system-parameters"
-                  element={<SystemParametersPage />}
-                />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </MainContainer>
-            <Footer />
+            <SessionProvider>
+              <NavMenu />
+              <MainContainer>
+                <Routes>
+                  <Route
+                    path="/login"
+                    element={
+                      <GuestOnlyRoute>
+                        <LoginPage />
+                      </GuestOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/signup"
+                    element={
+                      <GuestOnlyRoute>
+                        <SignupPage />
+                      </GuestOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/"
+                    element={
+                      <ProtectedRoute>
+                        <DashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/schedules"
+                    element={
+                      <ProtectedRoute>
+                        <SchedulesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/diagnostics"
+                    element={
+                      <ProtectedRoute>
+                        <DiagnosticsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/telemetry"
+                    element={
+                      <ProtectedRoute>
+                        <TelemetryPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/settings"
+                    element={
+                      <ProtectedRoute>
+                        <SettingsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/system-parameters"
+                    element={
+                      <ProtectedRoute>
+                        <SystemParametersPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </MainContainer>
+              <Footer />
+            </SessionProvider>
           </NotificationProvider>
         </DisplayUnitProvider>
       </DiagnosticModeProvider>

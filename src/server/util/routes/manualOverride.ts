@@ -14,6 +14,10 @@ export interface ManualOverrideRow {
   revokedAtMs: number | null;
 }
 
+export interface ManualOverrideRowWithInstallation extends ManualOverrideRow {
+  installationId: string;
+}
+
 interface RawRow {
   id: string;
   zone_id: string;
@@ -21,6 +25,33 @@ interface RawRow {
   creation_time: Date;
   expires_at: Date | null;
   revoked_at: Date | null;
+}
+
+interface RawRowWithInstallation extends RawRow {
+  installation_id: string;
+}
+
+// The single-row-by-id lookup every ownership check needs — nothing
+// existed before this (only the DISTINCT-ON-per-zone and per-zone-range
+// queries above), which is exactly why revokeOverride() had no way to
+// verify a caller's installation before this migration.
+export async function getManualOverrideById(
+  id: string,
+): Promise<ManualOverrideRowWithInstallation | null> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "ManualOverride",
+  );
+  const row = (await repo.findOneBy({ id })) as RawRowWithInstallation | null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    installationId: row.installation_id,
+    zoneId: row.zone_id,
+    config: resolveManualOverrideConfig(row.config),
+    createdAtMs: row.creation_time.getTime(),
+    expiresAtMs: row.expires_at ? row.expires_at.getTime() : null,
+    revokedAtMs: row.revoked_at ? row.revoked_at.getTime() : null,
+  };
 }
 
 /**
