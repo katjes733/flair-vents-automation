@@ -8,6 +8,7 @@ import type {
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import DiagnosticTile from "~/client/components/diagnostics/DiagnosticTile";
 import { computeFaultPeriodsForAirHandler } from "~/client/components/telemetry/chartData";
+import { formatChartDateTime } from "~/client/components/shared/charts/chartTime";
 
 interface EquipmentFaultLogProps {
   airHandlers: AirHandler[];
@@ -98,10 +99,16 @@ export default function EquipmentFaultLog({
                     key={`${historyAirHandlerId}:${i}`}
                     label={historyAirHandlerName ?? ""}
                     value={`${Math.round((p.endMs - p.startMs) / 60_000)}m`}
+                    // The actual end time, not a relative "Xm ago" — a
+                    // relative value is hard to place ("was that during
+                    // the gaming session?") and goes stale the moment you
+                    // stop looking at the page; the absolute time answers
+                    // both instantly and matches the chart's own x-axis
+                    // convention (formatChartTime/formatChartDateTime).
                     caption={
                       endedAgoMs <= 0
                         ? "ongoing"
-                        : `ended ${Math.round(endedAgoMs / 60_000)}m ago`
+                        : `ended ${formatChartDateTime(p.endMs)}`
                     }
                     status="warning"
                   />

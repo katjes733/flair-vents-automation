@@ -10,6 +10,7 @@ import {
   computeDegradedPeriodsForVent,
   findLatestVentName,
 } from "~/client/components/telemetry/chartData";
+import { formatChartDateTime } from "~/client/components/shared/charts/chartTime";
 
 interface DegradedVentHistoryProps {
   zones: Zone[];
@@ -79,6 +80,7 @@ export default function DegradedVentHistory({
               key: `${zone.id}:${v.flair_vent_id}:${i}`,
               label,
               durationMs: p.endMs - p.startMs,
+              endMs: p.endMs,
               endedAgoMs:
                 historyPoints[historyPoints.length - 1].loggedAtMs - p.endMs,
             }));
@@ -134,7 +136,7 @@ export default function DegradedVentHistory({
                   caption={
                     tile.endedAgoMs <= 0
                       ? "ongoing"
-                      : `ended ${Math.round(tile.endedAgoMs / 60_000)}m ago`
+                      : `ended ${formatChartDateTime(tile.endMs)}`
                   }
                   status="warning"
                 />

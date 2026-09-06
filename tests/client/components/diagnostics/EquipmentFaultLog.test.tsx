@@ -8,6 +8,7 @@ import type {
 } from "~/client/api/airHandlersApi";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import EquipmentFaultLog from "~/client/components/diagnostics/EquipmentFaultLog";
+import { formatChartDateTime } from "~/client/components/shared/charts/chartTime";
 
 afterEach(cleanup);
 
@@ -117,6 +118,33 @@ describe("EquipmentFaultLog", () => {
       screen.getByText("Fault Periods (this window) — Upstairs"),
     ).toBeInTheDocument();
     expect(screen.getByText("1m")).toBeInTheDocument();
+  });
+
+  // Regression test: a completed fault period used to show a raw, unhelpful
+  // "ended 285m ago" instead of the actual end time — hard to place against
+  // real-world context and stale the moment the page sits open. Fixed to
+  // show the absolute time, matching the chart's own axis convention.
+  it("shows the actual end time for a completed fault period, not a relative 'Xm ago'", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <EquipmentFaultLog
+          airHandlers={[AIR_HANDLER]}
+          tickDecisionsByAirHandlerId={new Map()}
+          historyPoints={[
+            makeHistoryPoint(0, false),
+            makeHistoryPoint(60_000, true),
+            makeHistoryPoint(120_000, false),
+            makeHistoryPoint(180_000, false),
+          ]}
+          historyAirHandlerId="ah-1"
+          historyAirHandlerName="Upstairs"
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.getByText(`ended ${formatChartDateTime(120_000)}`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/ago/)).not.toBeInTheDocument();
   });
 
   it("hides the current-status section when hideCurrentStatus is set", () => {
