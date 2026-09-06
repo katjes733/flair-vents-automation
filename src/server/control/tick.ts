@@ -94,6 +94,7 @@ import {
   logEmergencyFailSafeCleared,
   logFlairSetpointWriteFailing,
   logDuctAirflowAnomalyDetected,
+  logDuctAirflowAnomalyCleared,
   logVentReconciled,
   logVentDegraded,
   logControlTickCompleted,
@@ -1151,19 +1152,38 @@ export async function runTick(
       ductDeltaThresholdC: ctx.settings.equipment_fault_duct_delta_threshold_c,
       zones: anomalyZones,
     });
-    for (const a of anomalies) {
-      const trackingKey = reconciliationKey(a.zoneId, a.ventId ?? "");
+    // Iterate every controllable vent this tick — not just the ones
+    // detectDuctAirflowAnomaly returns (which only ever covers vents
+    // currently *failing* the differential). A vent that recovers by
+    // jumping straight from anomalous to fully passing in one tick (the
+    // physically typical way a duct-thermal-lag anomaly actually resolves)
+    // would otherwise never appear in `anomalies` again at all, so its
+    // tracked "since" timestamp and alert-dedup key would never get
+    // cleared — inflating the next unrelated episode's apparent duration,
+    // and potentially suppressing a genuinely new alert forever (alertOnce's
+    // Redis key has no TTL; only clearAlert removes it). A vent whose duct
+    // reading is currently stale/missing is skipped entirely rather than
+    // treated as "cleared" — indeterminate data shouldn't erase an
+    // in-progress episode's timer either.
+    const anomalyByKey = new Map(
+      anomalies.map((a) => [reconciliationKey(a.zoneId, a.ventId ?? ""), a]),
+    );
+    for (const zone of anomalyZones) {
+      if (zone.ductReadingStale || zone.ductTemperatureC === null) continue;
+      const trackingKey = reconciliationKey(zone.zoneId, zone.ventId ?? "");
       const anomalyAlertKey = `alert:ductAnomaly:${trackingKey}`;
       const demandTracking =
         await deps.zoneDemandTrackingStore.get(trackingKey);
-      if (a.anomalous) {
+      const ductDeltaC = zone.roomTemperatureC - zone.ductTemperatureC;
+      const isAnomalous = anomalyByKey.get(trackingKey)?.anomalous ?? false;
+      if (isAnomalous) {
         logDuctAirflowAnomalyDetected(log, {
           air_handler_id: airHandler.id,
-          zone_id: a.zoneId,
-          vent_id: a.ventId ?? "",
-          duct_delta_c: null,
+          zone_id: zone.zoneId,
+          vent_id: zone.ventId ?? "",
+          duct_delta_c: ductDeltaC,
           commanded_position_pct:
-            pipelineResult.commandedPositions[a.zoneId] ?? 0,
+            pipelineResult.commandedPositions[zone.zoneId] ?? 0,
         });
         const since = demandTracking.ductAnomalySinceMs ?? startedAtMs;
         const anomalyMinutes = (startedAtMs - since) / 60000;
@@ -1173,7 +1193,7 @@ export async function runTick(
         });
         if (anomalyMinutes >= ctx.settings.duct_anomaly_alert_minutes) {
           const zoneName =
-            zones.find((z) => z.id === a.zoneId)?.name ?? a.zoneId;
+            zones.find((z) => z.id === zone.zoneId)?.name ?? zone.zoneId;
           await deps.alerting.alertOnce({
             key: anomalyAlertKey,
             subject: `${zoneName}: isolated duct airflow anomaly`,
@@ -1182,7 +1202,15 @@ export async function runTick(
             nowMs: startedAtMs,
           });
         }
-      } else {
+      } else if (demandTracking.ductAnomalySinceMs != null) {
+        logDuctAirflowAnomalyCleared(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zone.zoneId,
+          vent_id: zone.ventId ?? "",
+          duct_delta_c: ductDeltaC,
+          commanded_position_pct:
+            pipelineResult.commandedPositions[zone.zoneId] ?? 0,
+        });
         await deps.zoneDemandTrackingStore.set(trackingKey, {
           ...demandTracking,
           ductAnomalySinceMs: null,

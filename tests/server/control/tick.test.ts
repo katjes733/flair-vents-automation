@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { logSpy } from "../../setup";
 import {
   runTick,
   type TickContext,
@@ -1762,6 +1763,170 @@ describe("runTick — multi-vent zones", () => {
     const passingTracking = await deps.zoneDemandTrackingStore.get("z1:vent-2");
     expect(failingTracking.ductAnomalySinceMs).not.toBeNull();
     expect(passingTracking.ductAnomalySinceMs).toBeNull();
+  });
+
+  it("logs the real room-vs-duct delta on a detected anomaly, not a hardcoded null", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const deps = makeDeps(client, new Map(), NOW);
+
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("warn")).toHaveBeenCalledWith(
+      expect.objectContaining({
+        zone_id: "z1",
+        vent_id: "vent-1",
+        duct_delta_c: 1,
+      }),
+      "Duct airflow anomaly detected",
+    );
+  });
+
+  it("logs 'Duct airflow anomaly cleared' once a previously-anomalous vent stops being anomalous", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+    expect(logSpy("info")).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Duct airflow anomaly cleared",
+    );
+
+    // Same vent, still failing the differential (delta 1°C, still below
+    // the threshold), but the zone is now satisfied (23°C is at/under the
+    // 23.89°C fallback cool setpoint) — no longer "anomalous" per
+    // detectDuctAirflowAnomaly's own demanding gate, so the tracked
+    // episode should end here.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23,
+        ductC: 22,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 23,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("info")).toHaveBeenCalledWith(
+      expect.objectContaining({ zone_id: "z1", vent_id: "vent-1" }),
+      "Duct airflow anomaly cleared",
+    );
+  });
+
+  it("clears a tracked anomaly when the vent recovers by jumping straight to passing the differential (not just becoming non-demanding) — the fix for the never-in-`anomalies`-again gap", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      }, // fails the differential — anomalous
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      }, // passes
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+    const trackedWhileAnomalous =
+      await deps.zoneDemandTrackingStore.get("z1:vent-1");
+    expect(trackedWhileAnomalous.ductAnomalySinceMs).not.toBeNull();
+
+    // Same zone, still demanding (30°C, unchanged) — but vent-1's own duct
+    // now shows the expected differential too (the duct physically caught
+    // up), so it drops out of detectDuctAirflowAnomaly's `failing` list
+    // entirely rather than reappearing with anomalous: false.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("info")).toHaveBeenCalledWith(
+      expect.objectContaining({ zone_id: "z1", vent_id: "vent-1" }),
+      "Duct airflow anomaly cleared",
+    );
+    const trackedAfterRecovery =
+      await deps.zoneDemandTrackingStore.get("z1:vent-1");
+    expect(trackedAfterRecovery.ductAnomalySinceMs).toBeNull();
   });
 });
 
