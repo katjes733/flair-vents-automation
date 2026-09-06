@@ -24,6 +24,7 @@ import ZoneDetailDialog from "~/client/components/dashboard/ZoneDetailDialog";
 import TickDecisionInspector from "~/client/components/dashboard/TickDecisionInspector";
 import SyncZonesDialog from "~/client/components/dashboard/SyncZonesDialog";
 import { DiagnosticOnly } from "~/client/components/shared/DiagnosticOnly";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 // Matches the control loop's own default tick cadence (60s) — polling
 // faster wouldn't show anything new, since the tick decision cache is
@@ -31,6 +32,11 @@ import { DiagnosticOnly } from "~/client/components/shared/DiagnosticOnly";
 const POLL_INTERVAL_MS = 15_000;
 
 export default function DashboardPage() {
+  const canCreateAirHandler = useCanWrite("dashboard.airHandler.create");
+  const canEditAirHandler = useCanWrite("dashboard.airHandler.edit");
+  const canSyncZones = useCanWrite("dashboard.airHandler.syncZones");
+  const canCreateZone = useCanWrite("dashboard.zone.create");
+
   const [airHandlers, setAirHandlers] = useState<AirHandler[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [overrides, setOverrides] = useState<ManualOverride[]>([]);
@@ -147,6 +153,7 @@ export default function DashboardPage() {
         <Button
           size="small"
           startIcon={<AddIcon />}
+          disabled={!canCreateAirHandler}
           onClick={() => setAddAirHandlerOpen(true)}
         >
           Add air handler
@@ -154,7 +161,7 @@ export default function DashboardPage() {
         <Button
           size="small"
           startIcon={<AddIcon />}
-          disabled={airHandlers.length === 0}
+          disabled={airHandlers.length === 0 || !canCreateZone}
           onClick={() => setAddZoneOpen(true)}
         >
           Add zone
@@ -186,13 +193,14 @@ export default function DashboardPage() {
             >
               <Button
                 size="small"
+                disabled={!canEditAirHandler}
                 onClick={() => setEditingAirHandler(airHandler)}
               >
                 Edit
               </Button>
               <Button
                 size="small"
-                disabled={!airHandler.flairZoneId}
+                disabled={!airHandler.flairZoneId || !canSyncZones}
                 onClick={() => setSyncingAirHandlerId(airHandler.id)}
               >
                 Sync with Flair

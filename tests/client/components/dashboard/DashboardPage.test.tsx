@@ -55,6 +55,9 @@ vi.mock("~/client/api/settingsApi", async (importOriginal) => {
   return { ...actual, fetchSettings, updateSettings };
 });
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: DashboardPage } =
   await import("~/client/components/dashboard/DashboardPage");
 const { lightStatusPalette } = await import("~/client/theme/statusPalette");
@@ -125,6 +128,7 @@ function renderDashboard() {
 
 describe("DashboardPage", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     fetchAirHandlers.mockReset();
     fetchAirHandlerTickDecision.mockReset().mockResolvedValue(null);
     fetchAvailableFlairZones.mockReset().mockResolvedValue([]);
@@ -154,6 +158,29 @@ describe("DashboardPage", () => {
     await screen.findByText("Upstairs");
     expect(screen.getByText("Bedroom")).toBeInTheDocument();
     expect(fetchAirHandlerTickDecision).toHaveBeenCalledWith("ah-1");
+  });
+
+  it("disables Add air handler/Add zone/Edit/Sync for a read profile", async () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    fetchAirHandlers.mockResolvedValue([
+      { ...AIR_HANDLER, flairZoneId: "flair-zone-1" },
+    ]);
+    fetchZones.mockResolvedValue([makeZone()]);
+    renderDashboard();
+
+    await screen.findByText("Upstairs");
+    expect(
+      screen.getByRole("button", { name: "Add air handler" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add zone" })).toBeDisabled();
+    // "Edit" is ambiguous here — the air handler card and its zone's own
+    // ZoneCard both have one — both must be disabled for a read profile.
+    for (const editButton of screen.getAllByRole("button", { name: "Edit" })) {
+      expect(editButton).toBeDisabled();
+    }
+    expect(
+      screen.getByRole("button", { name: "Sync with Flair" }),
+    ).toBeDisabled();
   });
 
   it("promoting an air handler PATCHes live_air_handler_ids with just that id added, preserving any others already live", async () => {

@@ -12,6 +12,9 @@ afterEach(cleanup);
 const { fetchSettings } = vi.hoisted(() => ({ fetchSettings: vi.fn() }));
 vi.mock("~/client/api/settingsApi", () => ({ fetchSettings }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: EventEditorDialog } =
   await import("~/client/components/dashboard/EventEditorDialog");
 
@@ -117,6 +120,7 @@ async function addRoom(name: string): Promise<void> {
 
 describe("EventEditorDialog", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     localStorage.setItem("displayTemperatureUnit", "F");
     fetchSettings.mockReset().mockResolvedValue({
       display_temperature_unit: "F",
@@ -142,6 +146,12 @@ describe("EventEditorDialog", () => {
     expect(
       screen.getByRole("combobox", { name: "Add a room to this event" }),
     ).toBeInTheDocument();
+  });
+
+  it("disables Add event for a read profile even when otherwise valid", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderDialog();
+    expect(screen.getByRole("button", { name: "Add event" })).toBeDisabled();
   });
 
   it("Save is disabled while start and end time are equal", () => {

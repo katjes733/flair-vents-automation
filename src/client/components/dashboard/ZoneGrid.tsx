@@ -10,6 +10,7 @@ import {
   computeReorderedIndex,
   type DropTarget,
 } from "~/client/components/shared/reorderDragLogic";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface ZoneGridProps {
   zones: Zone[];
@@ -59,6 +60,9 @@ export default function ZoneGrid({
   onChanged,
   onEdit,
 }: ZoneGridProps) {
+  // Reordering persists via the same PATCH `updateZone` uses for any other
+  // zone edit — gated on the identical permission, not a dedicated leaf.
+  const canReorder = useCanWrite("dashboard.zone.edit");
   const [ordered, setOrdered] = useState(() => sortedByDisplayOrder(zones));
   // The `zones` prop's own key as of the last render we reacted to — NOT
   // the same thing as `ordered`'s own key. Comparing against the prop's
@@ -165,17 +169,20 @@ export default function ZoneGrid({
           <Grid
             key={zone.id}
             size={{ xs: 12, sm: 6, md: 4 }}
-            draggable
-            onDragStart={() => setDraggingId(zone.id)}
-            onDragOver={(e) => handleDragOver(e, index)}
-            onDrop={handleDrop}
-            onDragEnd={endDrag}
+            draggable={canReorder}
+            onDragStart={canReorder ? () => setDraggingId(zone.id) : undefined}
+            onDragOver={
+              canReorder ? (e) => handleDragOver(e, index) : undefined
+            }
+            onDrop={canReorder ? handleDrop : undefined}
+            onDragEnd={canReorder ? endDrag : undefined}
             sx={{
               position: "relative",
               opacity: draggingId === zone.id ? 0.5 : 1,
             }}
           >
-            {draggingId &&
+            {canReorder &&
+              draggingId &&
               draggingId !== zone.id &&
               dropTarget?.index === index && (
                 <Box
@@ -201,8 +208,8 @@ export default function ZoneGrid({
               activeOverride={activeOverridesByZoneId.get(zone.id)}
               onChanged={onChanged}
               onEdit={onEdit}
-              onMoveUp={() => move(index, -1)}
-              onMoveDown={() => move(index, 1)}
+              onMoveUp={canReorder ? () => move(index, -1) : undefined}
+              onMoveDown={canReorder ? () => move(index, 1) : undefined}
               canMoveUp={index > 0}
               canMoveDown={index < ordered.length - 1}
             />

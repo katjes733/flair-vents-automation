@@ -14,6 +14,9 @@ vi.mock("~/client/api/zonesApi", async (importOriginal) => {
   return { ...actual, createZone };
 });
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: AddZoneDialog } =
   await import("~/client/components/dashboard/AddZoneDialog");
 
@@ -51,6 +54,19 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn(), open = true) {
 describe("AddZoneDialog", () => {
   beforeEach(() => {
     createZone.mockReset().mockResolvedValue({ id: "z1" });
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
+  });
+
+  it("keeps Create disabled for a read profile even with valid fields", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Office" },
+    });
+    fireEvent.change(screen.getByLabelText("Open Position 1"), {
+      target: { value: "40" },
+    });
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
   });
 
   // A zone's Flair vent identity only ever arrives via "Sync with Flair" —

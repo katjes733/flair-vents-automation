@@ -30,6 +30,7 @@ import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import ScheduleRoomsOverview from "~/client/components/dashboard/ScheduleRoomsOverview";
 import EventEditorDialog from "~/client/components/dashboard/EventEditorDialog";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 // The event's own already-validated fields, minus the two server-only
 // timestamps — exactly what a PATCH's whole-array `events` replace needs
@@ -62,6 +63,9 @@ function toEventRequest(event: ScheduleEvent): ScheduleEventRequest {
  */
 export default function SchedulesPage() {
   const { showNotification } = useNotification();
+  const canCreateSchedule = useCanWrite("schedules.create");
+  const canEditSchedule = useCanWrite("schedules.edit");
+  const canDeleteSchedule = useCanWrite("schedules.delete");
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [airHandlers, setAirHandlers] = useState<AirHandler[]>([]);
@@ -213,7 +217,11 @@ export default function SchedulesPage() {
         <Typography variant="h5" fontWeight={600}>
           Schedules
         </Typography>
-        <Button startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
+        <Button
+          startIcon={<AddIcon />}
+          disabled={!canCreateSchedule}
+          onClick={() => setAddOpen(true)}
+        >
           Add schedule
         </Button>
       </Box>
@@ -258,6 +266,7 @@ export default function SchedulesPage() {
                   control={
                     <Switch
                       checked={selected.config.enabled}
+                      disabled={!canEditSchedule}
                       onChange={(e) => handleToggleEnabled(e.target.checked)}
                     />
                   }
@@ -266,6 +275,7 @@ export default function SchedulesPage() {
                 <Button
                   color="error"
                   size="small"
+                  disabled={!canDeleteSchedule}
                   onClick={() => setDeleteConfirmOpen(true)}
                 >
                   Delete schedule
@@ -311,7 +321,7 @@ export default function SchedulesPage() {
           <Button onClick={() => setAddOpen(false)}>Cancel</Button>
           <Button
             variant="contained"
-            disabled={!newName.trim()}
+            disabled={!newName.trim() || !canCreateSchedule}
             onClick={handleCreateSchedule}
           >
             Create
@@ -335,6 +345,7 @@ export default function SchedulesPage() {
           <Button
             color="error"
             variant="contained"
+            disabled={!canDeleteSchedule}
             onClick={handleDeleteSchedule}
           >
             Delete
@@ -351,7 +362,9 @@ export default function SchedulesPage() {
           otherEvents={selected.events.filter((e) => e.id !== editingEvent?.id)}
           onClose={() => setEventEditorOpen(false)}
           onSave={handleSaveEvent}
-          onDelete={editingEvent ? handleDeleteEvent : undefined}
+          onDelete={
+            editingEvent && canDeleteSchedule ? handleDeleteEvent : undefined
+          }
         />
       )}
     </Container>

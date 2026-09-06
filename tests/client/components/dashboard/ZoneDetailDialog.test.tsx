@@ -18,6 +18,9 @@ vi.mock("~/client/api/zonesApi", async (importOriginal) => {
   return { ...actual, updateZone, deleteZone };
 });
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: ZoneDetailDialog } =
   await import("~/client/components/dashboard/ZoneDetailDialog");
 
@@ -85,6 +88,7 @@ function renderDialog(
 
 describe("ZoneDetailDialog", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     updateZone.mockReset().mockResolvedValue({});
     deleteZone.mockReset().mockResolvedValue(undefined);
   });
@@ -92,6 +96,13 @@ describe("ZoneDetailDialog", () => {
   it("renders nothing when no zone is selected", () => {
     const { container } = renderDialog(null);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("disables Save and Delete for a read profile", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderDialog(makeZone());
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 
   it("seeds the form from the zone's existing config", () => {

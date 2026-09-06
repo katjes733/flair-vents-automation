@@ -29,6 +29,9 @@ const { fetchSettings, updateSettings, fetchZones } = vi.hoisted(() => ({
 vi.mock("~/client/api/settingsApi", () => ({ fetchSettings, updateSettings }));
 vi.mock("~/client/api/zonesApi", () => ({ fetchZones }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: SystemParametersPage } =
   await import("~/client/components/settings/SystemParametersPage");
 
@@ -49,6 +52,7 @@ function renderPage() {
 
 describe("SystemParametersPage", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     localStorage.setItem("displayTemperatureUnit", "F");
     localStorage.setItem("displayAirflowUnit", "Lps");
     fetchSettings.mockReset().mockResolvedValue(DEFAULT_CONFIG);
@@ -125,6 +129,14 @@ describe("SystemParametersPage", () => {
         name: "Reset Away cooling setpoint (°F) to default",
       }),
     ).not.toBeDisabled();
+  });
+
+  it("keeps Save disabled for a read profile even after editing a field", async () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderPage();
+    const field = await screen.findByLabelText("Staleness threshold (min)");
+    fireEvent.change(field, { target: { value: "20" } });
+    expect(screen.getByRole("button", { name: "Save (1)" })).toBeDisabled();
   });
 
   it("editing a field enables Save and its own reset button; Reset clears both", async () => {

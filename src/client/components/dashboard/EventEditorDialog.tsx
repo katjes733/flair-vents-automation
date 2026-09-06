@@ -45,6 +45,7 @@ import {
   type DropTarget,
 } from "~/client/components/shared/reorderDragLogic";
 import { findOverlappingEvents } from "~/client/components/dashboard/scheduleOverlap";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -160,6 +161,7 @@ export default function EventEditorDialog({
   onDelete,
 }: EventEditorDialogProps) {
   const { temperatureUnit } = useDisplayUnit();
+  const canSaveEvent = useCanWrite("schedules.dialog.eventEditor.save");
 
   const [mode, setMode] = useState<"active" | "inactive">(
     event?.mode ?? "active",
@@ -772,7 +774,12 @@ export default function EventEditorDialog({
             <Button onClick={() => setConfirmingOverlapSave(false)}>
               Back
             </Button>
-            <Button color="warning" variant="contained" onClick={performSave}>
+            <Button
+              color="warning"
+              variant="contained"
+              disabled={!canSaveEvent}
+              onClick={performSave}
+            >
               Save anyway
             </Button>
           </>
@@ -790,7 +797,7 @@ export default function EventEditorDialog({
             <Button onClick={onClose}>Cancel</Button>
             <Button
               variant="contained"
-              disabled={!canSave}
+              disabled={!canSave || !canSaveEvent}
               onClick={handleSaveClick}
             >
               {event ? "Save event" : "Add event"}

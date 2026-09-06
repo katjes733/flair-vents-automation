@@ -11,6 +11,7 @@ import { createAirHandler } from "~/client/api/airHandlersApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import FlairZoneSelect from "~/client/components/shared/FlairZoneSelect";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface AddAirHandlerDialogProps {
   open: boolean;
@@ -32,6 +33,7 @@ export default function AddAirHandlerDialog({
   onCreated,
 }: AddAirHandlerDialogProps) {
   const { showNotification } = useNotification();
+  const canCreate = useCanWrite("dashboard.airHandler.create");
   const [name, setName] = useState("");
   const [tonnageTons, setTonnageTons] = useState("");
   const [flairZoneId, setFlairZoneId] = useState("");
@@ -110,7 +112,7 @@ export default function AddAirHandlerDialog({
         <Button onClick={onClose}>Cancel</Button>
         <Button
           variant="contained"
-          disabled={!name.trim() || submitting}
+          disabled={!name.trim() || submitting || !canCreate}
           onClick={handleSubmit}
         >
           Create

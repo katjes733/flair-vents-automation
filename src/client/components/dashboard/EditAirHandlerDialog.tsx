@@ -17,6 +17,7 @@ import {
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import FlairZoneSelect from "~/client/components/shared/FlairZoneSelect";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface EditAirHandlerDialogProps {
   open: boolean;
@@ -42,6 +43,8 @@ export default function EditAirHandlerDialog({
   onDeleted,
 }: EditAirHandlerDialogProps) {
   const { showNotification } = useNotification();
+  const canEdit = useCanWrite("dashboard.airHandler.edit");
+  const canDelete = useCanWrite("dashboard.airHandler.delete");
   const [name, setName] = useState("");
   const [tonnageTons, setTonnageTons] = useState("");
   const [flairZoneId, setFlairZoneId] = useState("");
@@ -157,14 +160,18 @@ export default function EditAirHandlerDialog({
           </Stack>
         </DialogContent>
         <DialogActions sx={{ justifyContent: "space-between", px: 3 }}>
-          <Button color="error" onClick={() => setConfirmDeleteOpen(true)}>
+          <Button
+            color="error"
+            disabled={!canDelete}
+            onClick={() => setConfirmDeleteOpen(true)}
+          >
             Delete
           </Button>
           <Stack direction="row" spacing={1}>
             <Button onClick={onClose}>Cancel</Button>
             <Button
               variant="contained"
-              disabled={!name.trim() || submitting}
+              disabled={!name.trim() || submitting || !canEdit}
               onClick={handleSave}
             >
               Save
@@ -194,7 +201,7 @@ export default function EditAirHandlerDialog({
           <Button
             color="error"
             variant="contained"
-            disabled={submitting}
+            disabled={submitting || !canDelete}
             onClick={handleDelete}
           >
             Delete

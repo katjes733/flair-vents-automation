@@ -24,6 +24,7 @@ import RepeatableManualVentField, {
   type ManualVentRow,
 } from "~/client/components/shared/RepeatableManualVentField";
 import { isValidManualVentPosition } from "~/client/components/shared/manualVentValidation";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 // A zone's Flair vent identity only ever arrives via "Sync with Flair" —
 // a Flair vent id is Flair's own opaque identifier, never something a
@@ -51,6 +52,7 @@ export default function AddZoneDialog({
 }: AddZoneDialogProps) {
   const { showNotification } = useNotification();
   const { airflowUnit } = useDisplayUnit();
+  const canCreate = useCanWrite("dashboard.zone.create");
   const [name, setName] = useState("");
   const [airHandlerId, setAirHandlerId] = useState(airHandlers[0]?.id ?? "");
   const [ventHardwareType, setVentHardwareType] =
@@ -227,7 +229,8 @@ export default function AddZoneDialog({
             !name.trim() ||
             !airHandlerId ||
             (ventHardwareType === "manual_fixed_vent" && !manualVentsValid) ||
-            submitting
+            submitting ||
+            !canCreate
           }
           onClick={handleSubmit}
         >
