@@ -117,7 +117,7 @@ describe("SettingsPage", () => {
 
   it("saves an edited display name", () => {
     renderPage();
-    const nameField = screen.getByRole("textbox");
+    const nameField = screen.getByRole("textbox", { name: "Display name" });
     fireEvent.change(nameField, { target: { value: "Martin" } });
     const saveButton = screen.getByRole("button", { name: "Save" });
     expect(saveButton).not.toBeDisabled();

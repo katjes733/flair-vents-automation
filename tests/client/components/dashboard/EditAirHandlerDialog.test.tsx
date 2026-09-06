@@ -20,6 +20,9 @@ vi.mock("~/client/api/airHandlersApi", () => ({
   fetchAvailableFlairZones,
 }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: EditAirHandlerDialog } =
   await import("~/client/components/dashboard/EditAirHandlerDialog");
 
@@ -61,6 +64,7 @@ function renderDialog(
 
 describe("EditAirHandlerDialog", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     updateAirHandler.mockReset().mockResolvedValue({});
     deleteAirHandler.mockReset().mockResolvedValue(undefined);
     fetchAvailableFlairZones.mockReset().mockResolvedValue([
@@ -76,6 +80,15 @@ describe("EditAirHandlerDialog", () => {
   it("renders nothing when no air handler is selected", () => {
     const { container } = renderDialog(null);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("disables Save and Delete for a read profile", async () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderDialog();
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 
   it("seeds the form from the air handler's existing fields", async () => {

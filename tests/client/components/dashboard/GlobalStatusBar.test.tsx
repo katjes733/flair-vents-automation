@@ -17,6 +17,9 @@ vi.mock("~/client/api/controlApi", () => ({
   setStoredActor: vi.fn(),
 }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: GlobalStatusBar } =
   await import("~/client/components/dashboard/GlobalStatusBar");
 
@@ -43,6 +46,7 @@ function renderBar(
 
 describe("GlobalStatusBar", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     disarmControl.mockReset().mockResolvedValue(undefined);
     rearmControl.mockReset().mockResolvedValue(undefined);
   });
@@ -61,6 +65,22 @@ describe("GlobalStatusBar", () => {
     expect(
       screen.getByRole("button", { name: "Resume Automatic Control" }),
     ).toBeInTheDocument();
+  });
+
+  it("disables Disarm Control for a read profile", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderBar(false);
+    expect(
+      screen.getByRole("button", { name: "Disarm Control" }),
+    ).toBeDisabled();
+  });
+
+  it("disables Resume Automatic Control for a read profile", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderBar(true);
+    expect(
+      screen.getByRole("button", { name: "Resume Automatic Control" }),
+    ).toBeDisabled();
   });
 
   it("disables Confirm until an actor name is entered, then calls disarmControl", async () => {

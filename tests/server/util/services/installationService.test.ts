@@ -25,6 +25,7 @@ describe("ensureFlairStructureLinked", () => {
       id: "inst-1",
       name: "Home",
       flairStructureId: "92514",
+      isActive: true,
     };
     const result = await ensureFlairStructureLinked(
       installation,
@@ -39,7 +40,12 @@ describe("ensureFlairStructureLinked", () => {
     const fetchStructures = vi
       .fn()
       .mockResolvedValue([{ id: "92514", name: "Home", timeZone: null }]);
-    const installation = { id: "inst-1", name: "Home", flairStructureId: null };
+    const installation = {
+      id: "inst-1",
+      name: "Home",
+      flairStructureId: null,
+      isActive: true,
+    };
     const result = await ensureFlairStructureLinked(
       installation,
       fakeFlairClient(fetchStructures),
@@ -55,7 +61,7 @@ describe("ensureFlairStructureLinked", () => {
     const fetchStructures = vi.fn().mockResolvedValue([]);
     await expect(
       ensureFlairStructureLinked(
-        { id: "inst-1", name: "Home", flairStructureId: null },
+        { id: "inst-1", name: "Home", flairStructureId: null, isActive: true },
         fakeFlairClient(fetchStructures),
       ),
     ).rejects.toThrow(/No Flair structures found/);
@@ -69,7 +75,7 @@ describe("ensureFlairStructureLinked", () => {
     ]);
     await expect(
       ensureFlairStructureLinked(
-        { id: "inst-1", name: "Home", flairStructureId: null },
+        { id: "inst-1", name: "Home", flairStructureId: null, isActive: true },
         fakeFlairClient(fetchStructures),
       ),
     ).rejects.toThrow(/Multiple Flair structures/);

@@ -244,8 +244,24 @@ describe("updateZoneWithValidation", () => {
   it("404s when the zone doesn't exist", async () => {
     getZoneById.mockResolvedValue(null);
     await expect(
-      updateZoneWithValidation("missing", { name: "New" }),
+      updateZoneWithValidation("inst-1", "missing", { name: "New" }),
     ).rejects.toThrow(/not found/);
+  });
+
+  // Regression test: a column-level FK guarantees the row exists, not
+  // that it belongs to the caller's own installation.
+  it("404s (not 403) when the zone belongs to a different installation", async () => {
+    getZoneById.mockResolvedValue({
+      id: "z1",
+      installationId: "inst-other",
+      ventHardwareType: "flair_smart_vent",
+      flairRoomId: null,
+      config: BASE_CONFIG,
+    });
+    await expect(
+      updateZoneWithValidation("inst-1", "z1", { name: "New" }),
+    ).rejects.toThrow(/not found/);
+    expect(updateZone).not.toHaveBeenCalled();
   });
 
   it("merges config onto the existing row rather than replacing it", async () => {
@@ -258,7 +274,7 @@ describe("updateZoneWithValidation", () => {
         config: BASE_CONFIG,
       })
       .mockResolvedValueOnce({ id: "z1", name: "Updated" });
-    const result = await updateZoneWithValidation("z1", {
+    const result = await updateZoneWithValidation("inst-1", "z1", {
       config: { idle_baseline_position: 50 },
     });
     expect(updateZone).toHaveBeenCalledWith(
@@ -293,7 +309,7 @@ describe("updateZoneWithValidation", () => {
       },
     ]);
     await expect(
-      updateZoneWithValidation("z1", { name: "Luke Bathroom" }),
+      updateZoneWithValidation("inst-1", "z1", { name: "Luke Bathroom" }),
     ).rejects.toThrow(/already exists on this air handler/);
     expect(updateZone).not.toHaveBeenCalled();
   });
@@ -313,7 +329,7 @@ describe("updateZoneWithValidation", () => {
     getZonesForInstallation.mockResolvedValue([
       { id: "z1", airHandlerId: "ah-1", name: "Bedroom", config: BASE_CONFIG },
     ]);
-    await updateZoneWithValidation("z1", { name: "Bedroom" });
+    await updateZoneWithValidation("inst-1", "z1", { name: "Bedroom" });
     expect(updateZone).toHaveBeenCalledOnce();
   });
 });
@@ -327,9 +343,17 @@ describe("deleteZoneWithValidation", () => {
 
   it("404s when the zone doesn't exist", async () => {
     getZoneById.mockResolvedValue(null);
-    await expect(deleteZoneWithValidation("missing")).rejects.toThrow(
+    await expect(deleteZoneWithValidation("inst-1", "missing")).rejects.toThrow(
       /not found/,
     );
+  });
+
+  it("404s (not 403) when the zone belongs to a different installation", async () => {
+    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-other" });
+    await expect(deleteZoneWithValidation("inst-1", "z1")).rejects.toThrow(
+      /not found/,
+    );
+    expect(deleteZone).not.toHaveBeenCalled();
   });
 
   it("refuses to delete a zone referenced by a schedule's zone_settings", async () => {
@@ -340,14 +364,16 @@ describe("deleteZoneWithValidation", () => {
         events: [{ zone_settings: [{ zone_id: "z1" }] }],
       },
     ]);
-    await expect(deleteZoneWithValidation("z1")).rejects.toThrow(/Night/);
+    await expect(deleteZoneWithValidation("inst-1", "z1")).rejects.toThrow(
+      /Night/,
+    );
     expect(deleteZone).not.toHaveBeenCalled();
   });
 
   it("deletes cleanly when no schedule references it", async () => {
     getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
     getSchedulesForInstallation.mockResolvedValue([]);
-    await deleteZoneWithValidation("z1");
+    await deleteZoneWithValidation("inst-1", "z1");
     expect(deleteZone).toHaveBeenCalledWith("z1");
   });
 });

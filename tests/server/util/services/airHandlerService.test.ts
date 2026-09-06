@@ -104,7 +104,9 @@ describe("updateAirHandlerWithValidation", () => {
       { id: "ah-other", name: "Downstairs", flairZoneId: "fz-1" },
     ]);
     await expect(
-      updateAirHandlerWithValidation("ah-1", { flairZoneId: "fz-1" }),
+      updateAirHandlerWithValidation("inst-1", "ah-1", {
+        flairZoneId: "fz-1",
+      }),
     ).rejects.toThrow(/already assigned to air handler "Downstairs"/);
     expect(updateAirHandler).not.toHaveBeenCalled();
   });
@@ -119,7 +121,9 @@ describe("updateAirHandlerWithValidation", () => {
     getAirHandlersForInstallation.mockResolvedValue([
       { id: "ah-1", name: "Upstairs", flairZoneId: "fz-1" },
     ]);
-    await updateAirHandlerWithValidation("ah-1", { flairZoneId: "fz-1" });
+    await updateAirHandlerWithValidation("inst-1", "ah-1", {
+      flairZoneId: "fz-1",
+    });
     expect(updateAirHandler).toHaveBeenCalledWith(
       "ah-1",
       expect.objectContaining({ flairZoneId: "fz-1" }),
@@ -129,19 +133,36 @@ describe("updateAirHandlerWithValidation", () => {
   it("404s when the air handler doesn't exist", async () => {
     getAirHandlerById.mockResolvedValue(null);
     await expect(
-      updateAirHandlerWithValidation("missing", { name: "New" }),
+      updateAirHandlerWithValidation("inst-1", "missing", { name: "New" }),
     ).rejects.toThrow(/not found/);
+  });
+
+  // Regression test: a column-level FK guarantees the row exists, not that
+  // it belongs to the caller's own installation — this is the actual
+  // cross-tenant check this migration adds.
+  it("404s (not 403) when the air handler belongs to a different installation", async () => {
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-other",
+      active: true,
+      config: { ...BASE_CONFIG, tonnage_tons: 5 },
+    });
+    await expect(
+      updateAirHandlerWithValidation("inst-1", "ah-1", { name: "New" }),
+    ).rejects.toThrow(/not found/);
+    expect(updateAirHandler).not.toHaveBeenCalled();
   });
 
   it("merges config onto the existing row", async () => {
     getAirHandlerById
       .mockResolvedValueOnce({
         id: "ah-1",
+        installationId: "inst-1",
         active: false,
         config: { ...BASE_CONFIG, tonnage_tons: 5 },
       })
       .mockResolvedValueOnce({ id: "ah-1", active: true });
-    const result = await updateAirHandlerWithValidation("ah-1", {
+    const result = await updateAirHandlerWithValidation("inst-1", "ah-1", {
       active: true,
     });
     expect(updateAirHandler).toHaveBeenCalledWith(
@@ -157,11 +178,12 @@ describe("updateAirHandlerWithValidation", () => {
   it("rejects activating a handler with no tonnage_tons, existing or new", async () => {
     getAirHandlerById.mockResolvedValue({
       id: "ah-1",
+      installationId: "inst-1",
       active: false,
       config: BASE_CONFIG,
     });
     await expect(
-      updateAirHandlerWithValidation("ah-1", { active: true }),
+      updateAirHandlerWithValidation("inst-1", "ah-1", { active: true }),
     ).rejects.toThrow(/tonnage_tons is required/);
   });
 });
@@ -175,24 +197,44 @@ describe("deleteAirHandlerWithValidation", () => {
 
   it("404s when the air handler doesn't exist", async () => {
     getAirHandlerById.mockResolvedValue(null);
-    await expect(deleteAirHandlerWithValidation("missing")).rejects.toThrow(
-      /not found/,
-    );
+    await expect(
+      deleteAirHandlerWithValidation("inst-1", "missing"),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it("404s (not 403) when the air handler belongs to a different installation", async () => {
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-other",
+      name: "Upstairs",
+    });
+    await expect(
+      deleteAirHandlerWithValidation("inst-1", "ah-1"),
+    ).rejects.toThrow(/not found/);
+    expect(deleteAirHandler).not.toHaveBeenCalled();
   });
 
   it("refuses to delete an air handler that still has zones", async () => {
-    getAirHandlerById.mockResolvedValue({ id: "ah-1", name: "Upstairs" });
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-1",
+      name: "Upstairs",
+    });
     getZonesForAirHandler.mockResolvedValue([{ name: "Bedroom" }]);
-    await expect(deleteAirHandlerWithValidation("ah-1")).rejects.toThrow(
-      /Bedroom/,
-    );
+    await expect(
+      deleteAirHandlerWithValidation("inst-1", "ah-1"),
+    ).rejects.toThrow(/Bedroom/);
     expect(deleteAirHandler).not.toHaveBeenCalled();
   });
 
   it("deletes cleanly when no zone belongs to it", async () => {
-    getAirHandlerById.mockResolvedValue({ id: "ah-1", name: "Upstairs" });
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-1",
+      name: "Upstairs",
+    });
     getZonesForAirHandler.mockResolvedValue([]);
-    await deleteAirHandlerWithValidation("ah-1");
+    await deleteAirHandlerWithValidation("inst-1", "ah-1");
     expect(deleteAirHandler).toHaveBeenCalledWith("ah-1");
   });
 });

@@ -2,7 +2,9 @@ import express from "express";
 import { z } from "zod";
 import { validateBody } from "~/server/middleware/validateBody";
 import { HttpError } from "~/server/util/httpError";
-import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
+import { resolveActorMiddleware } from "~/server/middleware/resolveActorMiddleware";
+import { requirePermission } from "~/server/middleware/requirePermission";
+import { getInstallationById } from "~/server/util/routes/installation";
 import { getAirHandlerById } from "~/server/util/routes/airHandler";
 import { getSystemSettings } from "~/server/util/routes/systemSettings";
 import { createRedisAlertingClient } from "~/server/util/alerting";
@@ -17,15 +19,21 @@ import { ensureFlairStructureLinked } from "~/server/util/services/installationS
 
 export const router = express.Router();
 
+router.use(resolveActorMiddleware);
+
 /**
  * Every sync route is scoped to one air handler (a Flair room's `zoneId`
  * is this app's air-handler concept) — resolves the installation's
  * structure id + the handler's Flair zone id once, shared by all three
- * endpoints below. See "Flair Sync Engine".
+ * endpoints below. See "Flair Sync Engine". Verifies the air handler
+ * belongs to the caller's own installation — a column-level FK guarantees
+ * the row *exists*, not that it belongs to the *caller* — 404 (not 403)
+ * so a cross-tenant guess can't be distinguished from a genuinely unknown
+ * id.
  */
-async function resolveSyncScope(airHandlerId: string) {
+async function resolveSyncScope(installationId: string, airHandlerId: string) {
   const airHandler = await getAirHandlerById(airHandlerId);
-  if (!airHandler) {
+  if (!airHandler || airHandler.installationId !== installationId) {
     throw new HttpError(`Air handler ${airHandlerId} not found.`, 404);
   }
   if (!airHandler.flairZoneId) {
@@ -34,7 +42,10 @@ async function resolveSyncScope(airHandlerId: string) {
       400,
     );
   }
-  const rawInstallation = await getOrCreateDefaultInstallation();
+  const rawInstallation = await getInstallationById(installationId);
+  if (!rawInstallation) {
+    throw new HttpError(`Installation ${installationId} not found.`, 404);
+  }
   const installation = await ensureFlairStructureLinked(
     rawInstallation,
     getFlairClient(rawInstallation.id),
@@ -47,18 +58,25 @@ async function resolveSyncScope(airHandlerId: string) {
   };
 }
 
-router.post("/:airHandlerId/run", async (req, res) => {
-  const scope = await resolveSyncScope(req.params.airHandlerId as string);
-  const settings = await getSystemSettings(scope.installationId);
-  const result = await runSync({
-    ...scope,
-    client: getFlairClient(scope.installationId),
-    alerting: createRedisAlertingClient(),
-    rateFloorMinutes: settings.email_rate_floor_minutes,
-    nowMs: Date.now(),
-  });
-  res.status(200).json(result);
-});
+router.post(
+  "/:airHandlerId/run",
+  requirePermission("dashboard.airHandler.syncZones"),
+  async (req, res) => {
+    const scope = await resolveSyncScope(
+      req.actor!.installationId,
+      req.params.airHandlerId as string,
+    );
+    const settings = await getSystemSettings(scope.installationId);
+    const result = await runSync({
+      ...scope,
+      client: getFlairClient(scope.installationId),
+      alerting: createRedisAlertingClient(),
+      rateFloorMinutes: settings.email_rate_floor_minutes,
+      nowMs: Date.now(),
+    });
+    res.status(200).json(result);
+  },
+);
 
 const linkRequestSchema = z.object({
   flair_room_id: z.string().min(1),
@@ -71,9 +89,13 @@ const linkRequestSchema = z.object({
 
 router.post(
   "/:airHandlerId/link",
+  requirePermission("dashboard.airHandler.syncZones"),
   validateBody(linkRequestSchema),
   async (req, res) => {
-    const scope = await resolveSyncScope(req.params.airHandlerId as string);
+    const scope = await resolveSyncScope(
+      req.actor!.installationId,
+      req.params.airHandlerId as string,
+    );
     const candidates = await fetchSyncCandidates(
       getFlairClient(scope.installationId),
       scope.structureId,
@@ -89,6 +111,7 @@ router.post(
       );
     }
     const zone = await linkRoomToZone({
+      installationId: scope.installationId,
       zoneId: req.body.zone_id,
       room,
       assumedFixedPosition: req.body.assumed_fixed_position,
@@ -105,9 +128,13 @@ const createRequestSchema = z.object({
 
 router.post(
   "/:airHandlerId/create",
+  requirePermission("dashboard.airHandler.syncZones"),
   validateBody(createRequestSchema),
   async (req, res) => {
-    const scope = await resolveSyncScope(req.params.airHandlerId as string);
+    const scope = await resolveSyncScope(
+      req.actor!.installationId,
+      req.params.airHandlerId as string,
+    );
     const candidates = await fetchSyncCandidates(
       getFlairClient(scope.installationId),
       scope.structureId,

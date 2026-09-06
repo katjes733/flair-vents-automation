@@ -4,7 +4,8 @@ import { validateBody } from "~/server/middleware/validateBody";
 import { createManualOverrideRequestSchema } from "~/shared/schemas/manualOverrideRequest";
 import { resolveManualOverride } from "~/server/domain/targets/manualOverride";
 import { HttpError } from "~/server/util/httpError";
-import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
+import { resolveActorMiddleware } from "~/server/middleware/resolveActorMiddleware";
+import { requirePermission } from "~/server/middleware/requirePermission";
 import { getZonesForInstallation } from "~/server/util/routes/zone";
 import {
   createOverrideForZone,
@@ -14,6 +15,8 @@ import {
 } from "~/server/util/services/overrideService";
 
 export const router = express.Router();
+
+router.use(resolveActorMiddleware);
 
 const MAX_RANGE_MS = 7 * 24 * 3600 * 1000;
 
@@ -25,9 +28,8 @@ const historyQuerySchema = z.object({
 // The latest override row per zone, plus whether it's currently active
 // (not expired/revoked) — the UI needs both: an expired/revoked hold is
 // still part of the audit trail, active is what actually governs control.
-router.get("/", async (_req, res) => {
-  const installation = await getOrCreateDefaultInstallation();
-  const zones = await getZonesForInstallation(installation.id);
+router.get("/", async (req, res) => {
+  const zones = await getZonesForInstallation(req.actor!.installationId);
   const latest = await getLatestOverridesForZones(zones.map((z) => z.id));
   const nowMs = Date.now();
   const result = [...latest.values()].map((row) => ({
@@ -39,17 +41,25 @@ router.get("/", async (_req, res) => {
 
 router.post(
   "/",
+  requirePermission("dashboard.zone.override.create"),
   validateBody(createManualOverrideRequestSchema),
   async (req, res) => {
-    const override = await createOverrideForZone(req.body);
+    const override = await createOverrideForZone(
+      req.actor!.installationId,
+      req.body,
+    );
     res.status(201).json(override);
   },
 );
 
-router.post("/:id/revoke", async (req, res) => {
-  await revokeOverride(req.params.id);
-  res.status(204).send();
-});
+router.post(
+  "/:id/revoke",
+  requirePermission("dashboard.zone.override.revoke"),
+  async (req, res) => {
+    await revokeOverride(req.actor!.installationId, req.params.id as string);
+    res.status(204).send();
+  },
+);
 
 // One zone's override history over a time range — backs the Telemetry
 // page's override activity lane. Unlike GET /, this returns every row
@@ -74,6 +84,7 @@ router.get("/:zoneId/history", async (req, res) => {
   }
 
   const overrides = await getOverrideHistoryForZone(
+    req.actor!.installationId,
     req.params.zoneId,
     fromMs,
     toMs,

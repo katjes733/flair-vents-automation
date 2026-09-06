@@ -10,6 +10,10 @@ afterEach(cleanup);
 const { revokeOverride } = vi.hoisted(() => ({ revokeOverride: vi.fn() }));
 vi.mock("~/client/api/overridesApi", () => ({ revokeOverride }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
+
 const { default: ZoneCard } =
   await import("~/client/components/dashboard/ZoneCard");
 const { lightStatusPalette } = await import("~/client/theme/statusPalette");
@@ -74,6 +78,40 @@ describe("ZoneCard", () => {
   it("shows the calibrated reading for a sensored zone", () => {
     renderCard();
     expect(screen.getByText("22.5°C")).toBeInTheDocument();
+  });
+
+  it("disables Edit and Set manual override for a read profile", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderCard();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Set manual override" }),
+    ).toBeDisabled();
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
+  });
+
+  it("disables Clear override for a read profile", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderCard({
+      activeOverride: {
+        id: "mo-1",
+        zoneId: "z1",
+        config: {
+          kind: "position",
+          value: 50,
+          hold_type: "2h",
+          actor: "Martin",
+        },
+        createdAtMs: 0,
+        expiresAtMs: null,
+        revokedAtMs: null,
+        active: true,
+      },
+    });
+    expect(
+      screen.getByRole("button", { name: "Clear override" }),
+    ).toBeDisabled();
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
   });
 
   it("shows the fixed position for a manual vent instead of a reading", () => {

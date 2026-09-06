@@ -12,6 +12,9 @@ vi.mock("~/client/api/zonesApi", async (importOriginal) => {
   return { ...actual, updateZone };
 });
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: ZoneGrid } =
   await import("~/client/components/dashboard/ZoneGrid");
 const { computeDropSide, computeReorderedIndex } =
@@ -75,6 +78,7 @@ function renderGrid(zones: Zone[], onChanged = vi.fn()) {
 
 describe("ZoneGrid", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     updateZone.mockReset().mockResolvedValue({});
   });
 
@@ -204,6 +208,21 @@ describe("ZoneGrid", () => {
 
     const headings = screen.getAllByRole("heading", { level: 6 });
     expect(headings.map((h) => h.textContent)).toEqual(["Second", "First"]);
+  });
+
+  it("renders no reorder controls at all for a read profile", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    const zones = [
+      makeZone({ id: "z1", name: "First" }),
+      makeZone({ id: "z2", name: "Second" }),
+    ];
+    renderGrid(zones);
+    expect(
+      screen.queryByRole("button", { name: "Move First up" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Move First down" }),
+    ).not.toBeInTheDocument();
   });
 
   it("disables the up arrow for the first zone and the down arrow for the last", () => {

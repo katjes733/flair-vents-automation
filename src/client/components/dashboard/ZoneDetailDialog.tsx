@@ -35,6 +35,7 @@ import { isValidManualVentPosition } from "~/client/components/shared/manualVent
 import RepeatableFlairVentField, {
   type FlairVentRow,
 } from "~/client/components/shared/RepeatableFlairVentField";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface ZoneDetailDialogProps {
   open: boolean;
@@ -62,6 +63,8 @@ export default function ZoneDetailDialog({
   onDeleted,
 }: ZoneDetailDialogProps) {
   const { showNotification } = useNotification();
+  const canEdit = useCanWrite("dashboard.zone.edit");
+  const canDelete = useCanWrite("dashboard.zone.delete");
   const { temperatureUnit, airflowUnit } = useDisplayUnit();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -371,7 +374,11 @@ export default function ZoneDetailDialog({
           </Stack>
         </DialogContent>
         <DialogActions sx={{ justifyContent: "space-between", px: 3 }}>
-          <Button color="error" onClick={() => setConfirmDeleteOpen(true)}>
+          <Button
+            color="error"
+            disabled={!canDelete}
+            onClick={() => setConfirmDeleteOpen(true)}
+          >
             Delete
           </Button>
           <Stack direction="row" spacing={1}>
@@ -381,7 +388,8 @@ export default function ZoneDetailDialog({
               disabled={
                 submitting ||
                 (isSmartVent && nonBlankFlairVents.length === 0) ||
-                (isManualFixedVent && !manualVentsValid)
+                (isManualFixedVent && !manualVentsValid) ||
+                !canEdit
               }
               onClick={handleSubmit}
             >
@@ -412,7 +420,7 @@ export default function ZoneDetailDialog({
           <Button
             color="error"
             variant="contained"
-            disabled={submitting}
+            disabled={submitting || !canDelete}
             onClick={handleDelete}
           >
             Delete

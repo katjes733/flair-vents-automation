@@ -18,6 +18,8 @@ const {
   upsertFlairToken,
   getFlairTokenByInstallation,
   recordFlairRefreshError,
+  resolveFlairCredentials,
+  setFlairCredentials,
 } = await import("~/server/util/routes/flairToken");
 
 describe("flairToken accessor", () => {
@@ -125,5 +127,64 @@ describe("flairToken accessor", () => {
       { installation_id: "inst-1" },
       expect.objectContaining({ last_refresh_error: "boom" }),
     );
+  });
+
+  describe("resolveFlairCredentials", () => {
+    it("returns null when the installation has no BYO credentials set", async () => {
+      findOne.mockResolvedValueOnce({ client_id: null, client_secret: null });
+      expect(await resolveFlairCredentials("inst-1")).toBeNull();
+    });
+
+    it("returns null when there's no flair_tokens row at all", async () => {
+      findOne.mockResolvedValueOnce(undefined);
+      expect(await resolveFlairCredentials("inst-1")).toBeNull();
+    });
+
+    it("returns a set credential pair, decrypting the secret", async () => {
+      findOne.mockResolvedValueOnce({
+        client_id: "cid-1",
+        // Not "enc:v1:"-prefixed, so decryptIfEncrypted passes it through
+        // unchanged — the real encrypt/decrypt round trip is already
+        // covered by tokenCrypto.test.ts and upsertFlairToken's own test
+        // above; this test is about resolveFlairCredentials' own mapping.
+        client_secret: "plain-secret",
+      });
+      const result = await resolveFlairCredentials("inst-1");
+      expect(result).toEqual({
+        clientId: "cid-1",
+        clientSecret: "plain-secret",
+      });
+    });
+  });
+
+  describe("setFlairCredentials", () => {
+    it("inserts a new row when none exists yet", async () => {
+      findOne.mockResolvedValueOnce(undefined);
+      await setFlairCredentials({
+        installationId: "inst-1",
+        clientId: "cid-1",
+        clientSecret: "raw-secret",
+      });
+      expect(insert).toHaveBeenCalledOnce();
+      const inserted = insert.mock.calls[0][0];
+      expect(inserted.installation_id).toBe("inst-1");
+      expect(inserted.client_id).toBe("cid-1");
+      // Never stores the plaintext secret.
+      expect(inserted.client_secret).not.toBe("raw-secret");
+    });
+
+    it("updates the existing row when one already exists", async () => {
+      findOne.mockResolvedValueOnce({ id: "row-1" });
+      await setFlairCredentials({
+        installationId: "inst-1",
+        clientId: "cid-2",
+        clientSecret: "raw-secret-2",
+      });
+      expect(update).toHaveBeenCalledOnce();
+      expect(insert).not.toHaveBeenCalled();
+      const [id, fields] = update.mock.calls[0];
+      expect(id).toBe("row-1");
+      expect(fields.client_id).toBe("cid-2");
+    });
   });
 });

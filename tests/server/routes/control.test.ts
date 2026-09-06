@@ -3,11 +3,21 @@ import express from "express";
 import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 const { updateSettingsForInstallation } = vi.hoisted(() => ({
@@ -17,17 +27,20 @@ vi.mock("~/server/util/services/settingsService", () => ({
   updateSettingsForInstallation,
 }));
 
-const { triggerImmediateTick, getFlairClient, fakeClient } = vi.hoisted(() => ({
-  triggerImmediateTick: vi.fn(),
+const { getFlairClient, fakeClient } = vi.hoisted(() => ({
   getFlairClient: vi.fn(),
   fakeClient: {
     getOutageState: vi.fn(),
     getTokenRefreshFailureState: vi.fn(),
   },
 }));
-vi.mock("~/server/control/scheduler", () => ({
-  triggerImmediateTick,
-  getFlairClient,
+vi.mock("~/server/control/scheduler", () => ({ getFlairClient }));
+
+const { processInstallationTick: triggerImmediateTick } = vi.hoisted(() => ({
+  processInstallationTick: vi.fn(),
+}));
+vi.mock("~/server/control/tickProcessor", () => ({
+  processInstallationTick: triggerImmediateTick,
 }));
 
 const { getTokenCallsToday } = vi.hoisted(() => ({
@@ -49,19 +62,16 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
-    .mockReset()
-    .mockResolvedValue({ id: "inst-1" });
   updateSettingsForInstallation.mockReset().mockResolvedValue({
     config: {},
     warnings: [],
   });
   triggerImmediateTick.mockReset().mockResolvedValue(undefined);
-  fakeClient.getOutageState.mockReset().mockReturnValue({
+  fakeClient.getOutageState.mockReset().mockResolvedValue({
     failing: false,
     sinceMs: null,
   });
-  fakeClient.getTokenRefreshFailureState.mockReset().mockReturnValue(null);
+  fakeClient.getTokenRefreshFailureState.mockReset().mockResolvedValue(null);
   getFlairClient.mockReset().mockReturnValue(fakeClient);
   getTokenCallsToday.mockReset().mockResolvedValue(3);
 });
@@ -75,7 +85,7 @@ describe("POST /api/v1/control/disarm", () => {
     expect(updateSettingsForInstallation).not.toHaveBeenCalled();
   });
 
-  it("sets control_disarmed true with a valid actor", async () => {
+  it("sets control_disarmed true with a valid actor, scoped to the caller's installation", async () => {
     const res = await request(buildApp())
       .post("/api/v1/control/disarm")
       .send({ actor: "Martin" });
@@ -88,7 +98,7 @@ describe("POST /api/v1/control/disarm", () => {
 });
 
 describe("POST /api/v1/control/rearm", () => {
-  it("sets control_disarmed false with a valid actor", async () => {
+  it("sets control_disarmed false with a valid actor, scoped to the caller's installation", async () => {
     const res = await request(buildApp())
       .post("/api/v1/control/rearm")
       .send({ actor: "Martin" });
@@ -101,15 +111,15 @@ describe("POST /api/v1/control/rearm", () => {
 });
 
 describe("POST /api/v1/control/trigger-tick", () => {
-  it("runs an immediate tick cycle and returns 200", async () => {
+  it("runs an immediate tick cycle scoped to the caller's own installation, and returns 200", async () => {
     const res = await request(buildApp()).post("/api/v1/control/trigger-tick");
     expect(res.status).toBe(200);
-    expect(triggerImmediateTick).toHaveBeenCalledOnce();
+    expect(triggerImmediateTick).toHaveBeenCalledWith("inst-1");
   });
 });
 
 describe("GET /api/v1/control/flair-status", () => {
-  it("returns a healthy connection's status", async () => {
+  it("returns a healthy connection's status, scoped to the caller's installation", async () => {
     const res = await request(buildApp()).get("/api/v1/control/flair-status");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -118,14 +128,16 @@ describe("GET /api/v1/control/flair-status", () => {
       tokenCallsToday: 3,
       tokenDailyBudget: 50,
     });
+    expect(getFlairClient).toHaveBeenCalledWith("inst-1");
+    expect(getTokenCallsToday).toHaveBeenCalledWith("inst-1");
   });
 
   it("surfaces an active outage and a terminal token-refresh failure", async () => {
-    fakeClient.getOutageState.mockReturnValue({
+    fakeClient.getOutageState.mockResolvedValue({
       failing: true,
       sinceMs: 1700000000000,
     });
-    fakeClient.getTokenRefreshFailureState.mockReturnValue({
+    fakeClient.getTokenRefreshFailureState.mockResolvedValue({
       terminal: true,
       message: "invalid_grant",
     });

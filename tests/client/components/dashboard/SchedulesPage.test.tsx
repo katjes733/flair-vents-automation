@@ -56,6 +56,9 @@ vi.mock("~/client/api/airHandlersApi", async (importOriginal) => {
 });
 vi.mock("~/client/api/settingsApi", () => ({ fetchSettings }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: SchedulesPage } =
   await import("~/client/components/dashboard/SchedulesPage");
 
@@ -151,6 +154,7 @@ function renderPage() {
 
 describe("SchedulesPage", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     localStorage.setItem("displayTemperatureUnit", "F");
     fetchSchedules.mockReset().mockResolvedValue([schedule()]);
     createSchedule.mockReset();
@@ -175,6 +179,17 @@ describe("SchedulesPage", () => {
       screen.getByRole("combobox", { name: "Schedule" }),
     ).toHaveTextContent("Night");
     expect(screen.getByRole("switch", { name: "Enabled" })).toBeChecked();
+  });
+
+  it("disables Add schedule/Delete schedule/Enabled for a read profile", async () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderPage();
+    await screen.findByText("Sun");
+    expect(screen.getByRole("button", { name: "Add schedule" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Delete schedule" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Enabled" })).toBeDisabled();
   });
 
   it("shows a fallback message when there are no schedules yet", async () => {

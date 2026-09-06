@@ -4,6 +4,8 @@ import fs from "fs";
 import path from "path";
 import { randomBytes } from "crypto";
 import express from "express";
+import session from "express-session";
+import { RedisStore } from "connect-redis";
 import helmet from "helmet";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -18,6 +20,13 @@ import { router as SettingsRouter } from "~/server/routes/settings";
 import { router as ControlRouter } from "~/server/routes/control";
 import { router as SyncRouter } from "~/server/routes/sync";
 import { router as TelemetryRouter } from "~/server/routes/telemetry";
+import { router as SessionRouter } from "~/server/routes/session";
+import { router as SignupVerificationRouter } from "~/server/routes/signupVerification";
+import { router as PasswordResetRouter } from "~/server/routes/passwordReset";
+import { router as AccountRouter } from "~/server/routes/account";
+import { router as InstallationMembersRouter } from "~/server/routes/installationMembers";
+import { router as WebauthnRouter } from "~/server/routes/webauthn";
+import { getWebauthnConfig } from "~/server/util/requestOrigin";
 import { errorHandler } from "~/server/middleware/errorHandler";
 import { HttpError } from "~/server/util/httpError";
 import { redis } from "~/server/util/redis";
@@ -25,13 +34,13 @@ import {
   validateOAuthState,
   exchangeAndSaveToken,
 } from "~/server/util/oauthCallback";
-import { getTokenWithAuthorizationCode } from "~/server/util/auth";
+import {
+  getTokenWithAuthorizationCode,
+  getEnvFlairCredentials,
+} from "~/server/util/auth";
 import { upsertFlairToken } from "~/server/util/routes/flairToken";
 import { renderOAuthCallbackPage } from "~/server/util/oauthCallbackPage";
-import {
-  runStartupReconciliationForInstallation,
-  startControlLoop,
-} from "~/server/control/scheduler";
+import { reconcileInstallationSchedulers } from "~/server/control/queue";
 
 // Fail-fast: required env vars are checked synchronously at module load,
 // not lazily on first request.
@@ -57,6 +66,15 @@ if (!process.env.ALLOWED_ORIGINS) {
 if (!process.env.TOKEN_ENCRYPTION_KEY) {
   throw new Error("TOKEN_ENCRYPTION_KEY environment variable is required");
 }
+if (!process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET environment variable is required");
+}
+
+// Fail fast on a missing/invalid WEBAUTHN_RP_ID / WEBAUTHN_EXPECTED_ORIGINS
+// at boot, the same as the other required config above — otherwise the
+// misconfiguration only surfaces as a 500 the first time someone actually
+// tries to use passkey registration/login.
+getWebauthnConfig();
 
 const sslEnabled = process.env.SSL_ENABLED === "true";
 if (sslEnabled && (!process.env.SSL_KEY_PATH || !process.env.SSL_CERT_PATH)) {
@@ -117,7 +135,49 @@ app.use(
 
 app.use(express.json({ limit: "100kb" }));
 
+// connect-redis v9 expects node-redis v4 API ({ EX: ttl }); ioredis v5 uses
+// positional args ('EX', ttl). This adapter bridges the two — ported from
+// tesla-powerwall-automation's own working main.ts. Reuses the existing
+// `redis` singleton (fva: keyPrefix already applied at the client level),
+// rather than a second Redis connection — session keys land as
+// fva:sess:<sid> for free.
+const redisStoreClient = {
+  get: (key: string) => redis.get(key),
+  set: (key: string, value: string, options?: { EX?: number; PX?: number }) =>
+    options?.EX != null
+      ? redis.set(key, value, "EX", options.EX)
+      : options?.PX != null
+        ? redis.set(key, value, "PX", options.PX)
+        : redis.set(key, value),
+  del: (...keys: string[]) => redis.del(...keys),
+  expire: (key: string, seconds: number) => redis.expire(key, seconds),
+};
+
+app.use(
+  session({
+    store: new RedisStore({ client: redisStoreClient as any }),
+    secret: process.env.SESSION_SECRET!,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: sslEnabled,
+      // "lax" (not "strict") so the session cookie survives a future
+      // cross-site OAuth-consent redirect if the deferred Flair
+      // authorization_code fast-follow (see the SaaS Transformation plan's
+      // "Open Research Items") ever ships — no cost to setting it now.
+      sameSite: "lax",
+      maxAge: 4 * 60 * 60 * 1000, // 4 hours — matches every other app on this NAS
+    },
+  }),
+);
+
 app.use("/api/v1/health", HealthRouter);
+app.use("/api/v1/session", SessionRouter);
+app.use("/api/v1/auth", SignupVerificationRouter);
+app.use("/api/v1/auth", PasswordResetRouter);
+app.use("/api/v1/account", AccountRouter);
+app.use("/api/v1/webauthn", WebauthnRouter);
 app.use("/api/v1/flair-auth", FlairAuthRouter);
 app.use("/api/v1/air-handlers", AirHandlersRouter);
 app.use("/api/v1/zones", ZonesRouter);
@@ -127,6 +187,7 @@ app.use("/api/v1/settings", SettingsRouter);
 app.use("/api/v1/control", ControlRouter);
 app.use("/api/v1/sync", SyncRouter);
 app.use("/api/v1/telemetry", TelemetryRouter);
+app.use("/api/v1/installation-members", InstallationMembersRouter);
 
 // Bare (not /api/v1) — this must match the OAuth redirect_uri Flair itself
 // is configured with, and is only ever reached in authorization_code mode.
@@ -181,7 +242,16 @@ app.get("/callback", async (req, res) => {
     code: req.query.code as string,
     redirectUri,
     installationId: validation.installationId,
-    getToken: getTokenWithAuthorizationCode,
+    // Only ever reached in the dormant, global authorization_code mode —
+    // stays keyed to the env-configured pair per the SaaS Transformation
+    // plan's "Flair BYO-Credentials Onboarding" section, not per-installation
+    // BYO credentials (client_credentials is the only grant BYO ever uses).
+    getToken: (code, redirectUri) =>
+      getTokenWithAuthorizationCode(
+        getEnvFlairCredentials(),
+        code,
+        redirectUri,
+      ),
     saveToken: upsertFlairToken,
     onError: (code, error) =>
       oauthCallbackLog.error(
@@ -260,28 +330,26 @@ server.listen(port, () => {
   logger.info({ port, ssl: sslEnabled }, "Server listening");
 });
 
-// Startup reconciliation runs once, before the loop's first tick, so the
-// first ramp starts from where the vents actually are rather than
-// whatever the DB held across a restart — see "Reconciliation & startup
-// reconciliation". A failure here (e.g. Flair unreachable at boot) must
-// not prevent the server from serving the API/UI, so it's logged and the
-// loop starts regardless — the loop's own per-handler try/catch and the
-// next tick's own reconciliation sweep are what actually recover from it.
+// Registers (or updates) a BullMQ tick job scheduler for every active
+// installation, and removes any stale ones — see queue.ts's own comment.
+// Actual ticking now happens in a separate worker process (worker.ts)
+// consuming these jobs, not here; a failure here must not prevent the API
+// server from serving the UI, so it's logged and the server starts
+// regardless — the next boot's reconciliation, or a future signup's own
+// immediate registerInstallationTick() call, still recovers from it.
 try {
-  await runStartupReconciliationForInstallation();
+  await reconcileInstallationSchedulers();
 } catch (err) {
   logger.error(
     { err },
-    "Startup reconciliation failed — starting the control loop anyway",
+    "Job scheduler reconciliation failed — starting the API server anyway",
   );
 }
-const controlLoop = startControlLoop();
 
-// Stops accepting new connections and stops scheduling further ticks
-// without moving anything — holding last position is this app's own
-// stated safe default for any outage, so shutdown behaves the same way.
+// Stops accepting new connections — startup/shutdown of the actual tick
+// processing lives in worker.ts's own process now, with its own SIGTERM
+// handler.
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received, shutting down gracefully");
-  controlLoop.stop();
   server.close(() => process.exit(0));
 });

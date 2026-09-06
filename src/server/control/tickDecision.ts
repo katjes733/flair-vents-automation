@@ -1,4 +1,5 @@
 import type { ContentionResult } from "~/server/domain/position/step3Contention";
+import { redis } from "~/server/util/redis";
 
 // One entry per zone.config.flair_vents member — genuinely per-vent,
 // since every vent in a zone is ganged to the same target but reconciles
@@ -107,14 +108,29 @@ export interface AirHandlerTickDecision {
 // One entry per air handler, overwritten each tick — not accumulated. See
 // "Comprehensive tick decision record"'s dual-exposure design (also logged
 // via logControlTickDecision).
-const cache = new Map<string, AirHandlerTickDecision>();
-
-export function cacheTickDecision(decision: AirHandlerTickDecision): void {
-  cache.set(decision.air_handler_id, decision);
+//
+// Redis-backed, not an in-memory Map — the process that computes a tick
+// (worker.ts, since Stage 6's horizontal-scaling move) and the process
+// that serves this record (main.ts, via GET /air-handlers/:id/tick-
+// decision) are now two genuinely different processes. An in-memory Map
+// here would mean "no tick decision cached yet" forever from the API
+// server's own point of view, no matter how many real ticks the worker
+// had actually run — confirmed live: this is exactly the bug that shipped
+// with the first cut of Stage 6, caught from the Diagnostics page's own
+// tick-decision polling 404ing indefinitely even with ticks flowing.
+function cacheKey(airHandlerId: string): string {
+  return `tickDecision:${airHandlerId}`;
 }
 
-export function getCachedTickDecision(
+export async function cacheTickDecision(
+  decision: AirHandlerTickDecision,
+): Promise<void> {
+  await redis.set(cacheKey(decision.air_handler_id), JSON.stringify(decision));
+}
+
+export async function getCachedTickDecision(
   airHandlerId: string,
-): AirHandlerTickDecision | null {
-  return cache.get(airHandlerId) ?? null;
+): Promise<AirHandlerTickDecision | null> {
+  const raw = await redis.get(cacheKey(airHandlerId));
+  return raw ? JSON.parse(raw) : null;
 }

@@ -19,15 +19,18 @@ const {
   createManualOverride,
   revokeManualOverride,
   getOverridesForZoneInRange,
+  getManualOverrideById,
 } = vi.hoisted(() => ({
   createManualOverride: vi.fn(),
   revokeManualOverride: vi.fn(),
   getOverridesForZoneInRange: vi.fn(),
+  getManualOverrideById: vi.fn(),
 }));
 vi.mock("~/server/util/routes/manualOverride", () => ({
   createManualOverride,
   revokeManualOverride,
   getOverridesForZoneInRange,
+  getManualOverrideById,
   getLatestOverridesForZones: vi.fn(),
 }));
 
@@ -43,7 +46,7 @@ describe("createOverrideForZone", () => {
   it("404s when the zone doesn't exist", async () => {
     getZoneById.mockResolvedValue(null);
     await expect(
-      createOverrideForZone({
+      createOverrideForZone("inst-1", {
         kind: "position",
         zone_id: "missing",
         value: 50,
@@ -53,9 +56,25 @@ describe("createOverrideForZone", () => {
     ).rejects.toThrow(/not found/);
   });
 
+  // Regression test: a column-level FK guarantees the zone exists, not
+  // that it belongs to the caller's own installation.
+  it("404s (not 403) when the zone belongs to a different installation", async () => {
+    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-other" });
+    await expect(
+      createOverrideForZone("inst-1", {
+        kind: "position",
+        zone_id: "z1",
+        value: 50,
+        hold_type: "2h",
+        actor: "Martin",
+      }),
+    ).rejects.toThrow(/not found/);
+    expect(createManualOverride).not.toHaveBeenCalled();
+  });
+
   it("computes a fixed expiry for a 2h hold", async () => {
     getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
-    await createOverrideForZone({
+    await createOverrideForZone("inst-1", {
       kind: "position",
       zone_id: "z1",
       value: 50,
@@ -71,7 +90,7 @@ describe("createOverrideForZone", () => {
 
   it("resolves null expiry for a permanent hold", async () => {
     getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
-    await createOverrideForZone({
+    await createOverrideForZone("inst-1", {
       kind: "setpoint",
       zone_id: "z1",
       value: 21,
@@ -96,7 +115,7 @@ describe("createOverrideForZone", () => {
         ],
       },
     ]);
-    await createOverrideForZone({
+    await createOverrideForZone("inst-1", {
       kind: "position",
       zone_id: "z1",
       value: 50,
@@ -111,9 +130,34 @@ describe("createOverrideForZone", () => {
 });
 
 describe("revokeOverride", () => {
-  it("delegates to revokeManualOverride", async () => {
+  beforeEach(() => {
+    getManualOverrideById.mockReset();
     revokeManualOverride.mockReset().mockResolvedValue(undefined);
-    await revokeOverride("mo-1");
+  });
+
+  it("404s when the override doesn't exist", async () => {
+    getManualOverrideById.mockResolvedValue(null);
+    await expect(revokeOverride("inst-1", "missing")).rejects.toThrow(
+      /not found/,
+    );
+    expect(revokeManualOverride).not.toHaveBeenCalled();
+  });
+
+  it("404s (not 403) when the override belongs to a different installation", async () => {
+    getManualOverrideById.mockResolvedValue({
+      id: "mo-1",
+      installationId: "inst-other",
+    });
+    await expect(revokeOverride("inst-1", "mo-1")).rejects.toThrow(/not found/);
+    expect(revokeManualOverride).not.toHaveBeenCalled();
+  });
+
+  it("delegates to revokeManualOverride for an owned override", async () => {
+    getManualOverrideById.mockResolvedValue({
+      id: "mo-1",
+      installationId: "inst-1",
+    });
+    await revokeOverride("inst-1", "mo-1");
     expect(revokeManualOverride).toHaveBeenCalledWith("mo-1");
   });
 });
@@ -126,16 +170,24 @@ describe("getOverrideHistoryForZone", () => {
 
   it("404s when the zone doesn't exist", async () => {
     getZoneById.mockResolvedValue(null);
-    await expect(getOverrideHistoryForZone("missing", 0, 1000)).rejects.toThrow(
-      /not found/,
-    );
+    await expect(
+      getOverrideHistoryForZone("inst-1", "missing", 0, 1000),
+    ).rejects.toThrow(/not found/);
+    expect(getOverridesForZoneInRange).not.toHaveBeenCalled();
+  });
+
+  it("404s (not 403) when the zone belongs to a different installation", async () => {
+    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-other" });
+    await expect(
+      getOverrideHistoryForZone("inst-1", "z1", 0, 1000),
+    ).rejects.toThrow(/not found/);
     expect(getOverridesForZoneInRange).not.toHaveBeenCalled();
   });
 
   it("delegates to getOverridesForZoneInRange for a real zone", async () => {
     getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
     getOverridesForZoneInRange.mockResolvedValue([{ id: "mo-1" }]);
-    const result = await getOverrideHistoryForZone("z1", 0, 1000);
+    const result = await getOverrideHistoryForZone("inst-1", "z1", 0, 1000);
     expect(result).toEqual([{ id: "mo-1" }]);
     expect(getOverridesForZoneInRange).toHaveBeenCalledWith("z1", 0, 1000);
   });

@@ -140,6 +140,7 @@ export async function createZoneForInstallation(params: {
 }
 
 export async function updateZoneWithValidation(
+  installationId: string,
   zoneId: string,
   patch: Partial<{
     airHandlerId: string;
@@ -150,7 +151,10 @@ export async function updateZoneWithValidation(
   }>,
 ): Promise<ZoneData> {
   const existing = await getZoneById(zoneId);
-  if (!existing) {
+  // A column-level FK guarantees the row *exists*, not that it belongs to
+  // the *caller's* installation — 404 (not 403) so a cross-tenant guess
+  // can't be distinguished from a genuinely unknown id.
+  if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Zone ${zoneId} not found.`, 404);
   }
   if (patch.airHandlerId !== undefined) {
@@ -207,9 +211,12 @@ export async function updateZoneWithValidation(
  * night-time priority order is exactly the kind of change nobody notices
  * until a bedroom is uncomfortable."
  */
-export async function deleteZoneWithValidation(zoneId: string): Promise<void> {
+export async function deleteZoneWithValidation(
+  installationId: string,
+  zoneId: string,
+): Promise<void> {
   const existing = await getZoneById(zoneId);
-  if (!existing) {
+  if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Zone ${zoneId} not found.`, 404);
   }
   const schedules = await getSchedulesForInstallation(existing.installationId);

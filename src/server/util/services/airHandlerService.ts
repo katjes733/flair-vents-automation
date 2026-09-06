@@ -69,6 +69,7 @@ export async function createAirHandlerForInstallation(params: {
 }
 
 export async function updateAirHandlerWithValidation(
+  installationId: string,
   id: string,
   patch: Partial<{
     flairZoneId: string | null;
@@ -78,7 +79,10 @@ export async function updateAirHandlerWithValidation(
   }>,
 ): Promise<AirHandlerData> {
   const existing = await getAirHandlerById(id);
-  if (!existing) {
+  // A column-level FK guarantees the row *exists*, not that it belongs to
+  // the *caller's* installation — 404 (not 403) so a cross-tenant guess
+  // can't be distinguished from a genuinely unknown id.
+  if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Air handler ${id} not found.`, 404);
   }
   const mergedConfig: AirHandlerConfig = {
@@ -113,10 +117,11 @@ export async function updateAirHandlerWithValidation(
  * gives a clean, named error instead of a raw constraint violation).
  */
 export async function deleteAirHandlerWithValidation(
+  installationId: string,
   id: string,
 ): Promise<void> {
   const existing = await getAirHandlerById(id);
-  if (!existing) {
+  if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Air handler ${id} not found.`, 404);
   }
   const zones = await getZonesForAirHandler(id);

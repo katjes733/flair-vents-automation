@@ -1,33 +1,70 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getTokenWithClientCredentials, getTokenWithRefreshToken } = vi.hoisted(
-  () => ({
-    getTokenWithClientCredentials: vi.fn(),
-    getTokenWithRefreshToken: vi.fn(),
-  }),
-);
+const {
+  getTokenWithClientCredentials,
+  getTokenWithRefreshToken,
+  getEnvFlairCredentials,
+} = vi.hoisted(() => ({
+  getTokenWithClientCredentials: vi.fn(),
+  getTokenWithRefreshToken: vi.fn(),
+  getEnvFlairCredentials: vi.fn(),
+}));
 vi.mock("~/server/util/auth", () => ({
   getTokenWithClientCredentials,
   getTokenWithRefreshToken,
+  getEnvFlairCredentials,
 }));
 
 const {
   getFlairTokenByInstallation,
   upsertFlairToken,
   recordFlairRefreshError,
+  resolveFlairCredentials,
 } = vi.hoisted(() => ({
   getFlairTokenByInstallation: vi.fn(),
   upsertFlairToken: vi.fn(),
   recordFlairRefreshError: vi.fn(),
+  resolveFlairCredentials: vi.fn(),
 }));
 vi.mock("~/server/util/routes/flairToken", () => ({
   getFlairTokenByInstallation,
   upsertFlairToken,
   recordFlairRefreshError,
+  resolveFlairCredentials,
 }));
+
+const TEST_CREDENTIALS = {
+  clientId: "test-client-id",
+  clientSecret: "test-client-secret",
+};
 
 const { recordTokenCall } = vi.hoisted(() => ({ recordTokenCall: vi.fn() }));
 vi.mock("~/server/util/flair/tokenBudget", () => ({ recordTokenCall }));
+
+const { createOutageTracker, fakeOutageTracker } = vi.hoisted(() => {
+  const tracker = {
+    recordFailure: vi.fn(),
+    recordSuccess: vi.fn(),
+    getState: vi.fn(),
+  };
+  return {
+    createOutageTracker: vi.fn(() => tracker),
+    fakeOutageTracker: tracker,
+  };
+});
+vi.mock("~/server/util/flair/outage", () => ({ createOutageTracker }));
+
+const {
+  getTokenRefreshFailureState: storeGetTokenRefreshFailureState,
+  setTokenRefreshFailureState,
+} = vi.hoisted(() => ({
+  getTokenRefreshFailureState: vi.fn(),
+  setTokenRefreshFailureState: vi.fn(),
+}));
+vi.mock("~/server/util/flair/outageStore", () => ({
+  getTokenRefreshFailureState: storeGetTokenRefreshFailureState,
+  setTokenRefreshFailureState,
+}));
 
 const { FlairApiClient } = await import("~/server/util/flair/client");
 
@@ -39,11 +76,34 @@ describe("FlairApiClient token management", () => {
   beforeEach(() => {
     getTokenWithClientCredentials.mockReset();
     getTokenWithRefreshToken.mockReset();
+    getEnvFlairCredentials.mockReset();
     getFlairTokenByInstallation.mockReset().mockResolvedValue(null);
+    resolveFlairCredentials.mockReset().mockResolvedValue(TEST_CREDENTIALS);
     upsertFlairToken.mockReset().mockResolvedValue(undefined);
     recordFlairRefreshError.mockReset().mockResolvedValue(undefined);
     recordTokenCall.mockReset().mockResolvedValue(1);
+    fakeOutageTracker.recordFailure.mockReset();
+    fakeOutageTracker.recordSuccess.mockReset();
+    fakeOutageTracker.getState
+      .mockReset()
+      .mockResolvedValue({ failing: false, sinceMs: null });
+    storeGetTokenRefreshFailureState.mockReset().mockResolvedValue(null);
+    setTokenRefreshFailureState.mockReset().mockResolvedValue(undefined);
     delete process.env.FLAIR_GRANT_MODE;
+  });
+
+  it("falls back to the global env-configured credentials, with a warning, when this installation has none of its own", async () => {
+    resolveFlairCredentials.mockResolvedValue(null);
+    getEnvFlairCredentials.mockReturnValue(TEST_CREDENTIALS);
+    getTokenWithClientCredentials.mockResolvedValue(
+      tokenResponse({ access_token: "at-1", expires_in: 3600 }),
+    );
+    const client = new FlairApiClient("inst-1");
+    await client.getAccessToken();
+    expect(getEnvFlairCredentials).toHaveBeenCalledOnce();
+    expect(getTokenWithClientCredentials).toHaveBeenCalledWith(
+      TEST_CREDENTIALS,
+    );
   });
 
   it("mints a fresh token via client_credentials when nothing is persisted", async () => {
@@ -117,7 +177,10 @@ describe("FlairApiClient token management", () => {
     );
     const client = new FlairApiClient("inst-1");
     await client.getAccessToken();
-    expect(getTokenWithRefreshToken).toHaveBeenCalledWith("the-refresh-token");
+    expect(getTokenWithRefreshToken).toHaveBeenCalledWith(
+      TEST_CREDENTIALS,
+      "the-refresh-token",
+    );
   });
 
   it("marks a 400/401 token failure as terminal and records the refresh error", async () => {
@@ -153,24 +216,26 @@ describe("FlairApiClient token management", () => {
     expect(recordTokenCall).toHaveBeenCalledTimes(1);
   });
 
-  it("getTokenRefreshFailureState is null before any refresh attempt", () => {
+  it("getTokenRefreshFailureState delegates to the Redis-backed store, per installation", async () => {
+    storeGetTokenRefreshFailureState.mockResolvedValue(null);
     const client = new FlairApiClient("inst-1");
-    expect(client.getTokenRefreshFailureState()).toBe(null);
+    expect(await client.getTokenRefreshFailureState()).toBe(null);
+    expect(storeGetTokenRefreshFailureState).toHaveBeenCalledWith("inst-1");
   });
 
-  it("getTokenRefreshFailureState reflects a terminal failure — the 'alert immediately' input", async () => {
+  it("records a terminal failure to the store — the 'alert immediately' input", async () => {
     getTokenWithClientCredentials.mockResolvedValue(
       new Response("bad", { status: 401, statusText: "Unauthorized" }),
     );
     const client = new FlairApiClient("inst-1");
     await expect(client.getAccessToken()).rejects.toThrow(/401/);
-    expect(client.getTokenRefreshFailureState()).toEqual({
+    expect(setTokenRefreshFailureState).toHaveBeenCalledWith("inst-1", {
       terminal: true,
       message: expect.stringContaining("401"),
     });
   });
 
-  it("getTokenRefreshFailureState clears once a subsequent refresh succeeds", async () => {
+  it("clears the stored failure state once a subsequent refresh succeeds", async () => {
     getTokenWithClientCredentials
       .mockResolvedValueOnce(
         new Response("bad", { status: 401, statusText: "Unauthorized" }),
@@ -180,14 +245,24 @@ describe("FlairApiClient token management", () => {
       );
     const client = new FlairApiClient("inst-1");
     await expect(client.getAccessToken()).rejects.toThrow(/401/);
-    expect(client.getTokenRefreshFailureState()).not.toBe(null);
+    expect(setTokenRefreshFailureState).toHaveBeenCalledWith(
+      "inst-1",
+      expect.objectContaining({ terminal: true }),
+    );
     await client.getAccessToken();
-    expect(client.getTokenRefreshFailureState()).toBe(null);
+    expect(setTokenRefreshFailureState).toHaveBeenLastCalledWith(
+      "inst-1",
+      null,
+    );
   });
 
-  it("getOutageState starts healthy", () => {
+  it("getOutageState delegates to the outage tracker's own state", async () => {
     const client = new FlairApiClient("inst-1");
-    expect(client.getOutageState()).toEqual({ failing: false, sinceMs: null });
+    expect(await client.getOutageState()).toEqual({
+      failing: false,
+      sinceMs: null,
+    });
+    expect(fakeOutageTracker.getState).toHaveBeenCalledOnce();
   });
 });
 
@@ -201,6 +276,8 @@ describe("FlairApiClient.request (via resource methods)", () => {
     upsertFlairToken.mockReset().mockResolvedValue(undefined);
     recordFlairRefreshError.mockReset().mockResolvedValue(undefined);
     recordTokenCall.mockReset().mockResolvedValue(1);
+    fakeOutageTracker.recordFailure.mockReset();
+    fakeOutageTracker.recordSuccess.mockReset();
   });
 
   afterEach(() => {
@@ -234,6 +311,8 @@ describe("FlairApiClient.request (via resource methods)", () => {
     ]);
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers.Authorization).toBe("Bearer at");
+    expect(fakeOutageTracker.recordSuccess).toHaveBeenCalledOnce();
+    expect(fakeOutageTracker.recordFailure).not.toHaveBeenCalled();
   });
 
   it("retries once after a 429, waiting the Retry-After duration, then succeeds", async () => {
@@ -265,6 +344,8 @@ describe("FlairApiClient.request (via resource methods)", () => {
     );
     const client = new FlairApiClient("inst-1");
     await expect(client.fetchStructures()).rejects.toThrow(/503/);
+    expect(fakeOutageTracker.recordFailure).toHaveBeenCalledOnce();
+    expect(fakeOutageTracker.recordSuccess).not.toHaveBeenCalled();
   });
 
   it("sends a PATCH with the expected JSON:API body when setting a vent's position", async () => {

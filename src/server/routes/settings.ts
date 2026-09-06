@@ -1,16 +1,18 @@
 import express from "express";
 import { validateBody } from "~/server/middleware/validateBody";
 import { systemSettingsConfigPartialSchema } from "~/shared/schemas/systemSettings";
-import { getOrCreateDefaultInstallation } from "~/server/util/routes/installation";
+import { resolveActorMiddleware } from "~/server/middleware/resolveActorMiddleware";
+import { requirePermission } from "~/server/middleware/requirePermission";
 import { getSystemSettings } from "~/server/util/routes/systemSettings";
 import { updateSettingsForInstallation } from "~/server/util/services/settingsService";
 import { isDryRunEnv } from "~/server/control/scheduler";
 
 export const router = express.Router();
 
-router.get("/", async (_req, res) => {
-  const installation = await getOrCreateDefaultInstallation();
-  const config = await getSystemSettings(installation.id);
+router.use(resolveActorMiddleware);
+
+router.get("/", async (req, res) => {
+  const config = await getSystemSettings(req.actor!.installationId);
   // dry_run is a read-only, env-derived fact — not itself part of
   // system_settings.config (it's deliberately never DB-backed, see "Stage
   // 14 — Deploy" / the DRY_RUN vs. live_air_handler_ids split) — appended
@@ -23,11 +25,11 @@ router.get("/", async (_req, res) => {
 
 router.patch(
   "/",
+  requirePermission("settings.write"),
   validateBody(systemSettingsConfigPartialSchema),
   async (req, res) => {
-    const installation = await getOrCreateDefaultInstallation();
     const result = await updateSettingsForInstallation(
-      installation.id,
+      req.actor!.installationId,
       req.body,
     );
     res.status(200).json(result);

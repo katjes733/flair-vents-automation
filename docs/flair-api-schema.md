@@ -20,6 +20,10 @@
   - [Phase 0 checklist — resolved](#phase-0-checklist--resolved)
   - [Open items — need a decision or further discovery](#open-items--need-a-decision-or-further-discovery)
   - [Not yet tested](#not-yet-tested)
+  - [OAuth research findings — `authorization_code` grant and the access-token rate limit](#oauth-research-findings--authorization_code-grant-and-the-access-token-rate-limit)
+    - [How this was gathered](#how-this-was-gathered-1)
+    - [Question 1 — does `authorization_code` broker real third-party consent?](#question-1--does-authorization_code-broker-real-third-party-consent)
+    - [Question 2 — is the ~50/day rate limit per-account or per-client-app, and is refresh exempt?](#question-2--is-the-50day-rate-limit-per-account-or-per-client-app-and-is-refresh-exempt)
 
 ## How this was gathered
 
@@ -250,6 +254,50 @@ Confirmed live via a targeted follow-up check (not in the original discovery scr
 ## Not yet tested
 
 - ~~Any write/PATCH call (vent position...)~~ — **done.** Vent-position writes (`PATCH /api/vents/{id}`) tested extensively — see [Live write-boundary verification](#live-write-boundary-verification-patch-apiventsid) above. Structure/zone setpoint writes (`PATCH /api/structures/{id}`) remain untested — still deferred, since that requires actually running the equipment, not just repositioning a vent.
-- `authorization_code` and `refresh_token` grant modes (client_credentials already confirmed sufficient).
+- ~~`authorization_code` and `refresh_token` grant modes (client_credentials already confirmed sufficient).~~ — **researched (documentation, not a live call — this account has no registered third-party OAuth client to test the flow against live).** `authorization_code` is real and does broker genuine third-party consent, but only for Flair-approved "Partners," not self-service — see [OAuth research findings](#oauth-research-findings--authorization_code-grant-and-the-access-token-rate-limit) below. `refresh_token` grant remains untested live (this app's `client_credentials` tokens don't return one), and its own expiry lifetime could not be confirmed from any source.
 - A force-fresh-read parameter/endpoint (no evidence found in the resources fetched so far, not specifically searched for).
-- Refresh-token expiry / whether refreshes count against the ~50/day creation budget / per-account-vs-per-client-app scoping — these need Flair's own developer/account documentation, not a live API call; not yet researched.
+- ~~Refresh-token expiry / whether refreshes count against the ~50/day creation budget / per-account-vs-per-client-app scoping — these need Flair's own developer/account documentation, not a live API call; not yet researched.~~ — **researched.** The ~50/day figure is confirmed in Flair's own official docs, but only for the deprecated `/oauth/token` (v1) endpoint, not stated for the `/oauth2/token` (v2) endpoint this app actually uses; the refresh-exemption claim and the refresh token's own expiry could not be confirmed from any Flair-authored source. Full findings and exact citations: [OAuth research findings](#oauth-research-findings--authorization_code-grant-and-the-access-token-rate-limit) below.
+
+## OAuth research findings — `authorization_code` grant and the access-token rate limit
+
+### How this was gathered
+
+Research against primary sources only, per this task's own methodology: Flair's official Postman-hosted API reference (`documenter.getpostman.com/view/5353571/TzsbKTAG`, titled "Flair API") — the same document `support.flair.co`'s own "The Flair API and how to get your credentials" Help Center article links to as Flair's canonical developer reference — fetched directly, including the underlying published collection JSON (`https://documenter.gw.postman.com/api/collections/5353571/TzsbKTAG?segregateAuth=true&versionTag=latest`, ~227 KB, every endpoint's full description text) via a full-text search for every relevant term (`authorization_code`, `redirect_uri`, `rate limit`, `50 requests`, `refresh_token`, `expires_in`, `exempt`, `quota`, `expiry`, etc.). Also checked: the community `flair-systems/flair-api-client-py` GitHub repo's own `README.md` (for comparison against the community-only rate-limit claim already in this app's plan, not as a primary source), and Flair's own blog post "Flair's Open Culture and API" (`flair.co/blogs/news/flairs-open-culture-and-platform` — historical, predates the current self-service Developer Settings flow, no OAuth-mode or rate-limit detail). `support.flair.co`'s own Help Center articles and community forum threads (a "Refresh Token" thread, an "Has anyone done Oauth authentication with Ecobee?" thread) all returned `403 Forbidden` to both `WebFetch` and a direct `curl` with a browser user-agent (Cloudflare bot protection blocking automated fetches) and could not be independently read — nothing from them is cited below as confirming anything, both because they couldn't be verified and because community forum threads are excluded by this task's own methodology regardless.
+
+### Question 1 — does `authorization_code` broker real third-party consent?
+
+**(a) Yes.** A genuine `/oauth2/authorize` endpoint exists, distinct from the `client_credentials`/self-generated-secret pattern this app already uses. Flair's own official Postman doc, "Authorization (OAuth 2.0)" section, states verbatim:
+
+> "The Flair API uses OAuth2 for Authorization. We support all OAuth workflows... Third parties can request authorization here by redirecting the user to a url like `/oauth2/authorize?client_id={application id}&redirect_uri={uri to return the user to}&scope={' ' (space) separated list of scopes}&response_type=code&state={state to verify the request wasn't tampered with}`."
+
+This names a distinct third-party `client_id` ("application id"), a `redirect_uri` back to the third party's own app, and a CSRF-protecting `state` parameter — exactly the shape of a genuine third-party consent broker, not a restatement of the per-account self-generated Client ID/Secret pattern. **Caveat, stated explicitly rather than inferred**: the doc describes the endpoint's request parameters and mechanism but contains no screenshot or literal textual description of the consent/"Allow access" screen UI itself — that specific visual detail could not be confirmed from any primary source found, only inferred from the redirect-based mechanism's standard OAuth shape.
+
+**(b) Registration is real, but gated behind Flair-granted "Partner" status — there is no self-service developer portal or application form.** The same section continues, verbatim:
+
+> "Only Authorized Users, 'Partners', may register OAuth clients with the API. Contact partners@flair.co for more information."
+
+This is an email-based request process, not a portal or form. Whether Flair's side of that process involves a review, a formal agreement, or is granted informally on request is **not stated in any primary source found** and could not be confirmed either way.
+
+**(c) `redirect_uri` registration is also explicit and email-based**, per the same source, continuing directly from the `/oauth2/authorize` description quoted above:
+
+> "Third parties must register their redirect URIs with Flair. Please email your Flair contact or partners@flair.co to register your URI."
+
+**(d) This is not the standard/free Developer API tier — it requires the separate "Partner" gate above.** The standard tier (already in use by this app) is the self-service flow, confirmed by the same doc's own instruction — "You may find your Flair API OAuth 2.0 credentials inside of your Flair App under the Account Settings menu... under Developer Settings" — which matches this app's existing BYO-credentials onboarding exactly. No fee is mentioned in any primary source found for "Partner" status; whether one exists could not be confirmed either way.
+
+**Source**: Flair's own official Postman-published API reference, "Flair API" (owner id `5353571`, published id `TzsbKTAG`): [documenter.getpostman.com/view/5353571/TzsbKTAG](https://documenter.getpostman.com/view/5353571/TzsbKTAG) — "Authorization (OAuth 2.0)" section.
+
+### Question 2 — is the ~50/day rate limit per-account or per-client-app, and is refresh exempt?
+
+**The ~50/day figure is confirmed in Flair's own official documentation — but only for the deprecated `/oauth/token` (OAuth 1.0/legacy) endpoint, not stated anywhere for the `/oauth2/token` (OAuth 2.0/v2) endpoint this app actually uses.** The same Postman doc's "Authentication (Deprecated OAuth 2.0)" section, describing `/oauth/token`, states verbatim:
+
+> "Rate Limiting: Please note that this endpoint is subject to a rate limit of **50 requests per day**. Exceeding this limit may result in requests being denied until the limit resets."
+
+The doc's separate "Authentication (OAuth 2.0)" section, describing the modern `/oauth2/token` endpoint (the one this app's own `client_credentials` discovery script actually calls), carries no rate-limit note at all — only "Registered clients may request credentials through this endpoint." **This is a real gap in the primary source, not a resolved answer either way**: Flair's own docs never state that the 50/day figure applies to (or is exempt for) the v2 endpoint this app depends on.
+
+**Scope (per-account vs. per-client-app): not stated anywhere in Flair's own documentation.** The rate-limit sentence quoted above is the entirety of what Flair's own docs say on the subject — it does not specify whether "50 requests per day" is scoped to the Flair user account, the registered OAuth client/app, an IP address, or something else. **Not confirmed either way by any source found.**
+
+**Refresh-token exemption from the rate limit: not stated by Flair anywhere found.** The `flair-api-client-py` README's own claim — "Reusing refresh tokens avoids hitting this limit since refresh operations don't count toward it" — appears only in that community-maintained client's own README, uncited to any Flair source. A full-text search of Flair's entire official Postman collection JSON (every endpoint's full description, ~227 KB) turned up no mention of refresh calls being exempt from any rate limit. **This claim remains unconfirmed against a Flair-authored primary source** — it should be treated as an unverified community claim, not a documented fact, until Flair's own docs are found to state it.
+
+**Refresh token expiry: not stated anywhere found, Flair or otherwise.** Flair's official docs show the `/oauth2/token` response shape (`access_token`, `expires_in`, `token_type`, `scope`, `refresh_token`) but never state how long the `refresh_token` value itself remains valid before it too expires. (Note: the doc's own example response shows `"expires_in": 3600` as a placeholder — this app's own live `client_credentials` discovery found a real value of `864000`, i.e. 10 days, confirming the doc's `3600` is illustrative, not the real figure; this has no bearing on refresh-token expiry either way, which is a separate, still-unconfirmed fact.) The community `flair-api-client-py` README likewise says nothing about refresh-token expiry. **Not confirmed by any source, primary or community.**
+
+**Source**: same Postman doc as above — "Authentication (OAuth 2.0)" and "Authentication (Deprecated OAuth 2.0)" sections — cross-checked against a full-text search of the underlying published collection JSON ([documenter.gw.postman.com/api/collections/5353571/TzsbKTAG](https://documenter.gw.postman.com/api/collections/5353571/TzsbKTAG?segregateAuth=true&versionTag=latest)) for every rate-limit/refresh/expiry-related term; nothing else found. Community source checked for comparison only, explicitly not treated as confirmation: `flair-systems/flair-api-client-py`, `README.md`, "Authorization" section: [github.com/flair-systems/flair-api-client-py/blob/master/README.md](https://github.com/flair-systems/flair-api-client-py/blob/master/README.md)

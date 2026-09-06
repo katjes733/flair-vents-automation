@@ -13,14 +13,19 @@ import {
   revokeManualOverride,
   getLatestOverridesForZones,
   getOverridesForZoneInRange,
+  getManualOverrideById,
   type ManualOverrideRow,
 } from "~/server/util/routes/manualOverride";
 
 export async function createOverrideForZone(
+  installationId: string,
   body: CreateManualOverrideRequest,
 ): Promise<ManualOverrideRow> {
   const zone = await getZoneById(body.zone_id);
-  if (!zone) {
+  // A column-level FK on zone_id guarantees the row *exists*, not that it
+  // belongs to the *caller's* installation — 404 (not 403) so a
+  // cross-tenant guess can't be distinguished from a genuinely unknown id.
+  if (!zone || zone.installationId !== installationId) {
     throw new HttpError(`Zone ${body.zone_id} not found.`, 404);
   }
 
@@ -55,21 +60,30 @@ export async function createOverrideForZone(
   });
 }
 
-export async function revokeOverride(id: string): Promise<void> {
+export async function revokeOverride(
+  installationId: string,
+  id: string,
+): Promise<void> {
+  const existing = await getManualOverrideById(id);
+  if (!existing || existing.installationId !== installationId) {
+    throw new HttpError(`Manual override ${id} not found.`, 404);
+  }
   await revokeManualOverride(id);
 }
 
 // Backs the Telemetry page's override activity lane — see "Stage 13,
 // Increment B" follow-up. Mirrors createOverrideForZone's own 404
-// convention: a bad zone id should fail clearly, not return an empty list
-// indistinguishable from "no overrides in this window."
+// convention: a bad or cross-tenant zone id should fail clearly, not
+// return an empty list indistinguishable from "no overrides in this
+// window."
 export async function getOverrideHistoryForZone(
+  installationId: string,
   zoneId: string,
   fromMs: number,
   toMs: number,
 ): Promise<ManualOverrideRow[]> {
   const zone = await getZoneById(zoneId);
-  if (!zone) {
+  if (!zone || zone.installationId !== installationId) {
     throw new HttpError(`Zone ${zoneId} not found.`, 404);
   }
   return getOverridesForZoneInRange(zoneId, fromMs, toMs);

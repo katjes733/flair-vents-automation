@@ -4,19 +4,45 @@ import {
   getTokenWithAuthorizationCode,
   getTokenWithRefreshToken,
   buildFlairAuthorizeUrl,
+  getEnvFlairCredentials,
 } from "~/server/util/auth";
 
 function fakeResponse(): Response {
   return new Response(null, { status: 200 });
 }
 
+const CREDENTIALS = {
+  clientId: "test-client-id",
+  clientSecret: "test-client-secret",
+};
+
+describe("getEnvFlairCredentials", () => {
+  const originalEnv = { ...process.env };
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("throws when FLAIR_CLIENT_ID or FLAIR_CLIENT_SECRET is missing", () => {
+    delete process.env.FLAIR_CLIENT_ID;
+    process.env.FLAIR_CLIENT_SECRET = "secret";
+    expect(() => getEnvFlairCredentials()).toThrow(/FLAIR_CLIENT_ID/);
+  });
+
+  it("returns the configured pair when both are set", () => {
+    process.env.FLAIR_CLIENT_ID = "env-id";
+    process.env.FLAIR_CLIENT_SECRET = "env-secret";
+    expect(getEnvFlairCredentials()).toEqual({
+      clientId: "env-id",
+      clientSecret: "env-secret",
+    });
+  });
+});
+
 describe("auth grant callers", () => {
   const originalEnv = { ...process.env };
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    process.env.FLAIR_CLIENT_ID = "test-client-id";
-    process.env.FLAIR_CLIENT_SECRET = "test-client-secret";
     process.env.FLAIR_API_BASE_URL = "https://api.flair.test";
     delete process.env.FLAIR_SCOPE;
     fetchMock = vi.fn().mockResolvedValue(fakeResponse());
@@ -28,15 +54,8 @@ describe("auth grant callers", () => {
     vi.unstubAllGlobals();
   });
 
-  it("throws when FLAIR_CLIENT_ID or FLAIR_CLIENT_SECRET is missing", async () => {
-    delete process.env.FLAIR_CLIENT_ID;
-    await expect(getTokenWithClientCredentials()).rejects.toThrow(
-      /FLAIR_CLIENT_ID/,
-    );
-  });
-
-  it("posts client_credentials with client id/secret in the body", async () => {
-    await getTokenWithClientCredentials();
+  it("posts client_credentials with the passed-in client id/secret in the body", async () => {
+    await getTokenWithClientCredentials(CREDENTIALS);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://api.flair.test/oauth2/token");
     const body = new URLSearchParams(init.body as string);
@@ -47,7 +66,7 @@ describe("auth grant callers", () => {
 
   it("includes scope in the body when FLAIR_SCOPE is set", async () => {
     process.env.FLAIR_SCOPE = "vents.view vents.edit";
-    await getTokenWithClientCredentials();
+    await getTokenWithClientCredentials(CREDENTIALS);
     const [, init] = fetchMock.mock.calls[0];
     const body = new URLSearchParams(init.body as string);
     expect(body.get("scope")).toBe("vents.view vents.edit");
@@ -55,6 +74,7 @@ describe("auth grant callers", () => {
 
   it("posts authorization_code with the code and redirect_uri", async () => {
     await getTokenWithAuthorizationCode(
+      CREDENTIALS,
       "the-code",
       "https://app.test/callback",
     );
@@ -66,7 +86,7 @@ describe("auth grant callers", () => {
   });
 
   it("posts refresh_token with the refresh token", async () => {
-    await getTokenWithRefreshToken("the-refresh-token");
+    await getTokenWithRefreshToken(CREDENTIALS, "the-refresh-token");
     const [, init] = fetchMock.mock.calls[0];
     const body = new URLSearchParams(init.body as string);
     expect(body.get("grant_type")).toBe("refresh_token");
@@ -74,7 +94,7 @@ describe("auth grant callers", () => {
   });
 
   it("builds an authorize URL with response_type, client_id, redirect_uri and state", () => {
-    const url = buildFlairAuthorizeUrl({
+    const url = buildFlairAuthorizeUrl(CREDENTIALS, {
       redirectUri: "https://app.test/callback",
       state: "abc123",
     });

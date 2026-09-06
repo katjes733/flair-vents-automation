@@ -4,12 +4,27 @@ import request from "supertest";
 import { errorHandler } from "~/server/middleware/errorHandler";
 import { HttpError } from "~/server/util/httpError";
 
-const { getOrCreateDefaultInstallation } = vi.hoisted(() => ({
-  getOrCreateDefaultInstallation: vi.fn(),
+vi.mock("~/server/middleware/resolveActorMiddleware", () => ({
+  resolveActorMiddleware: (req: any, _res: any, next: any) => {
+    req.actor = {
+      loginEmail: "a@example.com",
+      source: "member",
+      installationId: "inst-1",
+      role: "owner",
+      profile: "admin",
+      scope: { airHandlerIds: "*" },
+    };
+    next();
+  },
 }));
-vi.mock("~/server/util/routes/installation", () => ({
-  getOrCreateDefaultInstallation,
+vi.mock("~/server/middleware/requirePermission", () => ({
+  requirePermission: () => (_req: any, _res: any, next: any) => next(),
 }));
+
+const { getInstallationById } = vi.hoisted(() => ({
+  getInstallationById: vi.fn(),
+}));
+vi.mock("~/server/util/routes/installation", () => ({ getInstallationById }));
 
 const { getAirHandlersForInstallation, getAirHandlerById } = vi.hoisted(() => ({
   getAirHandlersForInstallation: vi.fn(),
@@ -64,9 +79,9 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  getOrCreateDefaultInstallation
+  getInstallationById
     .mockReset()
-    .mockResolvedValue({ id: "inst-1" });
+    .mockResolvedValue({ id: "inst-1", flairStructureId: null });
   getAirHandlersForInstallation.mockReset();
   getAirHandlerById.mockReset();
   createAirHandlerForInstallation.mockReset();
@@ -79,21 +94,30 @@ beforeEach(() => {
 });
 
 describe("GET /api/v1/air-handlers", () => {
-  it("lists every air handler for the installation", async () => {
+  it("lists every air handler for the caller's own installation", async () => {
     getAirHandlersForInstallation.mockResolvedValue([{ id: "ah-1" }]);
     const res = await request(buildApp()).get("/api/v1/air-handlers");
     expect(res.status).toBe(200);
     expect(res.body).toEqual([{ id: "ah-1" }]);
+    expect(getAirHandlersForInstallation).toHaveBeenCalledWith("inst-1");
   });
 });
 
 describe("GET /api/v1/air-handlers/flair-zones", () => {
   beforeEach(() => {
     getFlairClient.mockReturnValue({ fetchZones });
-    getOrCreateDefaultInstallation.mockResolvedValue({
+    getInstallationById.mockResolvedValue({
       id: "inst-1",
       flairStructureId: null,
     });
+  });
+
+  it("404s when the caller's installation can't be found", async () => {
+    getInstallationById.mockResolvedValue(null);
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/flair-zones",
+    );
+    expect(res.status).toBe(404);
   });
 
   it("400s when auto-linking finds no Flair structure on the account", async () => {
@@ -146,6 +170,15 @@ describe("GET /api/v1/air-handlers/:id", () => {
     const res = await request(buildApp()).get("/api/v1/air-handlers/missing");
     expect(res.status).toBe(404);
   });
+
+  it("404s (not 403) when the air handler belongs to a different installation", async () => {
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-other",
+    });
+    const res = await request(buildApp()).get("/api/v1/air-handlers/ah-1");
+    expect(res.status).toBe(404);
+  });
 });
 
 describe("POST /api/v1/air-handlers", () => {
@@ -154,18 +187,21 @@ describe("POST /api/v1/air-handlers", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates with a well-formed body", async () => {
+  it("creates with a well-formed body, scoped to the caller's installation", async () => {
     createAirHandlerForInstallation.mockResolvedValue({ id: "ah-1" });
     const res = await request(buildApp())
       .post("/api/v1/air-handlers")
       .send({ name: "Upstairs" });
     expect(res.status).toBe(201);
     expect(res.body).toEqual({ id: "ah-1" });
+    expect(createAirHandlerForInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({ installationId: "inst-1" }),
+    );
   });
 });
 
 describe("PATCH /api/v1/air-handlers/:id", () => {
-  it("updates with a well-formed partial body", async () => {
+  it("updates with a well-formed partial body, passing the caller's installationId", async () => {
     updateAirHandlerWithValidation.mockResolvedValue({
       id: "ah-1",
       active: true,
@@ -175,15 +211,23 @@ describe("PATCH /api/v1/air-handlers/:id", () => {
       .send({ active: true });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: "ah-1", active: true });
+    expect(updateAirHandlerWithValidation).toHaveBeenCalledWith(
+      "inst-1",
+      "ah-1",
+      expect.objectContaining({ active: true }),
+    );
   });
 });
 
 describe("DELETE /api/v1/air-handlers/:id", () => {
-  it("deletes and returns 204", async () => {
+  it("deletes and returns 204, scoped to the caller's installation", async () => {
     deleteAirHandlerWithValidation.mockResolvedValue(undefined);
     const res = await request(buildApp()).delete("/api/v1/air-handlers/ah-1");
     expect(res.status).toBe(204);
-    expect(deleteAirHandlerWithValidation).toHaveBeenCalledWith("ah-1");
+    expect(deleteAirHandlerWithValidation).toHaveBeenCalledWith(
+      "inst-1",
+      "ah-1",
+    );
   });
 
   it("propagates a 409 when zones still reference it", async () => {
@@ -196,8 +240,32 @@ describe("DELETE /api/v1/air-handlers/:id", () => {
 });
 
 describe("GET /api/v1/air-handlers/:id/tick-decision", () => {
+  it("404s when the air handler doesn't exist", async () => {
+    getAirHandlerById.mockResolvedValue(null);
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/ah-1/tick-decision",
+    );
+    expect(res.status).toBe(404);
+    expect(getCachedTickDecision).not.toHaveBeenCalled();
+  });
+
+  it("404s (not 403) when the air handler belongs to a different installation", async () => {
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-other",
+    });
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/ah-1/tick-decision",
+    );
+    expect(res.status).toBe(404);
+  });
+
   it("404s before the handler has ever ticked", async () => {
-    getCachedTickDecision.mockReturnValue(null);
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-1",
+    });
+    getCachedTickDecision.mockResolvedValue(null);
     const res = await request(buildApp()).get(
       "/api/v1/air-handlers/ah-1/tick-decision",
     );
@@ -205,7 +273,11 @@ describe("GET /api/v1/air-handlers/:id/tick-decision", () => {
   });
 
   it("returns the cached decision", async () => {
-    getCachedTickDecision.mockReturnValue({ air_handler_id: "ah-1" });
+    getAirHandlerById.mockResolvedValue({
+      id: "ah-1",
+      installationId: "inst-1",
+    });
+    getCachedTickDecision.mockResolvedValue({ air_handler_id: "ah-1" });
     const res = await request(buildApp()).get(
       "/api/v1/air-handlers/ah-1/tick-decision",
     );

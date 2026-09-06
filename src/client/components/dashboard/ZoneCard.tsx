@@ -22,6 +22,7 @@ import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
 import { formatPct } from "~/client/util/formatPct";
 import { formatDispatchStatus } from "~/client/util/formatDispatchStatus";
 import ZoneOverrideDialog from "~/client/components/dashboard/ZoneOverrideDialog";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface ZoneCardProps {
   zone: Zone;
@@ -62,6 +63,9 @@ export default function ZoneCard({
   const theme = useTheme();
   const { temperatureUnit } = useDisplayUnit();
   const { showNotification } = useNotification();
+  const canEdit = useCanWrite("dashboard.zone.edit");
+  const canCreateOverride = useCanWrite("dashboard.zone.override.create");
+  const canRevokeOverride = useCanWrite("dashboard.zone.override.revoke");
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
   const isControllable = zone.ventHardwareType === "flair_smart_vent";
 
@@ -283,16 +287,24 @@ export default function ZoneCard({
         </DiagnosticOnly>
 
         <Box sx={{ mt: 1.5, display: "flex", gap: 1 }}>
-          <Button size="small" onClick={() => onEdit(zone)}>
+          <Button size="small" disabled={!canEdit} onClick={() => onEdit(zone)}>
             Edit
           </Button>
           {isControllable &&
             (activeOverride ? (
-              <Button size="small" onClick={handleRevoke}>
+              <Button
+                size="small"
+                disabled={!canRevokeOverride}
+                onClick={handleRevoke}
+              >
                 Clear override
               </Button>
             ) : (
-              <Button size="small" onClick={() => setOverrideDialogOpen(true)}>
+              <Button
+                size="small"
+                disabled={!canCreateOverride}
+                onClick={() => setOverrideDialogOpen(true)}
+              >
                 Set manual override
               </Button>
             ))}

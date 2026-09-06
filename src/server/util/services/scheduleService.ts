@@ -109,6 +109,7 @@ export async function createScheduleForInstallation(params: {
 }
 
 export async function updateScheduleWithValidation(
+  installationId: string,
   scheduleId: string,
   patch: Partial<{
     name: string;
@@ -117,7 +118,10 @@ export async function updateScheduleWithValidation(
   }>,
 ): Promise<ScheduleData> {
   const existing = await getScheduleById(scheduleId);
-  if (!existing) {
+  // A column-level FK guarantees the row *exists*, not that it belongs to
+  // the *caller's* installation — 404 (not 403) so a cross-tenant guess
+  // can't be distinguished from a genuinely unknown id.
+  if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Schedule ${scheduleId} not found.`, 404);
   }
   const existingById = new Map(existing.events.map((e) => [e.id, e]));
@@ -135,10 +139,11 @@ export async function updateScheduleWithValidation(
 }
 
 export async function deleteScheduleWithValidation(
+  installationId: string,
   scheduleId: string,
 ): Promise<void> {
   const existing = await getScheduleById(scheduleId);
-  if (!existing) {
+  if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Schedule ${scheduleId} not found.`, 404);
   }
   await deleteSchedule(scheduleId);

@@ -105,8 +105,23 @@ describe("updateScheduleWithValidation", () => {
   it("404s when the schedule doesn't exist", async () => {
     getScheduleById.mockResolvedValue(null);
     await expect(
-      updateScheduleWithValidation("missing", { name: "New" }),
+      updateScheduleWithValidation("inst-1", "missing", { name: "New" }),
     ).rejects.toThrow(/not found/);
+  });
+
+  // Regression test: a column-level FK guarantees the row exists, not
+  // that it belongs to the caller's own installation.
+  it("404s (not 403) when the schedule belongs to a different installation", async () => {
+    getScheduleById.mockResolvedValue({
+      id: "s1",
+      installationId: "inst-other",
+      events: [],
+      config: { enabled: true, default_inactive: false },
+    });
+    await expect(
+      updateScheduleWithValidation("inst-1", "s1", { name: "New" }),
+    ).rejects.toThrow(/not found/);
+    expect(updateSchedule).not.toHaveBeenCalled();
   });
 
   it("preserves an existing event's created_at while bumping modified_at", async () => {
@@ -130,7 +145,7 @@ describe("updateScheduleWithValidation", () => {
       })
       .mockResolvedValueOnce({ id: "s1", name: "Updated" });
 
-    await updateScheduleWithValidation("s1", {
+    await updateScheduleWithValidation("inst-1", "s1", {
       events: [
         {
           id: "11111111-1111-4111-8111-111111111111",
@@ -153,15 +168,26 @@ describe("updateScheduleWithValidation", () => {
 describe("deleteScheduleWithValidation", () => {
   it("404s when the schedule doesn't exist", async () => {
     getScheduleById.mockReset().mockResolvedValue(null);
-    await expect(deleteScheduleWithValidation("missing")).rejects.toThrow(
+    await expect(
+      deleteScheduleWithValidation("inst-1", "missing"),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it("404s (not 403) when the schedule belongs to a different installation", async () => {
+    getScheduleById
+      .mockReset()
+      .mockResolvedValue({ id: "s1", installationId: "inst-other" });
+    await expect(deleteScheduleWithValidation("inst-1", "s1")).rejects.toThrow(
       /not found/,
     );
   });
 
   it("deletes cleanly when it exists", async () => {
-    getScheduleById.mockReset().mockResolvedValue({ id: "s1" });
+    getScheduleById
+      .mockReset()
+      .mockResolvedValue({ id: "s1", installationId: "inst-1" });
     deleteSchedule.mockReset().mockResolvedValue(undefined);
-    await deleteScheduleWithValidation("s1");
+    await deleteScheduleWithValidation("inst-1", "s1");
     expect(deleteSchedule).toHaveBeenCalledWith("s1");
   });
 });

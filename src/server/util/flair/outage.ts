@@ -1,45 +1,48 @@
+import {
+  getOutageState,
+  setOutageState,
+  type OutageState,
+} from "~/server/util/flair/outageStore";
+
 export interface OutageTracker {
-  recordFailure(now?: number): void;
-  recordSuccess(now?: number): void;
-  isFailing(): boolean;
-  /** Null when not currently failing — the scheduler's own once-per-cycle poll for the "extended outage" alert reads this, rather than this tracker sending email itself. */
-  failingSinceMs(): number | null;
+  recordFailure(now?: number): Promise<void>;
+  recordSuccess(now?: number): Promise<void>;
+  getState(): Promise<OutageState>;
 }
 
 // Logs "Flair outage detected"/"Flair outage cleared" exactly once each
 // transition, not once per failed tick — a control tick every 60s hitting a
-// real outage would otherwise flood Loki with the same fact repeated.
+// real outage would otherwise flood Loki with the same fact repeated. State
+// itself lives in Redis (outageStore.ts), keyed per installation — not in a
+// closure — so the "exactly once" guarantee holds across worker processes,
+// not just within one; see outageStore.ts's own comment for why that
+// distinction is real once ticks can run on more than one worker.
 export function createOutageTracker(installationId: string): OutageTracker {
-  let failing = false;
-  let since: number | null = null;
   const log = logger.child({
     service: "flair",
     installation_id: installationId,
   });
 
   return {
-    recordFailure(now: number = Date.now()) {
-      if (!failing) {
-        failing = true;
-        since = now;
+    async recordFailure(now: number = Date.now()) {
+      const state = await getOutageState(installationId);
+      if (!state.failing) {
+        await setOutageState(installationId, { failing: true, sinceMs: now });
         log.error("Flair outage detected");
       }
     },
-    recordSuccess(now: number = Date.now()) {
-      if (failing && since !== null) {
+    async recordSuccess(now: number = Date.now()) {
+      const state = await getOutageState(installationId);
+      if (state.failing && state.sinceMs !== null) {
         log.info(
-          { outage_duration_s: Math.round((now - since) / 1000) },
+          { outage_duration_s: Math.round((now - state.sinceMs) / 1000) },
           "Flair outage cleared",
         );
       }
-      failing = false;
-      since = null;
+      await setOutageState(installationId, { failing: false, sinceMs: null });
     },
-    isFailing() {
-      return failing;
-    },
-    failingSinceMs() {
-      return failing ? since : null;
+    async getState() {
+      return getOutageState(installationId);
     },
   };
 }

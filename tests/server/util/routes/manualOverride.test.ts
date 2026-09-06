@@ -12,12 +12,18 @@ const { createQueryBuilder } = vi.hoisted(() => {
   builder.getMany = vi.fn();
   return { createQueryBuilder: vi.fn(() => builder) };
 });
-const { insert, update } = vi.hoisted(() => ({
+const { insert, update, findOneBy } = vi.hoisted(() => ({
   insert: vi.fn(),
   update: vi.fn(),
+  findOneBy: vi.fn(),
 }));
 const { getRepository } = vi.hoisted(() => ({
-  getRepository: vi.fn(() => ({ createQueryBuilder, insert, update })),
+  getRepository: vi.fn(() => ({
+    createQueryBuilder,
+    insert,
+    update,
+    findOneBy,
+  })),
 }));
 vi.mock("~/server/database/datasource", () => ({
   default: { getInstance: vi.fn().mockResolvedValue({ getRepository }) },
@@ -28,6 +34,7 @@ const {
   getOverridesForZoneInRange,
   createManualOverride,
   revokeManualOverride,
+  getManualOverrideById,
 } = await import("~/server/util/routes/manualOverride");
 
 describe("getLatestOverridesForZones", () => {
@@ -138,6 +145,49 @@ describe("getOverridesForZoneInRange", () => {
     ]);
     expect(builder.where).toHaveBeenCalledWith("mo.zone_id = :zoneId", {
       zoneId: "z1",
+    });
+  });
+});
+
+describe("getManualOverrideById", () => {
+  beforeEach(() => {
+    findOneBy.mockReset();
+  });
+
+  it("returns null when no row exists for that id", async () => {
+    findOneBy.mockResolvedValue(null);
+    expect(await getManualOverrideById("missing")).toBeNull();
+  });
+
+  it("maps a found row, including installationId", async () => {
+    findOneBy.mockResolvedValue({
+      id: "mo-1",
+      installation_id: "inst-1",
+      zone_id: "z1",
+      config: {
+        kind: "position",
+        value: 50,
+        hold_type: "permanent",
+        actor: "Martin",
+      },
+      creation_time: new Date("2026-01-01T00:00:00.000Z"),
+      expires_at: null,
+      revoked_at: null,
+    });
+    const result = await getManualOverrideById("mo-1");
+    expect(result).toEqual({
+      id: "mo-1",
+      installationId: "inst-1",
+      zoneId: "z1",
+      config: {
+        kind: "position",
+        value: 50,
+        hold_type: "permanent",
+        actor: "Martin",
+      },
+      createdAtMs: new Date("2026-01-01T00:00:00.000Z").getTime(),
+      expiresAtMs: null,
+      revokedAtMs: null,
     });
   });
 });

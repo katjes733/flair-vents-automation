@@ -201,7 +201,10 @@ export class FakeFlairClient implements FlairClient {
     this.outageState = state;
   }
 
-  getOutageState(): { failing: boolean; sinceMs: number | null } {
+  async getOutageState(): Promise<{
+    failing: boolean;
+    sinceMs: number | null;
+  }> {
     return this.outageState;
   }
 
@@ -211,7 +214,10 @@ export class FakeFlairClient implements FlairClient {
     this.refreshFailureState = state;
   }
 
-  getTokenRefreshFailureState(): { terminal: boolean; message: string } | null {
+  async getTokenRefreshFailureState(): Promise<{
+    terminal: boolean;
+    message: string;
+  } | null> {
     return this.refreshFailureState;
   }
 

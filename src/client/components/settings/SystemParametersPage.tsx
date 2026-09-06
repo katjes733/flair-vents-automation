@@ -37,6 +37,7 @@ import {
   type DisplayUnits,
   type ParamFieldDef,
 } from "~/client/components/settings/systemParameterFields";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 type DraftValues = Record<string, string>;
 
@@ -97,6 +98,7 @@ export default function SystemParametersPage() {
     [temperatureUnit, airflowUnit],
   );
   const { showNotification } = useNotification();
+  const canWrite = useCanWrite("systemParameters.write");
 
   const [savedConfig, setSavedConfig] = useState<SystemSettings | null>(null);
   const [draft, setDraft] = useState<DraftValues>({});
@@ -380,7 +382,7 @@ export default function SystemParametersPage() {
           <Button
             variant="contained"
             size="small"
-            disabled={totalDirtyCount === 0 || saving}
+            disabled={totalDirtyCount === 0 || saving || !canWrite}
             onClick={handleSave}
           >
             {saving

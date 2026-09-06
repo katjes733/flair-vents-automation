@@ -17,6 +17,7 @@ import {
   setStoredActor,
 } from "~/client/api/controlApi";
 import { useNotification } from "~/client/components/notification/useNotification";
+import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface GlobalStatusBarProps {
   controlDisarmed: boolean;
@@ -43,6 +44,8 @@ export default function GlobalStatusBar({
   children,
 }: GlobalStatusBarProps) {
   const { showNotification } = useNotification();
+  const canDisarm = useCanWrite("dashboard.controlDisarm.disarm");
+  const canRearm = useCanWrite("dashboard.controlDisarm.rearm");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [actor, setActor] = useState(getStoredActor);
   const [submitting, setSubmitting] = useState(false);
@@ -95,6 +98,7 @@ export default function GlobalStatusBar({
               variant={controlDisarmed ? "contained" : "outlined"}
               color={controlDisarmed ? "inherit" : "error"}
               size="small"
+              disabled={controlDisarmed ? !canRearm : !canDisarm}
               onClick={() => setConfirmOpen(true)}
             >
               {controlDisarmed ? "Resume Automatic Control" : "Disarm Control"}

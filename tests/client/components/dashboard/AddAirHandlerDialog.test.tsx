@@ -16,6 +16,9 @@ vi.mock("~/client/api/airHandlersApi", () => ({
   fetchAvailableFlairZones,
 }));
 
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
+vi.mock("~/client/session/useSession", () => ({ useSession }));
+
 const { default: AddAirHandlerDialog } =
   await import("~/client/components/dashboard/AddAirHandlerDialog");
 
@@ -37,6 +40,7 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn(), open = true) {
 
 describe("AddAirHandlerDialog", () => {
   beforeEach(() => {
+    useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
     createAirHandler.mockReset().mockResolvedValue({ id: "ah-1" });
     fetchAvailableFlairZones.mockReset().mockResolvedValue([
       {
@@ -55,6 +59,15 @@ describe("AddAirHandlerDialog", () => {
       target: { value: "Upstairs" },
     });
     expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
+  });
+
+  it("keeps Create disabled for a read profile even with a name entered", () => {
+    useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Upstairs" },
+    });
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
   });
 
   it("submits name/tonnage/flair zone id and calls onCreated + onClose", async () => {
