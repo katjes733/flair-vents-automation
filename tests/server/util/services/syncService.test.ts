@@ -235,6 +235,53 @@ describe("runSync", () => {
     );
   });
 
+  it("picks up every new vent when a room retrofits with more than one at once, not just the first", async () => {
+    fetchSyncCandidates.mockResolvedValue([
+      room({ liveVentIds: ["vent-a", "vent-b", "vent-c"] }),
+    ]);
+    getZonesForAirHandler.mockResolvedValue([
+      {
+        id: "z1",
+        name: "Martin Office",
+        flairRoomId: "room-1",
+        ventHardwareType: "manual_fixed_vent",
+        config: {
+          flair_vents: [],
+          manual_vents: [{ position: 75 }],
+          has_temperature_sensor: true,
+          has_occupancy_sensor: false,
+        },
+      },
+    ]);
+
+    await runSync({
+      installationId: "inst-1",
+      airHandlerId: "ah-1",
+      structureId: "s1",
+      flairZoneId: "fz1",
+      client: fakeClient(),
+      alerting: createInMemoryAlertingClient(),
+      rateFloorMinutes: 15,
+      nowMs: 1000,
+    });
+
+    expect(updateZoneWithValidation).toHaveBeenCalledWith(
+      "inst-1",
+      "z1",
+      expect.objectContaining({
+        ventHardwareType: "flair_smart_vent",
+        config: expect.objectContaining({
+          flair_vents: [
+            { flair_vent_id: "vent-a" },
+            { flair_vent_id: "vent-b" },
+            { flair_vent_id: "vent-c" },
+          ],
+          manual_vents: [],
+        }),
+      }),
+    );
+  });
+
   it("returns unmatched rooms without touching the DB", async () => {
     fetchSyncCandidates.mockResolvedValue([
       room({ flairRoomId: "room-2", name: "Garage" }),
