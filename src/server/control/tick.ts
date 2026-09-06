@@ -1371,10 +1371,31 @@ export async function runTick(
       alertMinutes: ctx.settings.hvac_no_improvement_alert_minutes,
     })
   ) {
+    // Two genuinely different situations were previously reported with
+    // the same "worst deviation 0.00°C, vs 0.00°C at call start" wording,
+    // and a reader had no way to tell which one they were looking at: a
+    // demanding zone whose deviation truly hasn't shrunk (the alert's own
+    // reason for existing), vs. zero demanding zones this app tracks at
+    // all — in which case 0.00°C isn't "nothing to report," it's "we
+    // can't see what's sustaining this call," e.g. an unsensored zone or
+    // the thermostat's own comfort-setting reading. Naming the actual
+    // worst zone (when one exists) also makes the alert directly
+    // actionable instead of a bare number with nothing to look at.
+    const worstZoneCandidate = drivingCandidates
+      .filter((c) => c.demanding)
+      .reduce<DrivingZoneCandidate | null>(
+        (worst, c) =>
+          worst === null || c.deviation > worst.deviation ? c : worst,
+        null,
+      );
+    const text =
+      demandingZoneCount === 0
+        ? `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s), but no zone this app tracks has been actively demanding the entire time — the call may be sustained by something outside this app's visibility (an unsensored zone, or the thermostat's own comfort-setting sensor group), not necessarily a problem with this app's own control.`
+        : `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no measurable improvement in its worst-off zone, "${zones.find((z) => z.id === worstZoneCandidate?.zoneId)?.name ?? worstZoneCandidate?.zoneId}" (deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`;
     await deps.alerting.alertOnce({
       key: hvacNoImprovementKey,
       subject: `${airHandler.name}: HVAC call running with no improvement`,
-      text: `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no zone measurably closer to target (worst deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`,
+      text,
       rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
       nowMs: startedAtMs,
     });

@@ -197,4 +197,42 @@ describe("stabilizeClassification", () => {
       pendingSinceMs: NOW,
     });
   });
+
+  // Regression test for a real, confirmed bug: a zone recovering from a
+  // stale/unavailable reading (classified "unclassified_no_sensor" on the
+  // previous tick) was held in a dwell before its real classification was
+  // reported, contradicting the Stale Sensor Reading Safeguard's own
+  // "resumes immediately" contract — traced live via a real production
+  // alert where a zone's sensor resumed reporting at one tick but the
+  // zone wasn't treated as demanding again until 3 minutes (a full
+  // stabilizationMinutes dwell) later.
+  it("adopts the raw value immediately when recovering from unclassified_no_sensor, with no dwell", () => {
+    const result = stabilizeClassification({
+      raw: "demanding",
+      previousClassification: "unclassified_no_sensor",
+      previousPending: null,
+      nowMs: NOW,
+      stabilizationMinutes: 5,
+    });
+    expect(result).toEqual({
+      classification: "demanding",
+      pendingClassification: null,
+      pendingSinceMs: null,
+    });
+  });
+
+  it("adopts the raw value immediately when recovering to satisfied from unclassified_no_sensor, even with a stale pending flip in flight", () => {
+    const result = stabilizeClassification({
+      raw: "satisfied",
+      previousClassification: "unclassified_no_sensor",
+      previousPending: { classification: "demanding", sinceMs: NOW - 60_000 },
+      nowMs: NOW,
+      stabilizationMinutes: 5,
+    });
+    expect(result).toEqual({
+      classification: "satisfied",
+      pendingClassification: null,
+      pendingSinceMs: null,
+    });
+  });
 });
