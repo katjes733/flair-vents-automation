@@ -60,6 +60,7 @@ jobs:
             -v /share/Container/container-data/flair-vents-automation/certs:/app/ssl:ro \
             -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
             -e NODE_ENV=production \
+            -e DRY_RUN="${{ secrets.DRY_RUN }}" \
             -e PORT=3001 \
             -e DB_HOST="${{ secrets.DB_HOST }}" \
             -e DB_PORT="${{ secrets.DB_PORT }}" \
@@ -128,6 +129,7 @@ jobs:
             --log-opt "loki-pipeline-stages=${LOKI_PIPELINE}" \
             -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
             -e NODE_ENV=production \
+            -e DRY_RUN="${{ secrets.DRY_RUN }}" \
             -e DB_HOST="${{ secrets.DB_HOST }}" \
             -e DB_PORT="${{ secrets.DB_PORT }}" \
             -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
