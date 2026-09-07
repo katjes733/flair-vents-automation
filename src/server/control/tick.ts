@@ -566,7 +566,7 @@ export async function runTick(
           ctx.settings.equipment_fault_duct_delta_threshold_c,
         zones: ductZones,
       })
-    : { faulted: false, reason: "not in a call state" };
+    : { faulted: false, reason: "not in a call state", ductDeltasC: [] };
 
   let faultActive = priorRuntime.equipmentFaultActive ?? false;
   let faultClearDwellSinceMs =
@@ -574,10 +574,19 @@ export async function runTick(
   const failSafeAlertKey = `alert:failsafe:${airHandler.id}`;
   if (faultCheck.faulted) {
     if (!faultActive) {
+      const closestToPassing = faultCheck.ductDeltasC.reduce<number | null>(
+        (best, d) => (best === null || d.deltaC > best ? d.deltaC : best),
+        null,
+      );
       logEmergencyFailSafeTriggered(log, {
         air_handler_id: airHandler.id,
         fault_signal: "duct_temperature_differential",
-        duct_delta_c: ctx.settings.equipment_fault_duct_delta_threshold_c,
+        duct_delta_c: closestToPassing,
+        duct_deltas_c: faultCheck.ductDeltasC.map((d) => ({
+          zone_id: d.zoneId,
+          vent_id: d.ventId,
+          delta_c: d.deltaC,
+        })),
       });
       await deps.alerting.alertOnce({
         key: failSafeAlertKey,

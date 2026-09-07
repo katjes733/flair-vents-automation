@@ -1098,6 +1098,56 @@ describe("runTick — emergency fail-safe", () => {
     expect(decision.zones[0].temp_calibrated).toBeNull();
   });
 
+  // Regression test for a real, confirmed bug found live in production:
+  // the trigger log always reported the configured threshold constant
+  // (equipment_fault_duct_delta_threshold_c) as `duct_delta_c`, never the
+  // actual measured differential — making two real production triggers
+  // impossible to diagnose after the fact. Fixture's real delta (24-23=1)
+  // must appear, not the default threshold (5.56).
+  it("logs the real measured duct differential on trigger, not the configured threshold", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 23,
+        percentOpen: 20,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const deps = makeDeps(client, new Map(), NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("error")).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fault_signal: "duct_temperature_differential",
+        duct_delta_c: 1,
+        duct_deltas_c: [
+          expect.objectContaining({
+            zone_id: "z1",
+            vent_id: "vent-1",
+            delta_c: 1,
+          }),
+        ],
+      }),
+      "Emergency fail-safe triggered",
+    );
+  });
+
   // Regression test for a real, confirmed bug found live via telemetry
   // review: a stale duct reading used to be treated as live data (the
   // exclusion filter always saw ductReadingStale: false, unconditionally),

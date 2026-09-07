@@ -208,7 +208,13 @@ export function logZoneTelemetryPolled(
 export interface EmergencyFailSafeFields {
   air_handler_id: string;
   fault_signal: string;
+  // The closest-to-passing (least-severe) observed differential among the
+  // handler's usable vents — how close this was to NOT faulting. `null`
+  // only for the cleared event, which has no fault-time reading to report.
   duct_delta_c: number | null;
+  // Full per-vent breakdown, for real diagnosis of a specific trigger —
+  // absent on the cleared event (see above).
+  duct_deltas_c?: Array<{ zone_id: string; vent_id?: string; delta_c: number }>;
 }
 export function logEmergencyFailSafeTriggered(
   log: Logger,

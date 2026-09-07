@@ -78,6 +78,58 @@ describe("detectEquipmentFault", () => {
     expect(result.faulted).toBe(false);
     expect(result.reason).toMatch(/dormant/);
   });
+
+  // Regression test for a real, confirmed logging bug: the fault-trigger
+  // log used to report the configured threshold constant instead of the
+  // actual measured differential, making a real production trigger
+  // undiagnosable after the fact. The real per-vent deltas must be
+  // returned so the caller can log them.
+  it("returns the real, per-vent normalized deltas alongside a faulted result", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          zoneId: "z1",
+          ventId: "v1",
+          roomTemperatureC: 24,
+          ductTemperatureC: 23,
+        }),
+        zone({
+          zoneId: "z2",
+          ventId: "v2",
+          roomTemperatureC: 22,
+          ductTemperatureC: 22,
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(true);
+    expect(result.ductDeltasC).toEqual([
+      { zoneId: "z1", ventId: "v1", deltaC: 1 },
+      { zoneId: "z2", ventId: "v2", deltaC: 0 },
+    ]);
+  });
+
+  it("normalizes the delta sign for a heating call (positive still means closer to passing)", () => {
+    const result = detectEquipmentFault({
+      state: "HEATING_CALL",
+      gracePeriodMinutes: 10,
+      ductDeltaThresholdC: 5.56,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          zoneId: "z1",
+          ventId: "v1",
+          roomTemperatureC: 20,
+          ductTemperatureC: 21,
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(true);
+    expect(result.ductDeltasC).toEqual([
+      { zoneId: "z1", ventId: "v1", deltaC: 1 },
+    ]);
+  });
 });
 
 describe("detectDuctAirflowAnomaly", () => {
