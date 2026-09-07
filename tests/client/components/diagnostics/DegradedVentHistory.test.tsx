@@ -290,6 +290,13 @@ describe("DegradedVentHistory", () => {
     expect(screen.queryByText(/ago/)).not.toBeInTheDocument();
   });
 
+  it("explains what this section means via an info tooltip", () => {
+    renderPanel([makeZone()]);
+    expect(
+      screen.getByRole("button", { name: "About Currently Degraded Vents" }),
+    ).toBeInTheDocument();
+  });
+
   it("hides the current-status section when hideCurrentStatus is set", () => {
     render(
       <ThemeProvider theme={theme}>

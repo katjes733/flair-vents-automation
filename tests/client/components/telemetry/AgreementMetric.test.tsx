@@ -73,4 +73,13 @@ describe("AgreementMetric", () => {
       screen.getByText("No vent samples in this window yet"),
     ).toBeInTheDocument();
   });
+
+  it("explains what this metric means via an info tooltip", () => {
+    render(<AgreementMetric points={[]} />);
+    expect(
+      screen.getByRole("button", {
+        name: "About Agreement (mean |commanded − reported|)",
+      }),
+    ).toBeInTheDocument();
+  });
 });

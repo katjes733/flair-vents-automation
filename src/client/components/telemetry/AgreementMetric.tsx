@@ -2,11 +2,15 @@ import { useMemo } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { computeAgreementMetric } from "~/client/components/telemetry/chartData";
+import SectionHeading from "~/client/components/shared/SectionHeading";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 
 interface AgreementMetricProps {
   points: TickHistoryPoint[];
 }
+
+const AGREEMENT_DESCRIPTION =
+  "Only meaningful for an air handler still in Shadow Mode: the mean absolute gap between what this app computed as the target vent position and what Flair's own native control actually reported, across every vent sample in this window. A low number means this app's decisions closely track what's already happening live — the evidence to look at before ever promoting a handler off Shadow Mode.";
 
 /**
  * The rolling shadow-mode agreement metric named in "Shadow mode (dry
@@ -23,9 +27,11 @@ export default function AgreementMetric({ points }: AgreementMetricProps) {
 
   return (
     <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}>
-      <Typography variant="caption" color="text.secondary">
-        Agreement (mean |commanded − reported|)
-      </Typography>
+      <SectionHeading
+        title="Agreement (mean |commanded − reported|)"
+        description={AGREEMENT_DESCRIPTION}
+        variant="caption"
+      />
       <Typography variant="h6" fontWeight={600}>
         {meanAbsoluteDeltaPct !== null
           ? `${meanAbsoluteDeltaPct.toFixed(1)}%`

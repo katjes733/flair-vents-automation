@@ -11,6 +11,10 @@ import {
   findLatestVentName,
 } from "~/client/components/telemetry/chartData";
 import { formatChartDateTime } from "~/client/components/shared/charts/chartTime";
+import SectionHeading from "~/client/components/shared/SectionHeading";
+
+const DEGRADED_VENT_DESCRIPTION =
+  "A vent enters this state after failing to reach its commanded position across 3 retries with backoff. It keeps being commanded normally, but is excluded from the pressure-safeguard's aggregate open-area calculation while degraded — recovering automatically once it reports back on target.";
 
 interface DegradedVentHistoryProps {
   zones: Zone[];
@@ -92,9 +96,11 @@ export default function DegradedVentHistory({
     <Box>
       {!hideCurrentStatus && (
         <>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-            Currently Degraded Vents
-          </Typography>
+          <SectionHeading
+            title="Currently Degraded Vents"
+            description={DEGRADED_VENT_DESCRIPTION}
+            sx={{ mb: 1 }}
+          />
           {tiles.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
               No vents are currently degraded.
@@ -119,9 +125,11 @@ export default function DegradedVentHistory({
 
       {historyPoints && historyPoints.length > 0 && (
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-            Degraded Periods (this window)
-          </Typography>
+          <SectionHeading
+            title="Degraded Periods (this window)"
+            description={DEGRADED_VENT_DESCRIPTION}
+            sx={{ mb: 1 }}
+          />
           {historyTiles.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
               No degraded periods in this window.

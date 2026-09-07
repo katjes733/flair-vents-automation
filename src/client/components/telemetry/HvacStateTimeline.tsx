@@ -5,7 +5,11 @@ import Stack from "@mui/material/Stack";
 import { useTheme, type Theme } from "@mui/material/styles";
 import TimelineLane from "~/client/components/shared/charts/TimelineLane";
 import { buildStepSegments } from "~/client/components/shared/charts/timelineSegments";
+import SectionHeading from "~/client/components/shared/SectionHeading";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
+
+const HVAC_STATE_DESCRIPTION =
+  "Which call state the equipment was actually in over this window — Cooling/Heating (the compressor is running), Fan only, or Idle. Sourced from Flair's own reported operating state, never inferred from setpoint vs. ambient temperature.";
 
 interface HvacStateTimelineProps {
   points: TickHistoryPoint[];
@@ -71,9 +75,11 @@ export default function HvacStateTimeline({
 
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary">
-        HVAC State
-      </Typography>
+      <SectionHeading
+        title="HVAC State"
+        description={HVAC_STATE_DESCRIPTION}
+        variant="caption"
+      />
       <TimelineLane domain={domain} segments={segments} height={height} />
       <Stack direction="row" spacing={2} sx={{ mt: 0.5, flexWrap: "wrap" }}>
         {Object.entries(STATE_LABELS).map(([state, label]) => (

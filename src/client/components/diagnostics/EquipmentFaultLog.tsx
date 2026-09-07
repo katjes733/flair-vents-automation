@@ -9,6 +9,10 @@ import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import DiagnosticTile from "~/client/components/diagnostics/DiagnosticTile";
 import { computeFaultPeriodsForAirHandler } from "~/client/components/telemetry/chartData";
 import { formatChartDateTime } from "~/client/components/shared/charts/chartTime";
+import SectionHeading from "~/client/components/shared/SectionHeading";
+
+const EQUIPMENT_FAULT_DESCRIPTION =
+  "Fires when NONE of an air handler's smart vents show the expected duct-temperature differential for an active call past a grace period (10 minutes by default) — treated as a possible equipment fault (e.g. the compressor isn't actually running). Every smart vent is forced open to 100% until it clears. If even one vent shows the expected differential, that's a per-vent duct issue instead, not a whole-system fault.";
 
 interface EquipmentFaultLogProps {
   airHandlers: AirHandler[];
@@ -56,9 +60,11 @@ export default function EquipmentFaultLog({
     <Box>
       {!hideCurrentStatus && (
         <>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-            Equipment Fault Status
-          </Typography>
+          <SectionHeading
+            title="Equipment Fault Status"
+            description={EQUIPMENT_FAULT_DESCRIPTION}
+            sx={{ mb: 1 }}
+          />
           <Stack direction="row" flexWrap="wrap" gap={1.5}>
             {airHandlers.map((ah) => {
               const decision = tickDecisionsByAirHandlerId.get(ah.id);
@@ -83,9 +89,11 @@ export default function EquipmentFaultLog({
 
       {historyPoints && historyPoints.length > 0 && (
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-            Fault Periods (this window) — {historyAirHandlerName}
-          </Typography>
+          <SectionHeading
+            title={`Fault Periods (this window) — ${historyAirHandlerName}`}
+            description={EQUIPMENT_FAULT_DESCRIPTION}
+            sx={{ mb: 1 }}
+          />
           {historyPeriods.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
               No fault periods in this window.

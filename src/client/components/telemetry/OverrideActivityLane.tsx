@@ -6,7 +6,11 @@ import TimelineLane from "~/client/components/shared/charts/TimelineLane";
 import { computeOverrideSegments } from "~/client/components/telemetry/chartData";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
+import SectionHeading from "~/client/components/shared/SectionHeading";
 import type { ManualOverrideRecord } from "~/client/api/overridesApi";
+
+const MANUAL_OVERRIDE_DESCRIPTION =
+  "When a manual setpoint or vent-position hold was active for this zone — who set it, the held value, and for how long. A manual override takes priority over Away Mode and the schedule for as long as it's active.";
 
 interface OverrideActivityLaneProps {
   overrides: ManualOverrideRecord[];
@@ -50,9 +54,11 @@ export default function OverrideActivityLane({
 
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary">
-        Manual Override Activity
-      </Typography>
+      <SectionHeading
+        title="Manual Override Activity"
+        description={MANUAL_OVERRIDE_DESCRIPTION}
+        variant="caption"
+      />
       <TimelineLane domain={domain} segments={segments} height={height} />
       {overrides.length === 0 && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>

@@ -147,6 +147,13 @@ describe("EquipmentFaultLog", () => {
     expect(screen.queryByText(/ago/)).not.toBeInTheDocument();
   });
 
+  it("explains what this section means via an info tooltip", () => {
+    renderPanel(new Map([["ah-1", makeDecision()]]));
+    expect(
+      screen.getByRole("button", { name: "About Equipment Fault Status" }),
+    ).toBeInTheDocument();
+  });
+
   it("hides the current-status section when hideCurrentStatus is set", () => {
     render(
       <ThemeProvider theme={theme}>
