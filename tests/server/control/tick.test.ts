@@ -1120,12 +1120,12 @@ describe("runTick — emergency fail-safe", () => {
       },
     ]);
     // Override the vent reading's own timestamp to be old enough to cross
-    // the default 15-minute staleness threshold as of `NOW`.
+    // the default 25-minute staleness threshold as of `NOW`.
     client.setVentReading({
       ventId: "vent-1",
       percentOpen: 20,
       ductTemperatureC: 23,
-      createdAt: new Date(NOW - 20 * 60000).toISOString(),
+      createdAt: new Date(NOW - 30 * 60000).toISOString(),
     });
     const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
     const persisted = new Map<string, ZoneRuntimeState>();
@@ -1136,7 +1136,7 @@ describe("runTick — emergency fail-safe", () => {
       smoothedOffsetC: 0,
       lastPushedSetpointC: null,
       lastHvacState: "COOLING_CALL",
-      callStartedAtMs: NOW - 20 * 60000,
+      callStartedAtMs: NOW - 30 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
       worstDeviationAtCallStartC: null,

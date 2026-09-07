@@ -16,7 +16,7 @@ describe("resolveSystemSettings", () => {
     expect(settings.max_steps_per_tick).toBe(1);
     expect(settings.min_step_delta_pct).toBe(15);
     expect(settings.unoccupied_idle_factor).toBe(0.5);
-    expect(settings.stale_threshold_minutes).toBe(15);
+    expect(settings.stale_threshold_minutes).toBe(25);
     expect(settings.drive_zone_switch_margin_c).toBeCloseTo(0.3);
     expect(settings.drive_zone_switch_dwell_ticks).toBe(2);
     expect(settings.setpoint_push_rounding_c).toBeCloseTo(0.5);

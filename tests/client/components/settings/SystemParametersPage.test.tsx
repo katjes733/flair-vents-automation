@@ -73,7 +73,7 @@ describe("SystemParametersPage", () => {
     // "Position & ramp" has both common and advanced fields — the group
     // itself still renders, just with fewer rows than the full field list.
     expect(await screen.findByText("Position & ramp")).toBeInTheDocument();
-    expect(screen.getByLabelText("Staleness threshold (min)")).toHaveValue(15);
+    expect(screen.getByLabelText("Staleness threshold (min)")).toHaveValue(25);
     expect(
       screen.getByRole("button", {
         name: "Reset Staleness threshold (min) to default",
@@ -154,7 +154,7 @@ describe("SystemParametersPage", () => {
         name: "Reset Staleness threshold (min) to default",
       }),
     );
-    expect(field).toHaveValue(15);
+    expect(field).toHaveValue(25);
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
@@ -245,7 +245,7 @@ describe("SystemParametersPage", () => {
     const field = await screen.findByLabelText("Staleness threshold (min)");
     fireEvent.change(field, { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(field).toHaveValue(15);
+    expect(field).toHaveValue(25);
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
@@ -311,7 +311,7 @@ describe("SystemParametersPage", () => {
       ).not.toBeInTheDocument(),
     );
 
-    expect(staleField).toHaveValue(15);
+    expect(staleField).toHaveValue(25);
     expect(awayField).toHaveValue(82);
     expect(updateSettings).not.toHaveBeenCalled();
     // Reverted locally to defaults, which differ from what's actually saved
