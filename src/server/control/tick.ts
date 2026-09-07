@@ -37,7 +37,10 @@ import {
   evaluateSpike,
   type SpikeHysteresisState,
 } from "~/server/domain/sensors/spikeDetection";
-import { evaluateOccupancy } from "~/server/domain/sensors/occupancy";
+import {
+  evaluateOccupancy,
+  resolveTrustedOccupancy,
+} from "~/server/domain/sensors/occupancy";
 import {
   resolveZoneTargets,
   type GoverningEvent,
@@ -928,6 +931,14 @@ export async function runTick(
   // is exactly why Sleep Mode exists as a schedule-time override on top of
   // it, not instead of it. See "Occupancy" in the implementation plan.
   const occupiedByZone = new Map<string, boolean>();
+  // Position-math input only (Step 1's occupancy boost, effectiveIdleBaseline,
+  // Step 3's contention bucket, and driving-zone tie-break) — discounts the
+  // live signal once it's been sustained past occupancy_trust_window_minutes.
+  // Deliberately NOT used for occupiedByZone/the tick decision's own displayed
+  // `occupied` field, which stay showing the raw signal so the dashboard
+  // keeps agreeing with what Ecobee's own app reports. See resolveTrustedOccupancy.
+  const trustedOccupiedByZone = new Map<string, boolean>();
+  const occupiedSinceByZone = new Map<string, number | null>();
   const occupancyHysteresisByZone = new Map<
     string,
     { occupied: boolean; pendingFlipSince: number | null }
@@ -954,12 +965,29 @@ export async function runTick(
     });
     occupancyHysteresisByZone.set(zone.id, hysteresis);
 
+    const priorOccupiedSinceMs = parseIsoOrNull(zone.state.occupied_since);
+    const occupiedSinceMs = !hysteresis.occupied
+      ? null
+      : zone.state.occupied && priorOccupiedSinceMs !== null
+        ? priorOccupiedSinceMs
+        : startedAtMs;
+    occupiedSinceByZone.set(zone.id, occupiedSinceMs);
+
     const governingCandidate = governingEventByZone.get(zone.id);
     const row = governingCandidate?.event.zone_settings.find(
       (r) => r.zone_id === zone.id,
     );
     const assumeOccupied = row?.assume_occupied ?? false;
     occupiedByZone.set(zone.id, hysteresis.occupied || assumeOccupied);
+    trustedOccupiedByZone.set(
+      zone.id,
+      resolveTrustedOccupancy({
+        rawOccupied: hysteresis.occupied,
+        occupiedSinceMs,
+        nowMs: startedAtMs,
+        trustWindowMinutes: ctx.settings.occupancy_trust_window_minutes,
+      }) || assumeOccupied,
+    );
     sleepModeActiveByZone.set(zone.id, assumeOccupied);
   }
 
@@ -1007,7 +1035,7 @@ export async function runTick(
       calibratedTemp: reading.calibratedTemp ?? asAbsoluteTemp(0),
       resolvedSetpoint: target.setpoint,
       tolerance: target.tolerance,
-      occupied: occupiedByZone.get(zone.id) ?? false,
+      occupied: trustedOccupiedByZone.get(zone.id) ?? false,
       staleOccupancy: false,
       staleReading: zoneStaleness.get(zone.id) ?? false,
       spiking: zoneSpike.get(zone.id)?.spiking ?? false,
@@ -1270,7 +1298,7 @@ export async function runTick(
         demanding: pipelineResult.classifications[z.id] === "demanding",
         deviation,
         priorityRank: ctx.settings.zone_priority_order.indexOf(z.id),
-        occupied: occupiedByZone.get(z.id) ?? false,
+        occupied: trustedOccupiedByZone.get(z.id) ?? false,
       };
     })
     .map((c) => ({
@@ -1651,6 +1679,9 @@ export async function runTick(
       occupancy_pending_flip_since: occupancyHysteresisByZone.get(zone.id)
         ?.pendingFlipSince
         ? toIso(occupancyHysteresisByZone.get(zone.id)!.pendingFlipSince!)
+        : null,
+      occupied_since: occupiedSinceByZone.get(zone.id)
+        ? toIso(occupiedSinceByZone.get(zone.id)!)
         : null,
     });
   }

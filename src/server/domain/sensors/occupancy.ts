@@ -42,6 +42,30 @@ export function evaluateOccupancy(params: {
 }
 
 /**
+ * Discounts a continuously-true occupied signal once it's been sustained
+ * past a trust window — Ecobee's own SmartSensors report a room occupied
+ * for a documented 30 minutes after the last real motion (Flair support
+ * docs), so "occupied: true" alone can't distinguish someone still in the
+ * room from someone who left up to half an hour ago. Applied only to the
+ * live sensor signal, never to a schedule's Sleep Mode override (a
+ * deliberate human "someone is sleeping here" declaration has no
+ * staleness to discount). `occupiedSinceMs: null` is treated as "just
+ * became true this tick" — trusted, not distrusted, matching this app's
+ * existing "err toward occupied when uncertain" default elsewhere.
+ */
+export function resolveTrustedOccupancy(params: {
+  rawOccupied: boolean;
+  occupiedSinceMs: number | null;
+  nowMs: number;
+  trustWindowMinutes: number;
+}): boolean {
+  if (!params.rawOccupied) return false;
+  if (params.occupiedSinceMs === null) return true;
+  const elapsedMinutes = (params.nowMs - params.occupiedSinceMs) / 60000;
+  return elapsedMinutes < params.trustWindowMinutes;
+}
+
+/**
  * The occupancy-scaled idle baseline for a zone with no real deviation to
  * react to — either genuinely resting (FAN_ONLY/IDLE, no call active at
  * all) or sensorless (has_temperature_sensor false, so there's no

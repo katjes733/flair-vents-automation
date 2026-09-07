@@ -74,6 +74,7 @@ describe("updateZoneState", () => {
       classification_pending_since: null,
       occupied: false,
       occupancy_pending_flip_since: null,
+      occupied_since: null,
     });
     expect(update).toHaveBeenCalledWith(
       "z1",

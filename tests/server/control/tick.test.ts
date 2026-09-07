@@ -2706,6 +2706,81 @@ describe("runTick — live occupancy sensing", () => {
     expect(persisted.get("z1")?.occupied).toBe(true);
   });
 
+  // Regression test for a real, confirmed live issue: two bedrooms sat
+  // fully open, unconditionally protected, for 20-30 minutes with nobody
+  // in them while a different room was demanding — traced to Ecobee's own
+  // SmartSensors reporting a room "occupied" for a documented 30 minutes
+  // after the last real motion, not a live fact. A live occupied signal
+  // sustained past occupancy_trust_window_minutes must stop protecting a
+  // satisfied zone from closing during an active call, even though the
+  // *displayed* `occupied` field stays true (matching what Ecobee/Flair
+  // themselves still report).
+  it("stops trusting a live-occupied signal once sustained past the trust window, letting a satisfied zone close", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-bedroom",
+        ventId: "vent-bedroom",
+        tempC: 15, // well past satisfied — should close hard toward the floor
+        ductC: 14,
+        percentOpen: 100,
+      },
+      {
+        roomId: "room-office",
+        ventId: "vent-office",
+        tempC: 30, // keeps the call genuinely active
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    client.setRemoteSensors([
+      {
+        id: "sensor-bedroom",
+        roomId: "room-bedroom",
+        isTstat: false,
+        sensorType: "ecobee_ecobee3_remote_sensor",
+        name: "Bedroom",
+      },
+    ]);
+    client.setRemoteSensorReading({
+      remoteSensorId: "sensor-bedroom",
+      occupied: true,
+      temperatureC: 15,
+      humidity: 40,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    const bedroom = makeZone({
+      id: "z-bedroom",
+      flairRoomId: "room-bedroom",
+      state: {
+        occupied: true,
+        // Already occupied for 31 minutes as of this tick — past the
+        // default 30-minute trust window.
+        occupied_since: new Date(NOW - 31 * 60000).toISOString(),
+      },
+    });
+    bedroom.config.has_occupancy_sensor = true;
+    const office = makeZone({ id: "z-office", flairRoomId: "room-office" });
+
+    const decision = await runTick(
+      makeAirHandler(),
+      [bedroom, office],
+      makeCtx(),
+      makeDeps(client, new Map(), NOW),
+    );
+
+    expect(decision.hvac_state).toBe("COOLING_CALL");
+    const bedroomDecision = decision.zones.find(
+      (z) => z.zone_id === "z-bedroom",
+    );
+    expect(bedroomDecision?.classification).toBe("satisfied");
+    // Still reported as occupied — the dashboard must keep agreeing with
+    // what Ecobee/Flair themselves report, even though it's no longer
+    // trusted for position math.
+    expect(bedroomDecision?.occupied).toBe(true);
+    expect(bedroomDecision?.vents[0]?.commanded_position_pct).toBeLessThan(50);
+  });
+
   it("does not flip on a single-tick flicker (stabilization dwell) — mirrors spike detection's hysteresis", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [

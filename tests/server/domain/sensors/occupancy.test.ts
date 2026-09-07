@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   evaluateOccupancy,
   effectiveIdleBaseline,
+  resolveTrustedOccupancy,
   type OccupancyHysteresisState,
 } from "~/server/domain/sensors/occupancy";
 
@@ -86,6 +87,49 @@ describe("evaluateOccupancy", () => {
       stabilizationMinutes: 5,
     });
     expect(flipped).toEqual({ occupied: true, pendingFlipSince: null });
+  });
+});
+
+describe("resolveTrustedOccupancy", () => {
+  // Regression coverage for a real, confirmed live issue: two bedrooms sat
+  // fully open, unconditionally protected, for 20-30 minutes with nobody in
+  // them while a different room was demanding — traced to Ecobee's own
+  // SmartSensors reporting a room "occupied" for a documented 30 minutes
+  // after the last real motion (Flair support docs), not a live fact.
+  const base = { rawOccupied: true, nowMs: NOW, trustWindowMinutes: 30 };
+
+  it("is never occupied when the raw signal itself is false", () => {
+    expect(
+      resolveTrustedOccupancy({
+        ...base,
+        rawOccupied: false,
+        occupiedSinceMs: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("trusts a signal that just became true this tick (no prior occupied_since)", () => {
+    expect(resolveTrustedOccupancy({ ...base, occupiedSinceMs: null })).toBe(
+      true,
+    );
+  });
+
+  it("still trusts occupied within the 30-minute window", () => {
+    expect(
+      resolveTrustedOccupancy({
+        ...base,
+        occupiedSinceMs: NOW - 29 * 60000,
+      }),
+    ).toBe(true);
+  });
+
+  it("stops trusting occupied once sustained past the 30-minute window", () => {
+    expect(
+      resolveTrustedOccupancy({
+        ...base,
+        occupiedSinceMs: NOW - 31 * 60000,
+      }),
+    ).toBe(false);
   });
 });
 

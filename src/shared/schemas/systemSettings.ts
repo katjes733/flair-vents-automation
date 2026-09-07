@@ -73,6 +73,17 @@ export const systemSettingsConfigSchema = z.object({
   // much, but still needs some debounce against a flickering raw signal.
   // PLACEHOLDER pending real-world tuning.
   occupancy_stabilization_minutes: z.number().positive().default(2),
+  // How long a continuously-true occupied signal is trusted for granting
+  // a zone protection from closing (Step 1's satisfied-branch, the
+  // idle-baseline calculation, and Step 3's contention bucket). Sourced
+  // directly, not guessed: Flair's own support documentation states
+  // Ecobee SmartSensors report a room "occupied" for a documented 30
+  // minutes after the last real motion — found live, 2026-09-07, after
+  // two bedrooms sat fully open (unconditionally protected) for 20-30
+  // minutes with nobody in them while a different room was demanding.
+  // Past this window, a sustained "occupied" reading is no longer trusted
+  // and the zone falls through to its normal unoccupied behavior.
+  occupancy_trust_window_minutes: z.number().positive().default(30),
 
   // --- Dynamic thermal spike detection ---
   // Window stated as a 10-15 minute range; 12 picked as a representative
