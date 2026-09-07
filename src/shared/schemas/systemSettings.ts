@@ -87,9 +87,13 @@ export const systemSettingsConfigSchema = z.object({
   spike_plausibility_cap_c_per_min: z.number().positive().default(3),
 
   // --- Stale sensor reading safeguard ---
-  // Stated default (Stale sensor reading safeguard section: "Default
-  // staleness threshold: 15 minutes").
-  stale_threshold_minutes: z.number().positive().default(15),
+  // Raised from the spec's originally-stated 15-minute default to 25 after
+  // real production telemetry showed this house's Ecobee/Flair reporting
+  // cadence routinely produces gaps up to ~30 minutes with no correlation to
+  // any actual sensor problem (~8% of all reading updates, house-wide, not
+  // zone-specific) — 15 minutes was generating false-positive staleness
+  // alerts/exclusions on ordinary reporting lag, not real freezes.
+  stale_threshold_minutes: z.number().positive().default(25),
 
   // --- Driving setpoint / Ecobee mechanism ---
   // Hysteresis margin/dwell are stated defaults (Driving setpoint selection

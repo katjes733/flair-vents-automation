@@ -16,9 +16,27 @@ export interface DuctReadingZone {
   commandedPositionPct: number;
 }
 
+export interface DuctDeltaReading {
+  zoneId: string;
+  ventId?: string;
+  // Normalized so "passing" always means deltaC >= the threshold,
+  // regardless of call direction — see normalizedDelta().
+  deltaC: number;
+}
+
 export interface EquipmentFaultResult {
   faulted: boolean;
   reason: string;
+  // The real, measured (normalized) differential for every usable vent —
+  // added so a real trigger can be logged with the actual reading instead
+  // of the configured threshold constant. Empty when there's no usable
+  // duct data (the "dormant" case).
+  ductDeltasC: DuctDeltaReading[];
+}
+
+function normalizedDelta(zone: DuctReadingZone, state: HvacCallState): number {
+  const raw = zone.roomTemperatureC - (zone.ductTemperatureC as number);
+  return state === "COOLING_CALL" ? raw : -raw;
 }
 
 function passesDifferential(
@@ -26,8 +44,7 @@ function passesDifferential(
   state: HvacCallState,
   thresholdC: number,
 ): boolean {
-  const delta = zone.roomTemperatureC - (zone.ductTemperatureC as number);
-  return state === "COOLING_CALL" ? delta >= thresholdC : delta <= -thresholdC;
+  return normalizedDelta(zone, state) >= thresholdC;
 }
 
 function usableZones(zones: DuctReadingZone[]): DuctReadingZone[] {
@@ -59,6 +76,7 @@ export function detectEquipmentFault(params: {
     return {
       faulted: false,
       reason: "within the equipment startup grace period",
+      ductDeltasC: [],
     };
   }
   const usable = usableZones(params.zones);
@@ -66,8 +84,14 @@ export function detectEquipmentFault(params: {
     return {
       faulted: false,
       reason: "no usable duct data on this handler — dormant",
+      ductDeltasC: [],
     };
   }
+  const ductDeltasC: DuctDeltaReading[] = usable.map((z) => ({
+    zoneId: z.zoneId,
+    ventId: z.ventId,
+    deltaC: normalizedDelta(z, params.state),
+  }));
   const anyPassing = usable.some((z) =>
     passesDifferential(z, params.state, params.ductDeltaThresholdC),
   );
@@ -75,10 +99,12 @@ export function detectEquipmentFault(params: {
     ? {
         faulted: false,
         reason: "at least one vent shows the expected duct differential",
+        ductDeltasC,
       }
     : {
         faulted: true,
         reason: "no vent on this handler shows the expected duct differential",
+        ductDeltasC,
       };
 }
 
