@@ -48,6 +48,17 @@ const log = logger.child({ service: "control-loop" });
 // legitimately-still-running cycle.
 const TICK_LOCK_TTL_MS = 5 * 60 * 1000;
 
+// A real, confirmed bug found live on the first real shadow→live cutover:
+// this flag was being set with no expiry at all, so once it existed (from
+// any earlier run), every subsequent restart silently skipped startup
+// reconciliation forever — including the exact restart that most needs
+// it, a fresh promotion to live. Its actual purpose (preventing N workers
+// booting at once from each redundantly re-seeding) only needs a narrow
+// window, not a permanent latch — this TTL comfortably covers a
+// concurrent-boot race while still expiring well before any later,
+// genuinely separate restart.
+const STARTUP_SEEDED_FLAG_TTL_SECONDS = 5 * 60;
+
 /**
  * The BullMQ Worker's own job processor — dispatches on job name. A
  * repeatable "run-tick" job fires once per installation per cadence (see
@@ -332,7 +343,7 @@ async function maybeSeedStartupReconciliation(
     }
   }
 
-  await redis.set(flagKey, "1");
+  await redis.set(flagKey, "1", "EX", STARTUP_SEEDED_FLAG_TTL_SECONDS);
 }
 
 // The fleet-wide health snapshot job — see queue.ts's own registration.
