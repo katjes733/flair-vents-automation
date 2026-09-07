@@ -105,6 +105,15 @@ async function applyMatchedEntry(
         ventHardwareType: "flair_smart_vent",
         config: {
           flair_vents: mergeFlairVents(existingFlairVents, entry.liveVentIds),
+          // A retrofit's `fromType` can be `manual_fixed_vent`, which
+          // means a real, non-empty `manual_vents` may already be on this
+          // zone's config — validateConfig rejects that combination on
+          // any non-manual type, so it must be cleared here the same way
+          // linkRoomToZone already does for the same conversion, or this
+          // update throws instead of applying. A `no_vent` retrofit's
+          // `manual_vents` is already `[]`, so this is a no-op for that
+          // case, not just the manual one.
+          manual_vents: [],
         },
       });
       logZoneHardwareRetrofitConverted(syncLog, {

@@ -80,4 +80,14 @@ describe("FlairConnection", () => {
       screen.getByText("Battery voltage / RSSI on vents"),
     ).toBeInTheDocument();
   });
+
+  it("explains what this section and the capability matrix mean via info tooltips", () => {
+    renderConnection(null);
+    expect(
+      screen.getByRole("button", { name: "About Flair Connection" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "About Phase 0 capability matrix" }),
+    ).toBeInTheDocument();
+  });
 });

@@ -177,4 +177,11 @@ describe("HardwareDiagnostics", () => {
       screen.getByText("No smart vents configured yet."),
     ).toBeInTheDocument();
   });
+
+  it("explains what this section means via an info tooltip", () => {
+    renderPanel([]);
+    expect(
+      screen.getByRole("button", { name: "About Vent Hardware" }),
+    ).toBeInTheDocument();
+  });
 });

@@ -8,6 +8,12 @@ export interface AirHandlerConfig {
   blower_rated_flow_rate_is_estimate: boolean;
   minimum_aggregate_flow_lps?: number;
   minimum_aggregate_flow_is_estimate: boolean;
+  // Undefined means "use the installation-wide System Parameters value" —
+  // see away_setpoint_cool/away_setpoint_heat/away_tolerance in
+  // systemSettings.ts, whose values these fall back to.
+  away_setpoint_cool_override?: number;
+  away_setpoint_heat_override?: number;
+  away_tolerance_override?: number;
 }
 
 export interface AirHandler {
@@ -30,7 +36,22 @@ export interface UpdateAirHandlerRequest {
   flair_zone_id?: string | null;
   name?: string;
   active?: boolean;
-  config?: Partial<AirHandlerConfig>;
+  // The 3 away-override fields widen to `| null` here (unlike the rest of
+  // Partial<AirHandlerConfig>) so a caller can explicitly clear one back
+  // to "use the global value" — an omitted key leaves the existing stored
+  // value untouched (see genuinePartial's own null-vs-omitted contract),
+  // so blanking the field in the UI has to send a real `null`, not just
+  // drop the key.
+  config?: Omit<
+    Partial<AirHandlerConfig>,
+    | "away_setpoint_cool_override"
+    | "away_setpoint_heat_override"
+    | "away_tolerance_override"
+  > & {
+    away_setpoint_cool_override?: number | null;
+    away_setpoint_heat_override?: number | null;
+    away_tolerance_override?: number | null;
+  };
 }
 
 export async function createAirHandler(

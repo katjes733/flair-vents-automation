@@ -4,7 +4,11 @@ import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import TimelineLane from "~/client/components/shared/charts/TimelineLane";
 import { buildStepSegments } from "~/client/components/shared/charts/timelineSegments";
+import SectionHeading from "~/client/components/shared/SectionHeading";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
+
+const SPIKE_DETECTION_DESCRIPTION =
+  "Flags a RAPID temperature rise or fall — by default, a sustained rate of at least 0.5°C/min over a 12-minute window (both configurable in System Parameters). It targets a sudden anomaly (an appliance malfunction, a sync glitch), not ordinary gradual warming — a room slowly heating up over an hour is already handled by the normal comfort/demand logic instead, and won't trigger this on its own.";
 
 interface SpikeEventTimelineProps {
   points: TickHistoryPoint[];
@@ -54,9 +58,11 @@ export default function SpikeEventTimeline({
 
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary">
-        Spike Detection
-      </Typography>
+      <SectionHeading
+        title="Spike Detection"
+        description={SPIKE_DETECTION_DESCRIPTION}
+        variant="caption"
+      />
       <TimelineLane domain={domain} segments={segments} height={height} />
     </Box>
   );

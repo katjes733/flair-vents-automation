@@ -99,4 +99,15 @@ describe("StalenessMonitor", () => {
     expect(screen.getByText("Martin Bedroom")).toBeInTheDocument();
     expect(screen.getByText("Martin Office")).toBeInTheDocument();
   });
+
+  it("explains what this section means via an info tooltip", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <StalenessMonitor zones={[]} nowMs={NOW} />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.getByRole("button", { name: "About Sensor Reading Freshness" }),
+    ).toBeInTheDocument();
+  });
 });

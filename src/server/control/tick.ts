@@ -94,6 +94,7 @@ import {
   logEmergencyFailSafeCleared,
   logFlairSetpointWriteFailing,
   logDuctAirflowAnomalyDetected,
+  logDuctAirflowAnomalyCleared,
   logVentReconciled,
   logVentDegraded,
   logControlTickCompleted,
@@ -809,10 +810,22 @@ export async function runTick(
       : new Set<string>(),
     nativeAwayZoneIds: new Set(ctx.settings.away_native_zone_ids),
   };
+  // A per-air-handler override (System Parameters is the installation-wide
+  // fallback) — undefined on the handler's own config means "use the
+  // global value," mirroring blower_rated_flow_rate_lps/
+  // minimum_aggregate_flow_lps's identical undefined-means-fall-back shape.
   const awayTargets = applyAwayTargets({
-    awaySetpointCool: asAbsoluteTemp(ctx.settings.away_setpoint_cool),
-    awaySetpointHeat: asAbsoluteTemp(ctx.settings.away_setpoint_heat),
-    awayTolerance: asTempDelta(ctx.settings.away_tolerance),
+    awaySetpointCool: asAbsoluteTemp(
+      airHandler.config.away_setpoint_cool_override ??
+        ctx.settings.away_setpoint_cool,
+    ),
+    awaySetpointHeat: asAbsoluteTemp(
+      airHandler.config.away_setpoint_heat_override ??
+        ctx.settings.away_setpoint_heat,
+    ),
+    awayTolerance: asTempDelta(
+      airHandler.config.away_tolerance_override ?? ctx.settings.away_tolerance,
+    ),
     state: effectiveCallState,
   });
   const fallback = {
@@ -1151,19 +1164,38 @@ export async function runTick(
       ductDeltaThresholdC: ctx.settings.equipment_fault_duct_delta_threshold_c,
       zones: anomalyZones,
     });
-    for (const a of anomalies) {
-      const trackingKey = reconciliationKey(a.zoneId, a.ventId ?? "");
+    // Iterate every controllable vent this tick — not just the ones
+    // detectDuctAirflowAnomaly returns (which only ever covers vents
+    // currently *failing* the differential). A vent that recovers by
+    // jumping straight from anomalous to fully passing in one tick (the
+    // physically typical way a duct-thermal-lag anomaly actually resolves)
+    // would otherwise never appear in `anomalies` again at all, so its
+    // tracked "since" timestamp and alert-dedup key would never get
+    // cleared — inflating the next unrelated episode's apparent duration,
+    // and potentially suppressing a genuinely new alert forever (alertOnce's
+    // Redis key has no TTL; only clearAlert removes it). A vent whose duct
+    // reading is currently stale/missing is skipped entirely rather than
+    // treated as "cleared" — indeterminate data shouldn't erase an
+    // in-progress episode's timer either.
+    const anomalyByKey = new Map(
+      anomalies.map((a) => [reconciliationKey(a.zoneId, a.ventId ?? ""), a]),
+    );
+    for (const zone of anomalyZones) {
+      if (zone.ductReadingStale || zone.ductTemperatureC === null) continue;
+      const trackingKey = reconciliationKey(zone.zoneId, zone.ventId ?? "");
       const anomalyAlertKey = `alert:ductAnomaly:${trackingKey}`;
       const demandTracking =
         await deps.zoneDemandTrackingStore.get(trackingKey);
-      if (a.anomalous) {
+      const ductDeltaC = zone.roomTemperatureC - zone.ductTemperatureC;
+      const isAnomalous = anomalyByKey.get(trackingKey)?.anomalous ?? false;
+      if (isAnomalous) {
         logDuctAirflowAnomalyDetected(log, {
           air_handler_id: airHandler.id,
-          zone_id: a.zoneId,
-          vent_id: a.ventId ?? "",
-          duct_delta_c: null,
+          zone_id: zone.zoneId,
+          vent_id: zone.ventId ?? "",
+          duct_delta_c: ductDeltaC,
           commanded_position_pct:
-            pipelineResult.commandedPositions[a.zoneId] ?? 0,
+            pipelineResult.commandedPositions[zone.zoneId] ?? 0,
         });
         const since = demandTracking.ductAnomalySinceMs ?? startedAtMs;
         const anomalyMinutes = (startedAtMs - since) / 60000;
@@ -1173,7 +1205,7 @@ export async function runTick(
         });
         if (anomalyMinutes >= ctx.settings.duct_anomaly_alert_minutes) {
           const zoneName =
-            zones.find((z) => z.id === a.zoneId)?.name ?? a.zoneId;
+            zones.find((z) => z.id === zone.zoneId)?.name ?? zone.zoneId;
           await deps.alerting.alertOnce({
             key: anomalyAlertKey,
             subject: `${zoneName}: isolated duct airflow anomaly`,
@@ -1182,7 +1214,15 @@ export async function runTick(
             nowMs: startedAtMs,
           });
         }
-      } else {
+      } else if (demandTracking.ductAnomalySinceMs != null) {
+        logDuctAirflowAnomalyCleared(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zone.zoneId,
+          vent_id: zone.ventId ?? "",
+          duct_delta_c: ductDeltaC,
+          commanded_position_pct:
+            pipelineResult.commandedPositions[zone.zoneId] ?? 0,
+        });
         await deps.zoneDemandTrackingStore.set(trackingKey, {
           ...demandTracking,
           ductAnomalySinceMs: null,
@@ -1331,10 +1371,31 @@ export async function runTick(
       alertMinutes: ctx.settings.hvac_no_improvement_alert_minutes,
     })
   ) {
+    // Two genuinely different situations were previously reported with
+    // the same "worst deviation 0.00°C, vs 0.00°C at call start" wording,
+    // and a reader had no way to tell which one they were looking at: a
+    // demanding zone whose deviation truly hasn't shrunk (the alert's own
+    // reason for existing), vs. zero demanding zones this app tracks at
+    // all — in which case 0.00°C isn't "nothing to report," it's "we
+    // can't see what's sustaining this call," e.g. an unsensored zone or
+    // the thermostat's own comfort-setting reading. Naming the actual
+    // worst zone (when one exists) also makes the alert directly
+    // actionable instead of a bare number with nothing to look at.
+    const worstZoneCandidate = drivingCandidates
+      .filter((c) => c.demanding)
+      .reduce<DrivingZoneCandidate | null>(
+        (worst, c) =>
+          worst === null || c.deviation > worst.deviation ? c : worst,
+        null,
+      );
+    const text =
+      demandingZoneCount === 0
+        ? `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s), but no zone this app tracks has been actively demanding the entire time — the call may be sustained by something outside this app's visibility (an unsensored zone, or the thermostat's own comfort-setting sensor group), not necessarily a problem with this app's own control.`
+        : `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no measurable improvement in its worst-off zone, "${zones.find((z) => z.id === worstZoneCandidate?.zoneId)?.name ?? worstZoneCandidate?.zoneId}" (deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`;
     await deps.alerting.alertOnce({
       key: hvacNoImprovementKey,
       subject: `${airHandler.name}: HVAC call running with no improvement`,
-      text: `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no zone measurably closer to target (worst deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`,
+      text,
       rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
       nowMs: startedAtMs,
     });

@@ -79,6 +79,22 @@ export interface ClassificationStabilization {
  * A `previousClassification` of `null` means the zone has never been
  * classified yet (a brand-new zone) — the raw value is adopted immediately
  * with no dwell, since there's nothing yet to protect continuity of.
+ *
+ * A `previousClassification` of `"unclassified_no_sensor"` gets the same
+ * immediate-adoption treatment, for a distinct reason: this dwell exists
+ * to stop a *real, current* reading from flapping across a hairline
+ * comfort boundary, not to throttle how quickly a zone is trusted again
+ * once real data resumes after a gap (a stale sensor reading, or one that
+ * was simply unavailable). A real, confirmed bug this fixes: the
+ * per-zone Stale Sensor Reading Safeguard's own contract promises normal
+ * control "resumes immediately" once a stale reading starts changing
+ * again, but this dwell was also applying to that exact recovery
+ * transition (`"unclassified_no_sensor"` → `"demanding"`/`"satisfied"`),
+ * silently holding the zone excluded for a further
+ * `stabilizationMinutes` after the data had already come back — a real
+ * comfort delay for a `flair_smart_vent` zone (its vent stays pinned at
+ * idle baseline that whole time) and a delayed reappearance in
+ * driving-zone/no-improvement accounting either way.
  */
 export function stabilizeClassification(params: {
   raw: ZoneClassification;
@@ -92,6 +108,7 @@ export function stabilizeClassification(params: {
 }): ClassificationStabilization {
   if (
     params.previousClassification === null ||
+    params.previousClassification === "unclassified_no_sensor" ||
     params.raw === params.previousClassification
   ) {
     return {

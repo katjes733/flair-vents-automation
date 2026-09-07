@@ -77,4 +77,11 @@ describe("OverrideActivityLane", () => {
       "Sherri: setpoint 22.2°C (permanent, revoked)",
     );
   });
+
+  it("explains what this section means via an info tooltip", () => {
+    renderLane([]);
+    expect(
+      screen.getByRole("button", { name: "About Manual Override Activity" }),
+    ).toBeInTheDocument();
+  });
 });

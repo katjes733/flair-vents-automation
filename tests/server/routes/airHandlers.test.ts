@@ -217,6 +217,24 @@ describe("PATCH /api/v1/air-handlers/:id", () => {
       expect.objectContaining({ active: true }),
     );
   });
+
+  // Regression test: a minimal `config` PATCH (only `tonnage_tons`, the
+  // one field EditAirHandlerDialog always sends) must reach the service
+  // layer with exactly that field, not backfilled with every other
+  // config field's schema default — see airHandlerConfigPartialSchema's
+  // own test for why `.partial()` alone doesn't guarantee this.
+  it("passes a minimal config PATCH through with no defaulted fields backfilled", async () => {
+    updateAirHandlerWithValidation.mockResolvedValue({ id: "ah-1" });
+    const res = await request(buildApp())
+      .patch("/api/v1/air-handlers/ah-1")
+      .send({ config: { tonnage_tons: 5 } });
+    expect(res.status).toBe(200);
+    expect(updateAirHandlerWithValidation).toHaveBeenCalledWith(
+      "inst-1",
+      "ah-1",
+      expect.objectContaining({ config: { tonnage_tons: 5 } }),
+    );
+  });
 });
 
 describe("DELETE /api/v1/air-handlers/:id", () => {

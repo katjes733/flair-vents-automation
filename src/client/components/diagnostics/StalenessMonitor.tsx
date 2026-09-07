@@ -1,9 +1,12 @@
 import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
 import Stack from "@mui/material/Stack";
 import type { Zone } from "~/client/api/zonesApi";
 import DiagnosticTile from "~/client/components/diagnostics/DiagnosticTile";
 import { formatElapsed } from "~/client/components/diagnostics/formatElapsed";
+import SectionHeading from "~/client/components/shared/SectionHeading";
+
+const STALENESS_DESCRIPTION =
+  "Flags a zone whose sensor reading hasn't changed in over 15 minutes (by default) while it isn't already comfortably satisfied — a zone that's genuinely satisfied is expected to report an unchanging reading, so that case is never flagged. A stale zone is excluded from position control and rests at its idle baseline until real data resumes, which happens automatically, with no manual reset needed.";
 
 interface StalenessMonitorProps {
   zones: Zone[];
@@ -24,9 +27,11 @@ export default function StalenessMonitor({
 }: StalenessMonitorProps) {
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-        Sensor Reading Freshness
-      </Typography>
+      <SectionHeading
+        title="Sensor Reading Freshness"
+        description={STALENESS_DESCRIPTION}
+        sx={{ mb: 1 }}
+      />
       <Stack direction="row" flexWrap="wrap" gap={1.5}>
         {zones.map((zone) => {
           const changedAt = zone.state.last_reading_changed_at;

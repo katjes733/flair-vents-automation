@@ -12,7 +12,10 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
-import { niceTickInterval } from "~/client/components/shared/charts/chartMath";
+import {
+  niceTickInterval,
+  tickDecimalsForInterval,
+} from "~/client/components/shared/charts/chartMath";
 import { useDragZoom } from "~/client/components/shared/charts/useDragZoom";
 import TouchSafeChartFrame from "~/client/components/shared/charts/TouchSafeChartFrame";
 import ZoomResetButton from "~/client/components/shared/charts/ZoomResetButton";
@@ -69,11 +72,11 @@ export default function ZoneTemperatureChart({
     return [data[0].time, data[data.length - 1].time];
   }, [zoomDomain, data]);
 
-  const yTicks = useMemo(() => {
+  const { yTicks, yTickDecimals } = useMemo(() => {
     const values = data.flatMap((d) =>
       [d.temp, d.setpoint].filter((v): v is number => v !== null),
     );
-    if (values.length === 0) return undefined;
+    if (values.length === 0) return { yTicks: undefined, yTickDecimals: 0 };
     const min = Math.min(...values);
     const max = Math.max(...values);
     const interval = niceTickInterval(min, max);
@@ -83,7 +86,7 @@ export default function ZoneTemperatureChart({
     for (let v = domainMin; v <= domainMax + 1e-9; v += interval) {
       ticks.push(Math.round(v / interval) * interval);
     }
-    return ticks;
+    return { yTicks: ticks, yTickDecimals: tickDecimalsForInterval(interval) };
   }, [data]);
 
   const renderTooltip = useCallback(
@@ -158,7 +161,9 @@ export default function ZoneTemperatureChart({
           <YAxis
             ticks={yTicks}
             domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : undefined}
-            tickFormatter={(v: number) => `${v.toFixed(0)}°${temperatureUnit}`}
+            tickFormatter={(v: number) =>
+              `${v.toFixed(yTickDecimals)}°${temperatureUnit}`
+            }
             tick={{ fontSize: 11, fill: theme.palette.text.secondary }}
             axisLine={false}
             tickLine={false}

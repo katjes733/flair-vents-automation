@@ -4,6 +4,10 @@ import Stack from "@mui/material/Stack";
 import type { Zone } from "~/client/api/zonesApi";
 import type { AirHandlerTickDecision } from "~/client/api/airHandlersApi";
 import DiagnosticTile from "~/client/components/diagnostics/DiagnosticTile";
+import SectionHeading from "~/client/components/shared/SectionHeading";
+
+const HARDWARE_DESCRIPTION =
+  "Live battery voltage and Wi-Fi signal strength (RSSI) reported by each smart vent as of its last successful poll. A voltage below ~2.5V is flagged as low battery — a display-only heuristic, not a value the control loop itself acts on.";
 
 interface HardwareDiagnosticsProps {
   zones: Zone[];
@@ -52,9 +56,11 @@ export default function HardwareDiagnostics({
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-        Vent Hardware
-      </Typography>
+      <SectionHeading
+        title="Vent Hardware"
+        description={HARDWARE_DESCRIPTION}
+        sx={{ mb: 1 }}
+      />
       {tiles.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           No smart vents configured yet.

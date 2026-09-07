@@ -18,6 +18,15 @@ import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import FlairZoneSelect from "~/client/components/shared/FlairZoneSelect";
 import { useCanWrite } from "~/client/permissions/usePermission";
+import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
+import {
+  asAbsoluteTemp,
+  asTempDelta,
+  toDisplayAbsolute,
+  fromDisplayAbsolute,
+  toDisplayDelta,
+  fromDisplayDelta,
+} from "~/shared/types/temperature";
 
 interface EditAirHandlerDialogProps {
   open: boolean;
@@ -43,12 +52,16 @@ export default function EditAirHandlerDialog({
   onDeleted,
 }: EditAirHandlerDialogProps) {
   const { showNotification } = useNotification();
+  const { temperatureUnit } = useDisplayUnit();
   const canEdit = useCanWrite("dashboard.airHandler.edit");
   const canDelete = useCanWrite("dashboard.airHandler.delete");
   const [name, setName] = useState("");
   const [tonnageTons, setTonnageTons] = useState("");
   const [flairZoneId, setFlairZoneId] = useState("");
   const [active, setActive] = useState(true);
+  const [awayCoolOverride, setAwayCoolOverride] = useState("");
+  const [awayHeatOverride, setAwayHeatOverride] = useState("");
+  const [awayToleranceOverride, setAwayToleranceOverride] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -61,6 +74,30 @@ export default function EditAirHandlerDialog({
     setTonnageTons(
       airHandler.config.tonnage_tons !== undefined
         ? String(airHandler.config.tonnage_tons)
+        : "",
+    );
+    setAwayCoolOverride(
+      airHandler.config.away_setpoint_cool_override !== undefined
+        ? toDisplayAbsolute(
+            asAbsoluteTemp(airHandler.config.away_setpoint_cool_override),
+            temperatureUnit,
+          ).toFixed(1)
+        : "",
+    );
+    setAwayHeatOverride(
+      airHandler.config.away_setpoint_heat_override !== undefined
+        ? toDisplayAbsolute(
+            asAbsoluteTemp(airHandler.config.away_setpoint_heat_override),
+            temperatureUnit,
+          ).toFixed(1)
+        : "",
+    );
+    setAwayToleranceOverride(
+      airHandler.config.away_tolerance_override !== undefined
+        ? toDisplayDelta(
+            asTempDelta(airHandler.config.away_tolerance_override),
+            temperatureUnit,
+          ).toFixed(1)
         : "",
     );
     setFlairZoneId(airHandler.flairZoneId ?? "");
@@ -76,7 +113,22 @@ export default function EditAirHandlerDialog({
         name: name.trim(),
         flair_zone_id: flairZoneId.trim() || null,
         active,
-        config: tonnageTons.trim() ? { tonnage_tons: Number(tonnageTons) } : {},
+        config: {
+          ...(tonnageTons.trim() ? { tonnage_tons: Number(tonnageTons) } : {}),
+          // Explicit null (not an omitted key) when blank — genuinePartial
+          // treats a real null as "clear back to the global value," while
+          // an omitted key would leave whatever was already stored
+          // untouched. See airHandlerConfig.ts's own comment.
+          away_setpoint_cool_override: awayCoolOverride.trim()
+            ? fromDisplayAbsolute(Number(awayCoolOverride), temperatureUnit)
+            : null,
+          away_setpoint_heat_override: awayHeatOverride.trim()
+            ? fromDisplayAbsolute(Number(awayHeatOverride), temperatureUnit)
+            : null,
+          away_tolerance_override: awayToleranceOverride.trim()
+            ? fromDisplayDelta(Number(awayToleranceOverride), temperatureUnit)
+            : null,
+        },
       });
       showNotification(`"${name.trim()}" updated.`, "success");
       onSaved();
@@ -92,11 +144,15 @@ export default function EditAirHandlerDialog({
   }, [
     active,
     airHandler,
+    awayCoolOverride,
+    awayHeatOverride,
+    awayToleranceOverride,
     flairZoneId,
     name,
     onClose,
     onSaved,
     showNotification,
+    temperatureUnit,
     tonnageTons,
   ]);
 
@@ -144,6 +200,25 @@ export default function EditAirHandlerDialog({
               value={flairZoneId}
               onChange={setFlairZoneId}
               currentAirHandlerId={airHandler.id}
+            />
+            <TextField
+              label={`Away cooling setpoint override, °${temperatureUnit} (blank = use System Parameters)`}
+              type="number"
+              value={awayCoolOverride}
+              onChange={(e) => setAwayCoolOverride(e.target.value)}
+            />
+            <TextField
+              label={`Away heating setpoint override, °${temperatureUnit} (blank = use System Parameters)`}
+              type="number"
+              value={awayHeatOverride}
+              onChange={(e) => setAwayHeatOverride(e.target.value)}
+            />
+            <TextField
+              label={`Away tolerance override, °${temperatureUnit} (blank = use System Parameters)`}
+              type="number"
+              value={awayToleranceOverride}
+              onChange={(e) => setAwayToleranceOverride(e.target.value)}
+              helperText="Applies only while this handler's zones are away (Ecobee-reported or native) — overrides the global Away Mode setpoints/tolerance for this handler only."
             />
             <FormControlLabel
               control={

@@ -23,7 +23,11 @@ import {
   buildOpenCapacityData,
   computeOpenCapacityYTicks,
 } from "~/client/components/telemetry/chartData";
+import SectionHeading from "~/client/components/shared/SectionHeading";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
+
+const OPEN_CAPACITY_DESCRIPTION =
+  "This air handler's aggregate open-vent airflow over time, as a percentage of its rated blower capacity — the pressure safeguard's own input. The dashed floor line is the topology's configured minimum; the aggregate is clamped to stay above it even if that means reopening a zone that would otherwise have closed further.";
 
 interface OpenCapacityChartProps {
   points: TickHistoryPoint[];
@@ -114,6 +118,11 @@ export default function OpenCapacityChart({
 
   return (
     <Box position="relative">
+      <SectionHeading
+        title="Open Capacity"
+        description={OPEN_CAPACITY_DESCRIPTION}
+        variant="caption"
+      />
       {zoomDomain && <ZoomResetButton onClick={resetZoom} />}
       <TouchSafeChartFrame height={height} onDoubleClick={resetZoom}>
         <ComposedChart

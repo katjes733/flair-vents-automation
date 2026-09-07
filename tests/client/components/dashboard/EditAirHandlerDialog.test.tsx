@@ -105,6 +105,71 @@ describe("EditAirHandlerDialog", () => {
     });
   });
 
+  it("seeds the away-override fields from the air handler's config, converted to the (bare-default Celsius) display unit", async () => {
+    renderDialog({
+      ...AIR_HANDLER,
+      config: {
+        ...AIR_HANDLER.config,
+        away_setpoint_cool_override: 26,
+        away_setpoint_heat_override: 16,
+        away_tolerance_override: 3,
+      },
+    });
+    expect(screen.getByLabelText(/Away cooling setpoint override/)).toHaveValue(
+      26,
+    );
+    expect(screen.getByLabelText(/Away heating setpoint override/)).toHaveValue(
+      16,
+    );
+    expect(screen.getByLabelText(/Away tolerance override/)).toHaveValue(3);
+  });
+
+  it("leaves the away-override fields blank when unset", () => {
+    renderDialog();
+    expect(screen.getByLabelText(/Away cooling setpoint override/)).toHaveValue(
+      null,
+    );
+    expect(screen.getByLabelText(/Away heating setpoint override/)).toHaveValue(
+      null,
+    );
+    expect(screen.getByLabelText(/Away tolerance override/)).toHaveValue(null);
+  });
+
+  it("saves a newly-entered away-override value", async () => {
+    renderDialog();
+    fireEvent.change(screen.getByLabelText(/Away cooling setpoint override/), {
+      target: { value: "26" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateAirHandler).toHaveBeenCalledWith(
+        "ah-1",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            away_setpoint_cool_override: 26,
+            away_setpoint_heat_override: null,
+            away_tolerance_override: null,
+          }),
+        }),
+      );
+    });
+  });
+
+  it("clears a previously-set away-override back to null (not an omitted key) when blanked", async () => {
+    renderDialog({
+      ...AIR_HANDLER,
+      config: { ...AIR_HANDLER.config, away_tolerance_override: 3 },
+    });
+    fireEvent.change(screen.getByLabelText(/Away tolerance override/), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      const patch = updateAirHandler.mock.calls[0][1];
+      expect(patch.config).toHaveProperty("away_tolerance_override", null);
+    });
+  });
+
   it("saves edited fields, including adding a Flair zone id after the fact", async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();

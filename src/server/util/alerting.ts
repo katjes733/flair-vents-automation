@@ -90,9 +90,11 @@ export function createRedisAlertingClient(): AlertingClient {
 export function createInMemoryAlertingClient(): AlertingClient & {
   getSentKeys(): ReadonlySet<string>;
   getSentSubjects(): readonly string[];
+  getSentTexts(): readonly string[];
 } {
   const sent = new Set<string>();
   const sentSubjects: string[] = [];
+  const sentTexts: string[] = [];
   const recurringLastSentMs = new Map<string, number>();
 
   return {
@@ -100,6 +102,7 @@ export function createInMemoryAlertingClient(): AlertingClient & {
       if (sent.has(params.key)) return false;
       sent.add(params.key);
       sentSubjects.push(params.subject);
+      sentTexts.push(params.text);
       return true;
     },
     async clearAlert(key) {
@@ -116,6 +119,7 @@ export function createInMemoryAlertingClient(): AlertingClient & {
       }
       recurringLastSentMs.set(params.key, nowMs);
       sentSubjects.push(params.subject);
+      sentTexts.push(params.text);
       return true;
     },
     async clearRecurringAlert(key) {
@@ -123,5 +127,6 @@ export function createInMemoryAlertingClient(): AlertingClient & {
     },
     getSentKeys: () => sent,
     getSentSubjects: () => sentSubjects,
+    getSentTexts: () => sentTexts,
   };
 }

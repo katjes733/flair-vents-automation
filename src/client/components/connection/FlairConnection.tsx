@@ -8,6 +8,13 @@ import TableRow from "@mui/material/TableRow";
 import type { FlairStatus } from "~/client/api/controlApi";
 import DiagnosticTile from "~/client/components/diagnostics/DiagnosticTile";
 import { formatElapsed } from "~/client/components/diagnostics/formatElapsed";
+import SectionHeading from "~/client/components/shared/SectionHeading";
+
+const FLAIR_CONNECTION_DESCRIPTION =
+  "Live status of this app's connection to Flair's API — whether an outage is currently detected, whether the last OAuth token refresh failed, and how many of Flair's ~50/day token-mint budget have been used today. An alert fires well before the budget is actually exhausted.";
+
+const CAPABILITY_MATRIX_DESCRIPTION =
+  "A static record of what Flair's API was actually confirmed to support during live discovery — not live data, and not re-checked automatically. Update this table only alongside a new confirmed finding in docs/flair-api-schema.md.";
 
 interface FlairConnectionProps {
   flairStatus: FlairStatus | null;
@@ -66,9 +73,11 @@ export default function FlairConnection({
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-        Flair Connection
-      </Typography>
+      <SectionHeading
+        title="Flair Connection"
+        description={FLAIR_CONNECTION_DESCRIPTION}
+        sx={{ mb: 1 }}
+      />
       {!flairStatus ? (
         <Typography variant="body2" color="text.secondary">
           Connection status unavailable.
@@ -112,9 +121,11 @@ export default function FlairConnection({
         </Stack>
       )}
 
-      <Typography variant="caption" color="text.secondary">
-        Phase 0 capability matrix
-      </Typography>
+      <SectionHeading
+        title="Phase 0 capability matrix"
+        description={CAPABILITY_MATRIX_DESCRIPTION}
+        variant="caption"
+      />
       <Table size="small">
         <TableBody>
           {CAPABILITY_MATRIX.map((row) => (

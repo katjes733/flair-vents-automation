@@ -81,6 +81,23 @@ describe("computeSyncDiff", () => {
     });
   });
 
+  it("reports matched_retrofit with every new vent id when a room gains more than one vent at once", () => {
+    const [entry] = computeSyncDiff(
+      [room({ liveVentIds: ["vent-1", "vent-2", "vent-3"] })],
+      [
+        zone({
+          ventHardwareType: "manual_fixed_vent",
+          flairVentIds: [],
+        }),
+      ],
+    );
+    expect(entry).toMatchObject({
+      kind: "matched_retrofit",
+      fromType: "manual_fixed_vent",
+      liveVentIds: ["vent-1", "vent-2", "vent-3"],
+    });
+  });
+
   it("reports matched_hardware_removed only on TOTAL vent loss, not a partial reduction", () => {
     const [entry] = computeSyncDiff(
       [room({ liveVentIds: [] })],

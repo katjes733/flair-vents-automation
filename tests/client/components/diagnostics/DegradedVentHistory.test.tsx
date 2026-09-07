@@ -6,6 +6,7 @@ import type { Zone } from "~/client/api/zonesApi";
 import type { AirHandlerTickDecision } from "~/client/api/airHandlersApi";
 import type { TickHistoryPoint } from "~/client/api/telemetryApi";
 import DegradedVentHistory from "~/client/components/diagnostics/DegradedVentHistory";
+import { formatChartDateTime } from "~/client/components/shared/charts/chartTime";
 
 afterEach(cleanup);
 
@@ -262,6 +263,38 @@ describe("DegradedVentHistory", () => {
       screen.getByText("Degraded Periods (this window)"),
     ).toBeInTheDocument();
     expect(screen.getByText("1m")).toBeInTheDocument();
+  });
+
+  // Regression test: a completed degraded period used to show a raw,
+  // unhelpful "ended Xm ago" instead of the actual end time — see
+  // EquipmentFaultLog's identical fix and its own reasoning.
+  it("shows the actual end time for a completed degraded period, not a relative 'Xm ago'", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <DegradedVentHistory
+          zones={[makeZone()]}
+          tickDecisionsByAirHandlerId={new Map()}
+          nowMs={NOW}
+          historyPoints={[
+            makeHistoryPoint(0, false),
+            makeHistoryPoint(60_000, true),
+            makeHistoryPoint(120_000, false),
+            makeHistoryPoint(180_000, false),
+          ]}
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.getByText(`ended ${formatChartDateTime(120_000)}`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/ago/)).not.toBeInTheDocument();
+  });
+
+  it("explains what this section means via an info tooltip", () => {
+    renderPanel([makeZone()]);
+    expect(
+      screen.getByRole("button", { name: "About Currently Degraded Vents" }),
+    ).toBeInTheDocument();
   });
 
   it("hides the current-status section when hideCurrentStatus is set", () => {

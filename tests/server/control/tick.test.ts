@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { logSpy } from "../../setup";
 import {
   runTick,
   type TickContext,
@@ -933,6 +934,121 @@ describe("runTick — HVAC extended call with no improvement", () => {
       false,
     );
   });
+
+  // Regression test for a real, confirmed wording problem: a real
+  // production alert read "worst deviation 0.00°C, vs 0.00°C at call
+  // start" — technically accurate, but indistinguishable from "everything
+  // is fine" when the real situation was "zero zones this app tracks are
+  // demanding at all, yet the equipment kept calling anyway." The two
+  // cases need different wording, since only one of them names an actual
+  // zone to look at.
+  it("explains that no tracked zone is demanding at all, rather than reporting a bare 0.00°C, when there's truly nothing demanding", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // Comfortably satisfied against the fallback setpoint — no zone is
+      // demanding, ever, for the whole test.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ hvac_no_improvement_alert_minutes: 75 });
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 80 * 60000,
+      worstDeviationAtCallStartC: 0,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    await runTick(makeAirHandler(), zones, ctx, deps);
+
+    const alerting = deps.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting.getSentKeys().has("alert:hvacNoImprovement:ah-1")).toBe(
+      true,
+    );
+    const [text] = alerting.getSentTexts();
+    expect(text).toMatch(/no zone this app tracks has been actively demanding/);
+    expect(text).not.toMatch(/0\.00°C/);
+  });
+
+  it("names the actual worst-off zone when a real, unimproving deviation exists", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ hvac_no_improvement_alert_minutes: 75 });
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Fixed setpoint",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 80 * 60000,
+      worstDeviationAtCallStartC: 3,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    await runTick(makeAirHandler(), zones, ctx, deps);
+
+    const alerting = deps.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    const [text] = alerting.getSentTexts();
+    expect(text).toMatch(/worst-off zone, "z1"/);
+    expect(text).toMatch(/3\.00°C at call start/);
+  });
 });
 
 describe("runTick — emergency fail-safe", () => {
@@ -1126,6 +1242,81 @@ describe("runTick — stale sensor safeguard", () => {
     // direction is the property under test here, not the exact value.
     expect(zoneDecision?.vents[0]?.commanded_position_pct).toBeLessThan(100);
     expect(zoneDecision?.classification).toBe("unclassified_no_sensor");
+  });
+
+  // Regression test for a real, confirmed bug found live via a real
+  // production alert: once a stale reading resumes changing, the zone
+  // used to sit in classifyWithStabilization's dwell for a further
+  // classification_stabilization_minutes before actually being treated as
+  // demanding again — contradicting this safeguard's own documented
+  // "resumes immediately" contract. Traced to a real Martin Office alert
+  // where the sensor visibly resumed reporting at one tick but the zone
+  // wasn't reclassified as demanding until 3 minutes later.
+  it("resumes normal classification the very next tick once a stale reading starts changing again — no extra dwell", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      stale_threshold_minutes: 1,
+      classification_stabilization_minutes: 3,
+    });
+
+    // Tick 1: establishes a baseline reading.
+    await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    // Tick 2, two minutes later, same unchanged reading — now stale and
+    // excluded (mirrors the test above).
+    const zonesTick2 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    const decision2 = await runTick(
+      makeAirHandler(),
+      zonesTick2,
+      ctx,
+      makeDeps(client, persisted, NOW + 2 * 60000),
+    );
+    expect(
+      decision2.zones.find((z) => z.zone_id === "z1")?.classification,
+    ).toBe("unclassified_no_sensor");
+
+    // Tick 3: the reading resumes with a genuinely new value. The fix
+    // under test — this must show "demanding" on THIS tick, not 3 minutes
+    // (a full stabilization dwell) later.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 27,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zonesTick3 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    const decision3 = await runTick(
+      makeAirHandler(),
+      zonesTick3,
+      ctx,
+      makeDeps(client, persisted, NOW + 3 * 60000),
+    );
+    expect(
+      decision3.zones.find((z) => z.zone_id === "z1")?.classification,
+    ).toBe("demanding");
   });
 });
 
@@ -1763,6 +1954,170 @@ describe("runTick — multi-vent zones", () => {
     expect(failingTracking.ductAnomalySinceMs).not.toBeNull();
     expect(passingTracking.ductAnomalySinceMs).toBeNull();
   });
+
+  it("logs the real room-vs-duct delta on a detected anomaly, not a hardcoded null", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const deps = makeDeps(client, new Map(), NOW);
+
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("warn")).toHaveBeenCalledWith(
+      expect.objectContaining({
+        zone_id: "z1",
+        vent_id: "vent-1",
+        duct_delta_c: 1,
+      }),
+      "Duct airflow anomaly detected",
+    );
+  });
+
+  it("logs 'Duct airflow anomaly cleared' once a previously-anomalous vent stops being anomalous", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+    expect(logSpy("info")).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Duct airflow anomaly cleared",
+    );
+
+    // Same vent, still failing the differential (delta 1°C, still below
+    // the threshold), but the zone is now satisfied (23°C is at/under the
+    // 23.89°C fallback cool setpoint) — no longer "anomalous" per
+    // detectDuctAirflowAnomaly's own demanding gate, so the tracked
+    // episode should end here.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23,
+        ductC: 22,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 23,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("info")).toHaveBeenCalledWith(
+      expect.objectContaining({ zone_id: "z1", vent_id: "vent-1" }),
+      "Duct airflow anomaly cleared",
+    );
+  });
+
+  it("clears a tracked anomaly when the vent recovers by jumping straight to passing the differential (not just becoming non-demanding) — the fix for the never-in-`anomalies`-again gap", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 29,
+        percentOpen: 80,
+      }, // fails the differential — anomalous
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      }, // passes
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        flairVentIds: ["vent-1", "vent-2"],
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+    const trackedWhileAnomalous =
+      await deps.zoneDemandTrackingStore.get("z1:vent-1");
+    expect(trackedWhileAnomalous.ductAnomalySinceMs).not.toBeNull();
+
+    // Same zone, still demanding (30°C, unchanged) — but vent-1's own duct
+    // now shows the expected differential too (the duct physically caught
+    // up), so it drops out of detectDuctAirflowAnomaly's `failing` list
+    // entirely rather than reappearing with anomalous: false.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(logSpy("info")).toHaveBeenCalledWith(
+      expect.objectContaining({ zone_id: "z1", vent_id: "vent-1" }),
+      "Duct airflow anomaly cleared",
+    );
+    const trackedAfterRecovery =
+      await deps.zoneDemandTrackingStore.get("z1:vent-1");
+    expect(trackedAfterRecovery.ductAnomalySinceMs).toBeNull();
+  });
 });
 
 describe("runTick — Away Mode (partial house)", () => {
@@ -1822,6 +2177,40 @@ describe("runTick — Away Mode (partial house)", () => {
       decision.zones.find((z) => z.zone_id === "z-home")?.vents[0]
         ?.commanded_position_pct,
     ).toBeGreaterThan(0);
+  });
+
+  it("uses this air handler's own away-override setpoint/tolerance instead of the global System Parameters value when set", async () => {
+    const client = new FakeFlairClient();
+    // 25°C is comfortably within the global away band (27.78°C ± 2.78°C)
+    // but NOT within a much tighter, colder per-handler override (22°C ±
+    // 0.5°C) — so which one actually governs is directly observable via
+    // the resulting classification, not just an internal field.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 25,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const ctx = makeCtx({ away_native_zone_ids: ["z1"] });
+    const airHandler = makeAirHandler({
+      away_setpoint_cool_override: 22,
+      away_tolerance_override: 0.5,
+    });
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      ctx,
+      makeDeps(client, new Map(), NOW),
+    );
+
+    expect(decision.zones.find((z) => z.zone_id === "z1")?.classification).toBe(
+      "demanding",
+    );
   });
 });
 
