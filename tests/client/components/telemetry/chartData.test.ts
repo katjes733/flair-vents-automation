@@ -71,6 +71,7 @@ function makePoint(
       equipment_fault_active: false,
       hvac_state: "IDLE",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [],
       contention: null,
       pressure: null,

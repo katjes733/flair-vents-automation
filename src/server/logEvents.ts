@@ -16,6 +16,10 @@ export interface HvacStateTransitionFields {
   from: string;
   to: string;
   call_source: string;
+  // Which system's data this transition was actually derived from — see
+  // deriveHvacStateViaHomeKit's own doc comment for why this can now
+  // differ from "flair" per air handler.
+  source: "flair" | "homekit";
   dry_run: boolean;
 }
 export function logHvacStateTransition(
@@ -23,6 +27,27 @@ export function logHvacStateTransition(
   fields: HvacStateTransitionFields,
 ): void {
   log.info(fields, "HVAC state transition");
+}
+
+// A real, confirmed incident motivates this event, not a hypothetical:
+// Flair reported "idle" continuously for over an hour while the
+// thermostat's own equipment log showed real cool/fan activity the whole
+// time — see docs/homekit-ecobee-control-research.md §6. Fires every
+// tick both sources are available and disagree (not just on a change),
+// mirroring the plan's own "Sensor disagreement" concept — the point is
+// a durable, greppable history of exactly when and how badly Flair's own
+// relay drifted from reality, not a one-shot alert.
+export interface HvacStateDisagreementFields {
+  air_handler_id: string;
+  flair_state: string;
+  homekit_state: string;
+  authoritative_source: "flair" | "homekit";
+}
+export function logHvacStateDisagreement(
+  log: Logger,
+  fields: HvacStateDisagreementFields,
+): void {
+  log.warn(fields, "HVAC state disagreement detected");
 }
 
 export interface ZoneEvaluatedFields {

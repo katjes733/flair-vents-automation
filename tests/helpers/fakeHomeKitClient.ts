@@ -20,6 +20,8 @@ export class FakeHomeKitClient implements HomeKitClient {
     targetTemperatureC: 22,
     heatThresholdC: null,
     coolThresholdC: null,
+    currentHeatingCoolingState: 2,
+    currentFanState: 2,
   };
   private paired = true;
   private forcedError: Error | null = null;

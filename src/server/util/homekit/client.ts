@@ -17,7 +17,20 @@ const HAP_TYPE = {
   TARGET_TEMPERATURE: "00000035-0000-1000-8000-0026BB765291",
   COOLING_THRESHOLD_TEMPERATURE: "0000000D-0000-1000-8000-0026BB765291",
   HEATING_THRESHOLD_TEMPERATURE: "00000012-0000-1000-8000-0026BB765291",
+  // Confirmed present on the real "Upstairs" unit — see
+  // docs/homekit-ecobee-control-research.md §6. Read-only (`ev`-capable),
+  // and — unlike Flair's own cloud-relayed operating-state — confirmed
+  // live to keep working through a stretch where Flair's own value went
+  // stale for over an hour. CURRENT_FAN_STATE's "Blowing Air" (2) value
+  // is specifically what lets a real fan-only period be told apart from
+  // genuine idle, which CURRENT_HEATING_COOLING_STATE alone can't do (it
+  // only has Off/Heat/Cool, no fourth "fan" value).
+  CURRENT_HEATING_COOLING_STATE: "0000000F-0000-1000-8000-0026BB765291",
+  CURRENT_FAN_STATE: "000000AF-0000-1000-8000-0026BB765291",
 } as const;
+
+export type HapCurrentFanState = 0 | 1 | 2;
+export type HapCurrentHeatingCoolingState = 0 | 1 | 2;
 
 export interface HomeKitCurrentState {
   currentTempC: number;
@@ -32,6 +45,13 @@ export interface HomeKitCurrentState {
   targetTemperatureC: number | null;
   heatThresholdC: number | null;
   coolThresholdC: number | null;
+  // Real-time equipment/fan activity, read locally — see
+  // docs/homekit-ecobee-control-research.md §6. Null only if this
+  // accessory doesn't expose the characteristic at all (not expected on
+  // this unit, but the threshold pair above sets the precedent for
+  // treating an absent characteristic as "no signal," not an error).
+  currentHeatingCoolingState: HapCurrentHeatingCoolingState | null;
+  currentFanState: HapCurrentFanState | null;
 }
 
 export interface HomeKitClient {
@@ -114,6 +134,8 @@ interface ThermostatCharacteristicMap {
   targetTemperatureIid: number;
   coolingThresholdIid: number | null;
   heatingThresholdIid: number | null;
+  currentHeatingCoolingStateIid: number | null;
+  currentFanStateIid: number | null;
 }
 
 async function resolveThermostatCharacteristics(
@@ -159,6 +181,10 @@ async function resolveThermostatCharacteristics(
       targetTemperatureIid,
       coolingThresholdIid: find(HAP_TYPE.COOLING_THRESHOLD_TEMPERATURE),
       heatingThresholdIid: find(HAP_TYPE.HEATING_THRESHOLD_TEMPERATURE),
+      currentHeatingCoolingStateIid: find(
+        HAP_TYPE.CURRENT_HEATING_COOLING_STATE,
+      ),
+      currentFanStateIid: find(HAP_TYPE.CURRENT_FAN_STATE),
     };
   }
   throw new Error("No Thermostat service found on this HAP accessory");
@@ -282,6 +308,10 @@ export class HapControllerClient implements HomeKitClient {
       ids.push(`${chars.aid}.${chars.coolingThresholdIid}`);
     if (chars.heatingThresholdIid)
       ids.push(`${chars.aid}.${chars.heatingThresholdIid}`);
+    if (chars.currentHeatingCoolingStateIid)
+      ids.push(`${chars.aid}.${chars.currentHeatingCoolingStateIid}`);
+    if (chars.currentFanStateIid)
+      ids.push(`${chars.aid}.${chars.currentFanStateIid}`);
 
     const result = (await client.getCharacteristics(ids, {
       meta: false,
@@ -302,6 +332,14 @@ export class HapControllerClient implements HomeKitClient {
         : null,
       heatThresholdC: chars.heatingThresholdIid
         ? (byIid.get(chars.heatingThresholdIid) ?? null)
+        : null,
+      currentHeatingCoolingState: chars.currentHeatingCoolingStateIid
+        ? ((byIid.get(chars.currentHeatingCoolingStateIid) ??
+            null) as HapCurrentHeatingCoolingState | null)
+        : null,
+      currentFanState: chars.currentFanStateIid
+        ? ((byIid.get(chars.currentFanStateIid) ??
+            null) as HapCurrentFanState | null)
         : null,
     };
   }

@@ -61,6 +61,7 @@ function makeDecision(
     equipment_fault_active: false,
     hvac_state: "COOLING_CALL",
     call_confidence: "reported",
+    hvac_state_source: "flair",
     zones: [makeZone()],
     contention: null,
     pressure: null,

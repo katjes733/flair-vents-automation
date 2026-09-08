@@ -110,6 +110,7 @@ describe("DegradedVentHistory", () => {
           equipment_fault_active: false,
           hvac_state: "IDLE",
           call_confidence: "reported" as const,
+          hvac_state_source: "flair" as const,
           zones: [
             {
               zone_id: "z1",
@@ -206,6 +207,7 @@ describe("DegradedVentHistory", () => {
         equipment_fault_active: false,
         hvac_state: "IDLE",
         call_confidence: "reported",
+        hvac_state_source: "flair",
         zones: [
           {
             zone_id: "z1",

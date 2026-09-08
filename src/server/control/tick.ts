@@ -29,7 +29,10 @@ import {
   ARBITRARY_IDLE_CALL_STATE,
   type HvacCallState,
 } from "~/server/domain/types";
-import { deriveHvacState } from "~/server/domain/state/hvacState";
+import {
+  deriveHvacState,
+  deriveHvacStateViaHomeKit,
+} from "~/server/domain/state/hvacState";
 import {
   detectEquipmentFault,
   buildFailSafeCommands,
@@ -90,6 +93,7 @@ import {
 } from "~/server/control/tickDecision";
 import {
   logHvacStateTransition,
+  logHvacStateDisagreement,
   logZoneEvaluated,
   logZoneExcluded,
   logContentionResolved,
@@ -465,9 +469,60 @@ export async function runTick(
   }
 
   // --- Step 4: HVAC state ---------------------------------------------
-  const hvac = deriveHvacState(
+  // Which channel this handler reads live thermostat state through — see
+  // "Direct HomeKit Thermostat Control" in the plan. Read once, up here,
+  // and reused three ways below: (a) HVAC-state derivation right below,
+  // when available, in place of Flair's own cloud-relayed operating-state
+  // (see deriveHvacStateViaHomeKit's own doc comment for why — a real,
+  // confirmed incident where Flair's relay went stale for over an hour);
+  // (b) the setpoint-push computation further down (a fresher, local
+  // reading than Flair's); (c) the dispatch decision at write time.
+  const deliveryMode = airHandler.config.setpoint_delivery_mode ?? "flair";
+  let homeKitClient: HomeKitClient | null = null;
+  let homeKitState: HomeKitCurrentState | null = null;
+  let homeKitReadError: string | null = null;
+  if (deliveryMode === "homekit") {
+    try {
+      homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
+      if (!homeKitClient) {
+        throw new Error("No HomeKit pairing available for this air handler");
+      }
+      homeKitState = await homeKitClient.getCurrentState();
+    } catch (err) {
+      homeKitReadError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  const flairHvac = deriveHvacState(
     snapshot.thermostatState?.operatingState ?? null,
   );
+  const homeKitHvac =
+    homeKitState?.currentHeatingCoolingState != null &&
+    homeKitState?.currentFanState != null
+      ? deriveHvacStateViaHomeKit(
+          homeKitState.currentHeatingCoolingState,
+          homeKitState.currentFanState,
+        )
+      : null;
+  const hvac = homeKitHvac ?? flairHvac;
+  const hvacStateSource: "flair" | "homekit" = homeKitHvac
+    ? "homekit"
+    : "flair";
+  // Logged every tick both sources are available and disagree, regardless
+  // of whether a transition happened — see logHvacStateDisagreement's own
+  // doc comment for why this is a durable history, not a one-shot alert.
+  if (
+    homeKitHvac &&
+    flairHvac.confidence === "reported" &&
+    flairHvac.state !== homeKitHvac.state
+  ) {
+    logHvacStateDisagreement(log, {
+      air_handler_id: airHandler.id,
+      flair_state: flairHvac.state,
+      homekit_state: homeKitHvac.state,
+      authoritative_source: hvacStateSource,
+    });
+  }
   const callActive =
     hvac.state === "COOLING_CALL" || hvac.state === "HEATING_CALL";
   // The single shared "which direction" input for every computation below
@@ -491,7 +546,11 @@ export async function runTick(
       air_handler_id: airHandler.id,
       from: priorRuntime.lastHvacState ?? "unknown",
       to: hvac.state,
-      call_source: snapshot.thermostatState?.operatingState ?? "unknown",
+      call_source:
+        hvacStateSource === "homekit"
+          ? `homekit:${homeKitState?.currentHeatingCoolingState}/${homeKitState?.currentFanState}`
+          : (snapshot.thermostatState?.operatingState ?? "unknown"),
+      source: hvacStateSource,
       dry_run: dryRun,
     });
   }
@@ -698,6 +757,7 @@ export async function runTick(
       deps.now(),
       dryRun,
       hvac,
+      hvacStateSource,
       zones,
     );
     await finalize(log, decision);
@@ -1456,26 +1516,9 @@ export async function runTick(
   let wouldWrite = false;
   let selectionReason = drivingSelection.reason;
 
-  // Which channel this handler's push goes through — see "Direct HomeKit
-  // Thermostat Control" in the plan. When "homekit", the read below feeds
-  // *both* the push-value computation (a fresher, local reading than
-  // Flair's cloud-relayed one) and the dispatch decision further down —
-  // read once, reused twice, rather than reading it again at write time.
-  const deliveryMode = airHandler.config.setpoint_delivery_mode ?? "flair";
-  let homeKitClient: HomeKitClient | null = null;
-  let homeKitState: HomeKitCurrentState | null = null;
-  let homeKitReadError: string | null = null;
-  if (deliveryMode === "homekit") {
-    try {
-      homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
-      if (!homeKitClient) {
-        throw new Error("No HomeKit pairing available for this air handler");
-      }
-      homeKitState = await homeKitClient.getCurrentState();
-    } catch (err) {
-      homeKitReadError = err instanceof Error ? err.message : String(err);
-    }
-  }
+  // deliveryMode/homeKitClient/homeKitState/homeKitReadError were already
+  // read once, up in Step 4, specifically so HVAC-state derivation could
+  // use the same read — reused here rather than reading it again.
   const thermostatReadingC =
     deliveryMode === "homekit" && homeKitState
       ? homeKitState.currentTempC
@@ -1788,6 +1831,7 @@ export async function runTick(
     equipment_fault_active: faultActive,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
+    hvac_state_source: hvacStateSource,
     zones: zones.map((zone): ZoneTickDecision => {
       const finalVents = currentVentsByZoneId.get(zone.id) ?? zone.state.vents;
       return {
@@ -1905,6 +1949,9 @@ function buildMinimalDecision(
     equipment_fault_active: false,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
+    // Short-circuits before any HomeKit read would even be attempted —
+    // never anything but "flair" on this path.
+    hvac_state_source: "flair",
     zones: [],
     contention: null,
     pressure: null,
@@ -1921,6 +1968,7 @@ function buildFaultDecision(
   finishedAtMs: number,
   dryRun: boolean,
   hvac: { state: string; confidence: "reported" | "unknown" },
+  hvacStateSource: "flair" | "homekit",
   zones: ZoneData[],
 ): AirHandlerTickDecision {
   return {
@@ -1932,6 +1980,7 @@ function buildFaultDecision(
     equipment_fault_active: true,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
+    hvac_state_source: hvacStateSource,
     zones: zones.map((zone) => ({
       zone_id: zone.id,
       name: zone.name,
@@ -2040,6 +2089,10 @@ async function holdAtIdleBaseline(params: {
     equipment_fault_active: false,
     hvac_state: hvac.state,
     call_confidence: hvac.confidence,
+    // deriveHvacStateViaHomeKit() never returns "unknown" confidence —
+    // only reachable here via Flair's own confidence being unknown, so
+    // this is always "flair" by construction, not a default.
+    hvac_state_source: "flair",
     zones: [],
     contention: null,
     pressure: null,

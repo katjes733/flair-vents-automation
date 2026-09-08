@@ -3088,4 +3088,155 @@ describe("runTick — HomeKit setpoint delivery", () => {
       5,
     );
   });
+
+  describe("HVAC state via HomeKit — a real, confirmed incident where Flair's own relay went stale", () => {
+    it("uses the HomeKit-derived HVAC state as authoritative, even when it disagrees with Flair's own relayed value", async () => {
+      const client = new FakeFlairClient();
+      // Flair says idle — the exact stale-relay symptom this was built for.
+      setupFlairFixture(
+        client,
+        [
+          {
+            roomId: "room-1",
+            ventId: "vent-1",
+            tempC: 26,
+            ductC: 14,
+            percentOpen: 50,
+          },
+        ],
+        "idle",
+      );
+      const homeKitClient = new FakeHomeKitClient();
+      // HomeKit's own local read says the compressor is genuinely cooling.
+      homeKitClient.setState({
+        currentHeatingCoolingState: 2,
+        currentFanState: 1,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.hvac_state).toBe("COOLING_CALL");
+      expect(decision.hvac_state_source).toBe("homekit");
+      expect(logSpy("warn")).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flair_state: "IDLE",
+          homekit_state: "COOLING_CALL",
+          authoritative_source: "homekit",
+        }),
+        "HVAC state disagreement detected",
+      );
+    });
+
+    it("distinguishes a real FAN_ONLY period from IDLE via HomeKit's CurrentFanState, unlike Flair's operating-state alone", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(
+        client,
+        [
+          {
+            roomId: "room-1",
+            ventId: "vent-1",
+            tempC: 22,
+            ductC: 14,
+            percentOpen: 50,
+          },
+        ],
+        "idle",
+      );
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({
+        currentHeatingCoolingState: 0,
+        currentFanState: 2,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.hvac_state).toBe("FAN_ONLY");
+      expect(decision.hvac_state_source).toBe("homekit");
+    });
+
+    it("falls back to Flair's own derived state, and never logs a disagreement, when HomeKit's fan/heat-cool characteristics aren't available", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(
+        client,
+        [
+          {
+            roomId: "room-1",
+            ventId: "vent-1",
+            tempC: 26,
+            ductC: 14,
+            percentOpen: 50,
+          },
+        ],
+        "cool",
+      );
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({
+        currentHeatingCoolingState: null,
+        currentFanState: null,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.hvac_state).toBe("COOLING_CALL");
+      expect(decision.hvac_state_source).toBe("flair");
+      expect(logSpy("warn")).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "HVAC state disagreement detected",
+      );
+    });
+
+    it("uses Flair's own derived state for a handler still on Flair setpoint delivery, and never even attempts a HomeKit read", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(
+        client,
+        [
+          {
+            roomId: "room-1",
+            ventId: "vent-1",
+            tempC: 26,
+            ductC: 14,
+            percentOpen: 50,
+          },
+        ],
+        "fan",
+      );
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "flair" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+      const getHomeKitClient = vi.fn();
+
+      const deps = makeHomeKitDeps(client, null, persisted, NOW);
+      deps.getHomeKitClient = getHomeKitClient;
+
+      const decision = await runTick(airHandler, zones, makeCtx(), deps);
+
+      expect(decision.hvac_state).toBe("FAN_ONLY");
+      expect(decision.hvac_state_source).toBe("flair");
+      expect(getHomeKitClient).not.toHaveBeenCalled();
+    });
+  });
 });

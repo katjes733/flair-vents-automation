@@ -35,6 +35,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",
@@ -117,6 +118,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",
@@ -175,6 +177,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",
@@ -254,6 +257,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",

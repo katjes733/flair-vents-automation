@@ -76,6 +76,10 @@ export interface AirHandlerTickDecision {
   equipment_fault_active: boolean;
   hvac_state: string;
   call_confidence: "reported" | "unknown";
+  // Which system this tick's hvac_state actually came from — see
+  // deriveHvacStateViaHomeKit's own doc comment (a real, confirmed
+  // incident where Flair's own relay went stale for over an hour).
+  hvac_state_source: "flair" | "homekit";
   zones: ZoneTickDecision[];
   contention: ContentionResult | null;
   pressure: {

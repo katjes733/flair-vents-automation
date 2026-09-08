@@ -136,6 +136,9 @@ export interface AirHandlerTickDecision {
   equipment_fault_active: boolean;
   hvac_state: string;
   call_confidence: "reported" | "unknown";
+  // Which system this tick's hvac_state actually came from — see
+  // docs/homekit-ecobee-control-research.md §6.
+  hvac_state_source: "flair" | "homekit";
   zones: ZoneTickDecisionRecord[];
   contention: unknown;
   pressure: {
