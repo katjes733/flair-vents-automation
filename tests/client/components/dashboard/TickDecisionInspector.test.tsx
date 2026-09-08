@@ -35,6 +35,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",
@@ -82,6 +83,10 @@ describe("TickDecisionInspector", () => {
         thermostat_current_setpoint: 21,
         would_write: true,
         demanding_zone_count: 1,
+        delivery_mode: "flair" as const,
+        homekit_paired: null,
+        homekit_write_kind: null,
+        homekit_error: null,
       },
       narrative: "COOLING_CALL, tracking Bedroom.",
     });
@@ -113,6 +118,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",
@@ -171,6 +177,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",
@@ -250,6 +257,7 @@ describe("TickDecisionInspector", () => {
       equipment_fault_active: false,
       hvac_state: "COOLING_CALL",
       call_confidence: "reported",
+      hvac_state_source: "flair",
       zones: [
         {
           zone_id: "z1",

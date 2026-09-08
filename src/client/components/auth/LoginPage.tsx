@@ -93,6 +93,7 @@ export default function LoginPage() {
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                required
                 fullWidth
               />
               <TextField
@@ -101,6 +102,7 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
                 fullWidth
               />
               <Link
@@ -114,7 +116,7 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 variant="contained"
-                disabled={submitting || !email || !password}
+                disabled={submitting}
                 fullWidth
               >
                 {submitting ? "Logging in…" : "Log in"}

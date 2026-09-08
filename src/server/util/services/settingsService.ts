@@ -9,6 +9,7 @@ import {
   updateSystemSettings,
 } from "~/server/util/routes/systemSettings";
 import { getZonesForInstallation } from "~/server/util/routes/zone";
+import { redis } from "~/server/util/redis";
 import type { SystemSettingsConfig } from "~/shared/schemas/systemSettings";
 
 export interface SettingsUpdateResult {
@@ -59,5 +60,25 @@ export async function updateSettingsForInstallation(
   }
 
   await updateSystemSettings(installationId, merged);
+
+  // A newly-promoted air handler (added to live_air_handler_ids here,
+  // absent from it before) is exactly the moment ramp state most needs to
+  // be re-seeded from reality — see maybeSeedStartupReconciliation's own
+  // comment. During a long shadow-mode run, "last dispatched position"
+  // bookkeeping keeps advancing as if commands were succeeding (shadow
+  // mode's own stated guarantee), so by promotion time it can be
+  // completely decoupled from the vent's real physical position; the
+  // step-delta suppressor then reads that phantom state as "no change
+  // needed" and never actually corrects it. Clearing the flag here forces
+  // a reseed on the very next tick instead of waiting out the timer-based
+  // backstop — a real, confirmed incident this exact gap caused live, not
+  // a hypothetical.
+  const newlyPromoted = merged.live_air_handler_ids.filter(
+    (id) => !existing.live_air_handler_ids.includes(id),
+  );
+  if (newlyPromoted.length > 0) {
+    await redis.del(`recon:startupSeeded:${installationId}`);
+  }
+
   return { config: merged, warnings };
 }

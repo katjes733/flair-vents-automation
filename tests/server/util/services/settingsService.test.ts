@@ -15,6 +15,9 @@ const { getZonesForInstallation } = vi.hoisted(() => ({
 }));
 vi.mock("~/server/util/routes/zone", () => ({ getZonesForInstallation }));
 
+const { redisDel } = vi.hoisted(() => ({ redisDel: vi.fn() }));
+vi.mock("~/server/util/redis", () => ({ redis: { del: redisDel } }));
+
 const { updateSettingsForInstallation } =
   await import("~/server/util/services/settingsService");
 
@@ -23,6 +26,7 @@ describe("updateSettingsForInstallation", () => {
     getSystemSettings.mockReset().mockResolvedValue(resolveSystemSettings({}));
     updateSystemSettings.mockReset().mockResolvedValue(undefined);
     getZonesForInstallation.mockReset().mockResolvedValue([]);
+    redisDel.mockReset().mockResolvedValue(1);
   });
 
   it("merges the patch onto the existing config", async () => {
@@ -80,5 +84,51 @@ describe("updateSettingsForInstallation", () => {
       result.warnings.some((w) => w.toLowerCase().includes("priority")),
     ).toBe(false);
     expect(updateSystemSettings).toHaveBeenCalledOnce();
+  });
+
+  describe("reseeding startup reconciliation on a shadow→live promotion", () => {
+    it("clears the startup-reconciliation flag when an air handler is newly promoted", async () => {
+      getSystemSettings.mockResolvedValue(
+        resolveSystemSettings({ live_air_handler_ids: [] }),
+      );
+      await updateSettingsForInstallation("inst-1", {
+        live_air_handler_ids: ["11111111-1111-4111-8111-111111111111"],
+      });
+      expect(redisDel).toHaveBeenCalledWith("recon:startupSeeded:inst-1");
+    });
+
+    it("does not touch the flag when live_air_handler_ids is unchanged", async () => {
+      getSystemSettings.mockResolvedValue(
+        resolveSystemSettings({
+          live_air_handler_ids: ["11111111-1111-4111-8111-111111111111"],
+        }),
+      );
+      await updateSettingsForInstallation("inst-1", {
+        live_air_handler_ids: ["11111111-1111-4111-8111-111111111111"],
+      });
+      expect(redisDel).not.toHaveBeenCalled();
+    });
+
+    it("does not touch the flag when a handler is only demoted, not promoted", async () => {
+      getSystemSettings.mockResolvedValue(
+        resolveSystemSettings({
+          live_air_handler_ids: [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+          ],
+        }),
+      );
+      await updateSettingsForInstallation("inst-1", {
+        live_air_handler_ids: ["11111111-1111-4111-8111-111111111111"],
+      });
+      expect(redisDel).not.toHaveBeenCalled();
+    });
+
+    it("does not touch the flag when the patch never mentions live_air_handler_ids", async () => {
+      await updateSettingsForInstallation("inst-1", {
+        home_timezone: "America/Denver",
+      });
+      expect(redisDel).not.toHaveBeenCalled();
+    });
   });
 });

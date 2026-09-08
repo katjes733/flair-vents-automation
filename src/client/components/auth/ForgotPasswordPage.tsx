@@ -117,12 +117,13 @@ export default function ForgotPasswordPage() {
                   autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  required
                   fullWidth
                 />
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={submitting || !email}
+                  disabled={submitting}
                   fullWidth
                 >
                   {submitting ? "Sending…" : "Send reset code"}
@@ -146,6 +147,7 @@ export default function ForgotPasswordPage() {
                   label="Reset code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
+                  required
                   fullWidth
                 />
                 <TextField
@@ -155,6 +157,7 @@ export default function ForgotPasswordPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   helperText="At least 8 characters."
+                  required
                   fullWidth
                 />
                 <TextField
@@ -163,14 +166,13 @@ export default function ForgotPasswordPage() {
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
                   fullWidth
                 />
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={
-                    submitting || !code || !password || !confirmPassword
-                  }
+                  disabled={submitting}
                   fullWidth
                 >
                   {submitting ? "Resetting…" : "Reset password"}

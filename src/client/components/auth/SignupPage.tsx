@@ -183,12 +183,13 @@ export default function SignupPage() {
                   autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  required
                   fullWidth
                 />
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={submitting || !email}
+                  disabled={submitting}
                   fullWidth
                 >
                   {submitting ? "Sending…" : "Send verification code"}
@@ -213,12 +214,13 @@ export default function SignupPage() {
                   label="Verification code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
+                  required
                   fullWidth
                 />
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={submitting || !code}
+                  disabled={submitting}
                   fullWidth
                 >
                   {submitting ? "Verifying…" : "Verify code"}
@@ -240,6 +242,7 @@ export default function SignupPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   helperText="At least 8 characters."
+                  required
                   fullWidth
                 />
                 <TextField
@@ -248,12 +251,13 @@ export default function SignupPage() {
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
                   fullWidth
                 />
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={submitting || !password || !confirmPassword}
+                  disabled={submitting}
                   fullWidth
                 >
                   {submitting ? "Creating account…" : "Continue"}
@@ -295,6 +299,7 @@ export default function SignupPage() {
                   label="Flair Client ID"
                   value={flairClientId}
                   onChange={(e) => setFlairClientId(e.target.value)}
+                  required
                   fullWidth
                 />
                 <TextField
@@ -302,6 +307,7 @@ export default function SignupPage() {
                   type={showSecret ? "text" : "password"}
                   value={flairClientSecret}
                   onChange={(e) => setFlairClientSecret(e.target.value)}
+                  required
                   fullWidth
                   slotProps={{
                     input: {
@@ -324,7 +330,7 @@ export default function SignupPage() {
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={submitting || !flairClientId || !flairClientSecret}
+                  disabled={submitting}
                   fullWidth
                 >
                   {submitting ? "Connecting…" : "Connect Flair account"}

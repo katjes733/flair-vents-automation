@@ -17,8 +17,11 @@ export class FakeHomeKitClient implements HomeKitClient {
   private state: HomeKitCurrentState = {
     currentTempC: 22,
     targetMode: 2,
+    targetTemperatureC: 22,
     heatThresholdC: null,
     coolThresholdC: null,
+    currentHeatingCoolingState: 2,
+    currentFanState: 2,
   };
   private paired = true;
   private forcedError: Error | null = null;
@@ -55,7 +58,7 @@ export class FakeHomeKitClient implements HomeKitClient {
   async setTargetTemperature(valueC: number): Promise<void> {
     this.maybeThrow();
     this.writeHistory.push({ kind: "target", value: valueC, at: Date.now() });
-    this.state = { ...this.state, targetMode: this.state.targetMode };
+    this.state = { ...this.state, targetTemperatureC: valueC };
   }
 
   async setThresholdTemperature(

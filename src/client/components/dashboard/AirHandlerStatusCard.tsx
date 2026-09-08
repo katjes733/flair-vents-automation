@@ -191,12 +191,20 @@ export default function AirHandlerStatusCard({
                       color="text.secondary"
                       sx={{ display: "block", mt: 0.5 }}
                     >
-                      This app's computed call
+                      {decision.driving_zone?.zone_id
+                        ? "This app's computed call"
+                        : "This app's last computed call"}
                     </Typography>
                     <Typography variant="body2">
                       {`${toDisplayAbsolute(asAbsoluteTemp(decision.setpoint_push.pushed_value), temperatureUnit).toFixed(1)}°${temperatureUnit}`}
                       {!decision.setpoint_push.would_write && " (not written)"}
                     </Typography>
+                    {!decision.driving_zone?.zone_id && (
+                      <Typography variant="caption" color="text.secondary">
+                        No zone is currently demanding — this is held over from
+                        the last active call, not a fresh computation.
+                      </Typography>
+                    )}
                   </>
                 )}
               </Box>

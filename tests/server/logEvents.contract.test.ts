@@ -20,7 +20,14 @@ function buildRealCatalogue(): Map<string, Set<string>> {
     from: "IDLE",
     to: "COOLING_CALL",
     call_source: "cool",
+    source: "flair",
     dry_run: false,
+  });
+  logEvents.logHvacStateDisagreement(log, {
+    air_handler_id: "ah-1",
+    flair_state: "IDLE",
+    homekit_state: "FAN_ONLY",
+    authoritative_source: "homekit",
   });
   logEvents.logZoneEvaluated(log, {
     air_handler_id: "ah-1",

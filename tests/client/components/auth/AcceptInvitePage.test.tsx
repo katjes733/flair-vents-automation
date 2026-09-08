@@ -57,13 +57,13 @@ describe("AcceptInvitePage", () => {
     });
     renderPage();
 
-    fireEvent.change(screen.getByLabelText("Verification code"), {
+    fireEvent.change(screen.getByLabelText(/^Verification code/), {
       target: { value: "123456" },
     });
-    fireEvent.change(screen.getByLabelText("Password"), {
+    fireEvent.change(screen.getByLabelText(/^Password/), {
       target: { value: "supersecret" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm password/), {
       target: { value: "supersecret" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Activate account" }));
@@ -83,13 +83,13 @@ describe("AcceptInvitePage", () => {
 
   it("rejects a too-short password before calling the server", async () => {
     renderPage();
-    fireEvent.change(screen.getByLabelText("Verification code"), {
+    fireEvent.change(screen.getByLabelText(/^Verification code/), {
       target: { value: "123456" },
     });
-    fireEvent.change(screen.getByLabelText("Password"), {
+    fireEvent.change(screen.getByLabelText(/^Password/), {
       target: { value: "short" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm password/), {
       target: { value: "short" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Activate account" }));
@@ -101,13 +101,13 @@ describe("AcceptInvitePage", () => {
 
   it("rejects mismatched password confirmation before calling the server", async () => {
     renderPage();
-    fireEvent.change(screen.getByLabelText("Verification code"), {
+    fireEvent.change(screen.getByLabelText(/^Verification code/), {
       target: { value: "123456" },
     });
-    fireEvent.change(screen.getByLabelText("Password"), {
+    fireEvent.change(screen.getByLabelText(/^Password/), {
       target: { value: "supersecret" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm password/), {
       target: { value: "different1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Activate account" }));
@@ -122,13 +122,13 @@ describe("AcceptInvitePage", () => {
       response: { data: { error: "Invalid verification code" } },
     });
     renderPage();
-    fireEvent.change(screen.getByLabelText("Verification code"), {
+    fireEvent.change(screen.getByLabelText(/^Verification code/), {
       target: { value: "wrong" },
     });
-    fireEvent.change(screen.getByLabelText("Password"), {
+    fireEvent.change(screen.getByLabelText(/^Password/), {
       target: { value: "supersecret" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm password/), {
       target: { value: "supersecret" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Activate account" }));

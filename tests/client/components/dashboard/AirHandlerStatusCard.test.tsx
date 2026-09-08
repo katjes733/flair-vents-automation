@@ -61,6 +61,7 @@ function makeDecision(
     equipment_fault_active: false,
     hvac_state: "COOLING_CALL",
     call_confidence: "reported",
+    hvac_state_source: "flair",
     zones: [makeZone()],
     contention: null,
     pressure: null,
@@ -333,6 +334,10 @@ describe("AirHandlerStatusCard", () => {
           thermostat_current_setpoint: 21,
           would_write: true,
           demanding_zone_count: 1,
+          delivery_mode: "flair" as const,
+          homekit_paired: null,
+          homekit_write_kind: null,
+          homekit_error: null,
         },
       }),
     });
@@ -353,6 +358,10 @@ describe("AirHandlerStatusCard", () => {
           thermostat_current_setpoint: null,
           would_write: false,
           demanding_zone_count: 1,
+          delivery_mode: "flair" as const,
+          homekit_paired: null,
+          homekit_write_kind: null,
+          homekit_error: null,
         },
       }),
     });
@@ -370,6 +379,10 @@ describe("AirHandlerStatusCard", () => {
           thermostat_current_setpoint: null,
           would_write: false,
           demanding_zone_count: 0,
+          delivery_mode: "flair" as const,
+          homekit_paired: null,
+          homekit_write_kind: null,
+          homekit_error: null,
         },
       }),
     });
@@ -377,6 +390,56 @@ describe("AirHandlerStatusCard", () => {
     expect(
       screen.queryByText("This app's computed call"),
     ).not.toBeInTheDocument();
+  });
+
+  it('labels the pushed value "This app\'s computed call" when a zone is actively being tracked', () => {
+    renderCard({
+      decision: makeDecision({
+        driving_zone: { zone_id: "z1", reason: "dynamic_worst_off" },
+        setpoint_push: {
+          pushed_value: 21.5,
+          pushed_value_c: 21.5,
+          thermostat_reading: 22,
+          thermostat_current_setpoint: 21,
+          would_write: true,
+          demanding_zone_count: 1,
+          delivery_mode: "flair" as const,
+          homekit_paired: null,
+          homekit_write_kind: null,
+          homekit_error: null,
+        },
+      }),
+    });
+    expect(screen.getByText("This app's computed call")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/held over from the last active call/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("labels the pushed value \"This app's last computed call\" and explains it's held over when no zone is currently demanding", () => {
+    renderCard({
+      decision: makeDecision({
+        driving_zone: { zone_id: null, reason: "no_eligible_zone" },
+        setpoint_push: {
+          pushed_value: 21.5,
+          pushed_value_c: 21.5,
+          thermostat_reading: 22,
+          thermostat_current_setpoint: 21,
+          would_write: true,
+          demanding_zone_count: 0,
+          delivery_mode: "flair" as const,
+          homekit_paired: null,
+          homekit_write_kind: null,
+          homekit_error: null,
+        },
+      }),
+    });
+    expect(
+      screen.getByText("This app's last computed call"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/held over from the last active call/),
+    ).toBeInTheDocument();
   });
 
   it("renders no open-capacity section when pressure is null", () => {

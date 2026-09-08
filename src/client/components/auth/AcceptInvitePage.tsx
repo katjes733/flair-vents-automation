@@ -109,6 +109,7 @@ export default function AcceptInvitePage() {
                 label="Verification code"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
+                required
                 fullWidth
               />
               <TextField
@@ -118,6 +119,7 @@ export default function AcceptInvitePage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 helperText="At least 8 characters."
+                required
                 fullWidth
               />
               <TextField
@@ -126,12 +128,13 @@ export default function AcceptInvitePage() {
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                required
                 fullWidth
               />
               <Button
                 type="submit"
                 variant="contained"
-                disabled={submitting || !code || !password || !confirmPassword}
+                disabled={submitting}
                 fullWidth
               >
                 {submitting ? "Activating…" : "Activate account"}

@@ -136,6 +136,9 @@ export interface AirHandlerTickDecision {
   equipment_fault_active: boolean;
   hvac_state: string;
   call_confidence: "reported" | "unknown";
+  // Which system this tick's hvac_state actually came from — see
+  // docs/homekit-ecobee-control-research.md §6.
+  hvac_state_source: "flair" | "homekit";
   zones: ZoneTickDecisionRecord[];
   contention: unknown;
   pressure: {
@@ -158,6 +161,13 @@ export interface AirHandlerTickDecision {
     thermostat_current_setpoint: number | null;
     would_write: boolean;
     demanding_zone_count: number;
+    // Which channel this tick's push actually went through — see "Direct
+    // HomeKit Thermostat Control" in the plan. homekit_* fields are only
+    // ever populated when delivery_mode is "homekit"; null otherwise.
+    delivery_mode: "flair" | "homekit";
+    homekit_paired: boolean | null;
+    homekit_write_kind: "target" | "threshold" | "skip" | null;
+    homekit_error: string | null;
   } | null;
   narrative: string;
 }

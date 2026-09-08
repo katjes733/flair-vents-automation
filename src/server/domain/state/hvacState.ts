@@ -34,3 +34,35 @@ export function deriveHvacState(
   }
   return { state: mapped, confidence: "reported" };
 }
+
+/**
+ * Derives HVAC state from a local HomeKit read instead of Flair's
+ * cloud-relayed `operating-state` — see "Real-time HVAC/fan state via
+ * HomeKit" (docs/homekit-ecobee-control-research.md §6), written after a
+ * real, confirmed incident where Flair reported "idle" continuously for
+ * over an hour while the thermostat's own equipment log showed real
+ * cool/fan activity the whole time.
+ *
+ * `CurrentHeatingCoolingState` alone can't distinguish fan-only from idle
+ * (HAP's own enum is only Off/Heat/Cool, no fourth "fan" value) — that's
+ * exactly what `CurrentFanState`'s "Blowing Air" (2) supplies. Always
+ * "reported" confidence: unlike Flair's operating-state, there's no
+ * "missing/unrecognized raw value" case here — both inputs are typed,
+ * bounded HAP enums the caller only supplies once a real characteristic
+ * read has succeeded (see tick.ts's own null-guard before calling this).
+ */
+export function deriveHvacStateViaHomeKit(
+  currentHeatingCoolingState: 0 | 1 | 2,
+  currentFanState: 0 | 1 | 2,
+): HvacStateResult {
+  if (currentHeatingCoolingState === 1) {
+    return { state: "HEATING_CALL", confidence: "reported" };
+  }
+  if (currentHeatingCoolingState === 2) {
+    return { state: "COOLING_CALL", confidence: "reported" };
+  }
+  return {
+    state: currentFanState === 2 ? "FAN_ONLY" : "IDLE",
+    confidence: "reported",
+  };
+}
