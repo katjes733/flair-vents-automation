@@ -82,6 +82,10 @@ describe("TickDecisionInspector", () => {
         thermostat_current_setpoint: 21,
         would_write: true,
         demanding_zone_count: 1,
+        delivery_mode: "flair" as const,
+        homekit_paired: null,
+        homekit_write_kind: null,
+        homekit_error: null,
       },
       narrative: "COOLING_CALL, tracking Bedroom.",
     });

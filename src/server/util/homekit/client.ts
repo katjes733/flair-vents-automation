@@ -22,6 +22,14 @@ const HAP_TYPE = {
 export interface HomeKitCurrentState {
   currentTempC: number;
   targetMode: HapTargetHeatingCoolingState;
+  // The live TargetTemperature characteristic's own current value — this
+  // app's real, currently-held setpoint, read directly from the device
+  // itself rather than relayed through Flair's own cloud (which can lag
+  // or simply not reflect a change made directly on the thermostat/Ecobee
+  // app — confirmed live, this session, the exact reason this delivery
+  // path exists at all). Meaningful only in Heat/Cool mode (1/2); null in
+  // Auto (3), where the threshold pair below is what's actually live.
+  targetTemperatureC: number | null;
   heatThresholdC: number | null;
   coolThresholdC: number | null;
 }
@@ -268,6 +276,7 @@ export class HapControllerClient implements HomeKitClient {
     const ids = [
       `${chars.aid}.${chars.targetHeatingCoolingStateIid}`,
       `${chars.aid}.${chars.currentTemperatureIid}`,
+      `${chars.aid}.${chars.targetTemperatureIid}`,
     ];
     if (chars.coolingThresholdIid)
       ids.push(`${chars.aid}.${chars.coolingThresholdIid}`);
@@ -287,6 +296,7 @@ export class HapControllerClient implements HomeKitClient {
         chars.targetHeatingCoolingStateIid,
       ) as HapTargetHeatingCoolingState,
       currentTempC: byIid.get(chars.currentTemperatureIid)!,
+      targetTemperatureC: byIid.get(chars.targetTemperatureIid) ?? null,
       coolThresholdC: chars.coolingThresholdIid
         ? (byIid.get(chars.coolingThresholdIid) ?? null)
         : null,

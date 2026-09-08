@@ -1846,8 +1846,16 @@ export async function runTick(
       pushed_value: pushedValue,
       pushed_value_c: pushedValue,
       thermostat_reading: thermostatReadingC,
+      // Prefer a live HomeKit read when available — confirmed live, this
+      // session, that Flair's own relayed target-temperature-c can be
+      // stale or simply wrong (e.g. a hold cleared directly on the
+      // thermostat/Ecobee app has no reason to be reflected there until
+      // Flair's own next cloud sync, which may lag well behind reality).
+      // A local HomeKit read has no such intermediary.
       thermostat_current_setpoint:
-        snapshot.thermostatState?.targetTemperatureC ?? null,
+        deliveryMode === "homekit" && homeKitState?.targetTemperatureC !== null
+          ? (homeKitState?.targetTemperatureC ?? null)
+          : (snapshot.thermostatState?.targetTemperatureC ?? null),
       would_write: wouldWrite && !dryRun && !controlDisarmed,
       demanding_zone_count: demandingZoneCount,
       delivery_mode: deliveryMode,

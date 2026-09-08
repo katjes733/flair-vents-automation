@@ -3031,4 +3031,61 @@ describe("runTick — HomeKit setpoint delivery", () => {
     expect(decision.setpoint_push?.homekit_paired).toBeNull();
     expect(client.getSetpointCommandHistory().length).toBeGreaterThan(0);
   });
+
+  // Regression test: a hold cleared directly on the thermostat/Ecobee app
+  // has no reason to be reflected in Flair's own relayed
+  // thermostat-states.target-temperature-c until Flair's next cloud sync,
+  // which can lag well behind reality (confirmed live this session) — the
+  // displayed "currently held" setpoint must prefer a live HomeKit read
+  // over that stale Flair value whenever one is available.
+  it("prefers the live HomeKit-read target over Flair's own (possibly stale) relayed setpoint", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    // Flair's own snapshot still reports an old held value (75.2°F ≈
+    // 24°C) even though the real thermostat has since had its hold
+    // cleared and now reports something else entirely.
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "cool",
+      mode: "cool",
+      ambientTemperatureC: 22,
+      targetTemperatureC: 24,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: false,
+      writtenConfirmed: false,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({
+      targetMode: 2,
+      currentTempC: 26,
+      targetTemperatureC: 21,
+    });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+    );
+
+    expect(decision.setpoint_push?.thermostat_current_setpoint).toBeCloseTo(
+      21,
+      5,
+    );
+  });
 });
