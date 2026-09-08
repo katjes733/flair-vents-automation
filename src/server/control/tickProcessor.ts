@@ -275,20 +275,38 @@ async function runTickForInstallation(
   }
 }
 
-// Runs once per installation, ever — guarded by a Redis flag rather than
-// "once at process boot," since a BullMQ job can fire on any worker
-// process at any time, not just right after a fresh start. Seeds each
-// zone's ramp origin from the vent's actual reported position (not
-// whatever the DB happened to hold across a restart), and enters a
-// genuine drift beyond min_step_delta_pct into the normal retry/degrade
-// path exactly as a live reconciliation failure would. See
-// "Reconciliation & startup reconciliation".
+// Re-seeds each zone's ramp origin from the vent's actual reported
+// position (not whatever the DB happened to hold, which during a long
+// shadow-mode run can drift far from reality) and enters a genuine drift
+// beyond min_step_delta_pct into the normal retry/degrade path exactly as
+// a live reconciliation failure would. See "Reconciliation & startup
+// reconciliation".
+//
+// Guarded by a short-lived Redis flag, not a "once per installation,
+// ever" latch — settingsService.ts explicitly clears this flag the
+// moment an air handler is newly added to live_air_handler_ids (a
+// shadow→live promotion is exactly the moment this matters most, and
+// shouldn't have to wait out the timer below), and the timer itself is a
+// backstop bounding how stale ramp state can get even with no explicit
+// trigger — see STARTUP_SEEDED_FLAG_TTL_SECONDS's own comment.
 async function maybeSeedStartupReconciliation(
   installation: InstallationData,
 ): Promise<void> {
   if (!installation.flairStructureId) return;
   const flagKey = `recon:startupSeeded:${installation.id}`;
-  if (await redis.get(flagKey)) return;
+  // A real, confirmed bug found live twice: checking mere existence can't
+  // tell a correctly-written flag (always set with EX below) apart from a
+  // corrupted leftover one — the old, pre-"fix: stuck vents" code set
+  // this flag with no expiry at all, and once that happened, an
+  // existence-only guard deferred to it forever, even after the writer
+  // itself was fixed, since the fix's own guard had no way to know the
+  // value predated it. A no-TTL key can only ever be that kind of
+  // leftover — every real writer of this key (this function, right
+  // below) always sets one — so treating it as stale rather than trusted
+  // makes this self-healing instead of a silent, permanent trap the next
+  // time anything ever writes this key without an expiry again.
+  const ttl = await redis.ttl(flagKey);
+  if (ttl > 0) return;
 
   const settings = await getSystemSettings(installation.id);
   const airHandlers = await getActiveAirHandlers(installation.id);
