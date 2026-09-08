@@ -101,6 +101,13 @@ export interface AirHandlerTickDecision {
     thermostat_current_setpoint: number | null;
     would_write: boolean;
     demanding_zone_count: number;
+    // Which channel this tick's push actually went through — see "Direct
+    // HomeKit Thermostat Control" in the plan. homekit_* fields are only
+    // ever populated when delivery_mode is "homekit"; null otherwise.
+    delivery_mode: "flair" | "homekit";
+    homekit_paired: boolean | null;
+    homekit_write_kind: "target" | "threshold" | "skip" | null;
+    homekit_error: string | null;
   } | null;
   narrative: string;
 }

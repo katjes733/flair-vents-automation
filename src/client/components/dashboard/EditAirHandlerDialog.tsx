@@ -6,6 +6,7 @@ import DialogContentText from "@mui/material/DialogContentText";
 import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
+import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Checkbox from "@mui/material/Checkbox";
@@ -17,6 +18,7 @@ import {
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import FlairZoneSelect from "~/client/components/shared/FlairZoneSelect";
+import HomeKitPairingDialog from "~/client/components/dashboard/HomeKitPairingDialog";
 import { useCanWrite } from "~/client/permissions/usePermission";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import {
@@ -62,6 +64,10 @@ export default function EditAirHandlerDialog({
   const [awayCoolOverride, setAwayCoolOverride] = useState("");
   const [awayHeatOverride, setAwayHeatOverride] = useState("");
   const [awayToleranceOverride, setAwayToleranceOverride] = useState("");
+  const [setpointDeliveryMode, setSetpointDeliveryMode] = useState<
+    "flair" | "homekit"
+  >("flair");
+  const [homeKitDialogOpen, setHomeKitDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -102,6 +108,7 @@ export default function EditAirHandlerDialog({
     );
     setFlairZoneId(airHandler.flairZoneId ?? "");
     setActive(airHandler.active);
+    setSetpointDeliveryMode(airHandler.config.setpoint_delivery_mode);
   }
 
   const handleSave = useCallback(async () => {
@@ -128,6 +135,7 @@ export default function EditAirHandlerDialog({
           away_tolerance_override: awayToleranceOverride.trim()
             ? fromDisplayDelta(Number(awayToleranceOverride), temperatureUnit)
             : null,
+          setpoint_delivery_mode: setpointDeliveryMode,
         },
       });
       showNotification(`"${name.trim()}" updated.`, "success");
@@ -151,6 +159,7 @@ export default function EditAirHandlerDialog({
     name,
     onClose,
     onSaved,
+    setpointDeliveryMode,
     showNotification,
     temperatureUnit,
     tonnageTons,
@@ -229,6 +238,31 @@ export default function EditAirHandlerDialog({
               }
               label="Active"
             />
+            <TextField
+              select
+              label="Setpoint delivery"
+              value={setpointDeliveryMode}
+              onChange={(e) =>
+                setSetpointDeliveryMode(e.target.value as "flair" | "homekit")
+              }
+              helperText={
+                setpointDeliveryMode === "homekit"
+                  ? "Pushed directly to the thermostat over the local network, bypassing Flair's API."
+                  : 'Pushed through Flair\'s own API — known to require System Mode "auto," which fights vent control.'
+              }
+            >
+              <MenuItem value="flair">Flair API</MenuItem>
+              <MenuItem value="homekit">Direct (HomeKit)</MenuItem>
+            </TextField>
+            {setpointDeliveryMode === "homekit" && (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setHomeKitDialogOpen(true)}
+              >
+                Set up HomeKit pairing
+              </Button>
+            )}
             {error && (
               <DialogContentText color="error">{error}</DialogContentText>
             )}
@@ -283,6 +317,13 @@ export default function EditAirHandlerDialog({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <HomeKitPairingDialog
+        open={homeKitDialogOpen}
+        airHandlerId={airHandler.id}
+        airHandlerName={airHandler.name}
+        onClose={() => setHomeKitDialogOpen(false)}
+      />
     </>
   );
 }

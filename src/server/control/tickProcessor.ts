@@ -29,7 +29,11 @@ import {
   type TickDeps,
 } from "~/server/control/tick";
 import { runStartupReconciliation } from "~/server/control/startupReconcile";
-import { isDryRunEnv, getFlairClient } from "~/server/control/scheduler";
+import {
+  isDryRunEnv,
+  getFlairClient,
+  getHomeKitClientForAirHandler,
+} from "~/server/control/scheduler";
 import { redis } from "~/server/util/redis";
 import { tickQueue } from "~/server/control/queue";
 import { getActiveInstallations } from "~/server/util/routes/installation";
@@ -240,6 +244,7 @@ async function runTickForInstallation(
     };
     const deps: TickDeps = {
       client,
+      getHomeKitClient: getHomeKitClientForAirHandler,
       reconciliationQueue,
       spikeBufferStore,
       airHandlerRuntimeStore,

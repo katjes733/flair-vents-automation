@@ -252,6 +252,18 @@ export function logFlairSetpointWriteFailing(
   log.warn(fields, "Flair setpoint write failing");
 }
 
+export interface SetpointDispatchFailedFields {
+  air_handler_id: string;
+  delivery_mode: "flair" | "homekit";
+  error: string;
+}
+export function logSetpointDispatchFailed(
+  log: Logger,
+  fields: SetpointDispatchFailedFields,
+): void {
+  log.warn(fields, "Setpoint dispatch failed");
+}
+
 export interface DuctAirflowAnomalyFields {
   air_handler_id: string;
   zone_id: string;

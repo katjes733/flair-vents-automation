@@ -7,6 +7,7 @@ import { Zone } from "~/server/database/models/zone";
 import { Schedule } from "~/server/database/models/schedule";
 import { ManualOverride } from "~/server/database/models/manualOverride";
 import { FlairToken } from "~/server/database/models/flairToken";
+import { HomekitPairing } from "~/server/database/models/homekitPairing";
 import { SystemSettings } from "~/server/database/models/systemSettings";
 import { User } from "~/server/database/models/user";
 import { InstallationMember } from "~/server/database/models/installationMember";
@@ -79,6 +80,7 @@ class AppDataSource {
               Schedule,
               ManualOverride,
               FlairToken,
+              HomekitPairing,
               SystemSettings,
               User,
               InstallationMember,
