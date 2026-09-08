@@ -38,7 +38,7 @@ describe("ForgotPasswordPage", () => {
   it("advances to the reset step after requesting a code", async () => {
     forgotPassword.mockResolvedValue(undefined);
     renderPage();
-    fireEvent.change(screen.getByLabelText("Email"), {
+    fireEvent.change(screen.getByLabelText(/^Email/), {
       target: { value: "a@example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send reset code" }));
@@ -49,7 +49,7 @@ describe("ForgotPasswordPage", () => {
   it("shows an error and stays on the email step if the request fails", async () => {
     forgotPassword.mockRejectedValue(new Error("network error"));
     renderPage();
-    fireEvent.change(screen.getByLabelText("Email"), {
+    fireEvent.change(screen.getByLabelText(/^Email/), {
       target: { value: "a@example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send reset code" }));
@@ -64,7 +64,7 @@ describe("ForgotPasswordPage", () => {
   async function advanceToResetStep(email = "a@example.com") {
     forgotPassword.mockResolvedValue(undefined);
     renderPage();
-    fireEvent.change(screen.getByLabelText("Email"), {
+    fireEvent.change(screen.getByLabelText(/^Email/), {
       target: { value: email },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send reset code" }));
@@ -73,13 +73,13 @@ describe("ForgotPasswordPage", () => {
 
   it("rejects a too-short password before calling the server", async () => {
     await advanceToResetStep();
-    fireEvent.change(screen.getByLabelText("Reset code"), {
+    fireEvent.change(screen.getByLabelText(/^Reset code/), {
       target: { value: "111111" },
     });
-    fireEvent.change(screen.getByLabelText("New password"), {
+    fireEvent.change(screen.getByLabelText(/^New password/), {
       target: { value: "short" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm new password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm new password/), {
       target: { value: "short" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
@@ -93,13 +93,13 @@ describe("ForgotPasswordPage", () => {
 
   it("rejects mismatched passwords before calling the server", async () => {
     await advanceToResetStep();
-    fireEvent.change(screen.getByLabelText("Reset code"), {
+    fireEvent.change(screen.getByLabelText(/^Reset code/), {
       target: { value: "111111" },
     });
-    fireEvent.change(screen.getByLabelText("New password"), {
+    fireEvent.change(screen.getByLabelText(/^New password/), {
       target: { value: "password-one" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm new password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm new password/), {
       target: { value: "password-two" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
@@ -110,13 +110,13 @@ describe("ForgotPasswordPage", () => {
   it("resets the password and navigates to /login on success", async () => {
     await advanceToResetStep("a@example.com");
     resetPassword.mockResolvedValue(undefined);
-    fireEvent.change(screen.getByLabelText("Reset code"), {
+    fireEvent.change(screen.getByLabelText(/^Reset code/), {
       target: { value: "111111" },
     });
-    fireEvent.change(screen.getByLabelText("New password"), {
+    fireEvent.change(screen.getByLabelText(/^New password/), {
       target: { value: "new-password-123" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm new password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm new password/), {
       target: { value: "new-password-123" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Reset password" }));

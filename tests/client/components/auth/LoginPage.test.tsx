@@ -89,10 +89,10 @@ describe("LoginPage", () => {
     });
     renderPage();
 
-    fireEvent.change(screen.getByLabelText("Email"), {
+    fireEvent.change(screen.getByLabelText(/^Email/), {
       target: { value: "a@example.com" },
     });
-    fireEvent.change(screen.getByLabelText("Password"), {
+    fireEvent.change(screen.getByLabelText(/^Password/), {
       target: { value: "hunter2" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Log in" }));
@@ -112,10 +112,10 @@ describe("LoginPage", () => {
     });
     renderPage();
 
-    fireEvent.change(screen.getByLabelText("Email"), {
+    fireEvent.change(screen.getByLabelText(/^Email/), {
       target: { value: "a@example.com" },
     });
-    fireEvent.change(screen.getByLabelText("Password"), {
+    fireEvent.change(screen.getByLabelText(/^Password/), {
       target: { value: "wrong" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Log in" }));

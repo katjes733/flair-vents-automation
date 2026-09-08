@@ -49,7 +49,7 @@ async function completeUpToConnectFlair() {
   verifyCode.mockResolvedValue(undefined);
   signup.mockResolvedValue(undefined);
 
-  fireEvent.change(screen.getByLabelText("Email"), {
+  fireEvent.change(screen.getByLabelText(/^Email/), {
     target: { value: "a@example.com" },
   });
   fireEvent.click(
@@ -57,7 +57,7 @@ async function completeUpToConnectFlair() {
   );
   await waitFor(() => expect(sendCode).toHaveBeenCalledWith("a@example.com"));
 
-  fireEvent.change(await screen.findByLabelText("Verification code"), {
+  fireEvent.change(await screen.findByLabelText(/^Verification code/), {
     target: { value: "123456" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
@@ -65,10 +65,10 @@ async function completeUpToConnectFlair() {
     expect(verifyCode).toHaveBeenCalledWith("a@example.com", "123456"),
   );
 
-  fireEvent.change(await screen.findByLabelText("Password"), {
+  fireEvent.change(await screen.findByLabelText(/^Password/), {
     target: { value: "supersecret" },
   });
-  fireEvent.change(screen.getByLabelText("Confirm password"), {
+  fireEvent.change(screen.getByLabelText(/^Confirm password/), {
     target: { value: "supersecret" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -76,7 +76,7 @@ async function completeUpToConnectFlair() {
     expect(signup).toHaveBeenCalledWith("a@example.com", "supersecret"),
   );
 
-  await screen.findByLabelText("Flair Client ID");
+  await screen.findByLabelText(/^Flair Client ID/);
 }
 
 beforeEach(() => {
@@ -92,12 +92,12 @@ describe("SignupPage", () => {
   it("walks through email → code → password → connect-flair in order", async () => {
     renderPage();
     await completeUpToConnectFlair();
-    expect(screen.getByLabelText("Flair Client Secret")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Flair Client Secret/)).toBeInTheDocument();
   });
 
   it("prefills the email and jumps to the code step when ?email= is present (the 'continue signup' email link)", () => {
     renderPage("/signup?email=b%40example.com");
-    expect(screen.getByLabelText("Verification code")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Verification code/)).toBeInTheDocument();
     expect(
       screen.getByText("We sent a verification code to b@example.com."),
     ).toBeInTheDocument();
@@ -108,22 +108,22 @@ describe("SignupPage", () => {
     sendCode.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole("button", { name: "Resend code" }));
     await waitFor(() => expect(sendCode).toHaveBeenCalledWith("b@example.com"));
-    expect(screen.getByLabelText("Verification code")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Verification code/)).toBeInTheDocument();
   });
 
   it("rejects a too-short password before ever calling the server", async () => {
     renderPage("/signup?email=b%40example.com");
     verifyCode.mockResolvedValue(undefined);
-    fireEvent.change(screen.getByLabelText("Verification code"), {
+    fireEvent.change(screen.getByLabelText(/^Verification code/), {
       target: { value: "123456" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
     await waitFor(() => expect(verifyCode).toHaveBeenCalled());
 
-    fireEvent.change(await screen.findByLabelText("Password"), {
+    fireEvent.change(await screen.findByLabelText(/^Password/), {
       target: { value: "short" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm password/), {
       target: { value: "short" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -137,16 +137,16 @@ describe("SignupPage", () => {
   it("rejects mismatched password confirmation before calling the server", async () => {
     renderPage("/signup?email=b%40example.com");
     verifyCode.mockResolvedValue(undefined);
-    fireEvent.change(screen.getByLabelText("Verification code"), {
+    fireEvent.change(screen.getByLabelText(/^Verification code/), {
       target: { value: "123456" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
     await waitFor(() => expect(verifyCode).toHaveBeenCalled());
 
-    fireEvent.change(await screen.findByLabelText("Password"), {
+    fireEvent.change(await screen.findByLabelText(/^Password/), {
       target: { value: "supersecret" },
     });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
+    fireEvent.change(screen.getByLabelText(/^Confirm password/), {
       target: { value: "different1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -169,10 +169,10 @@ describe("SignupPage", () => {
       sessionExpiry: 1,
     });
 
-    fireEvent.change(screen.getByLabelText("Flair Client ID"), {
+    fireEvent.change(screen.getByLabelText(/^Flair Client ID/), {
       target: { value: "client-id" },
     });
-    fireEvent.change(screen.getByLabelText("Flair Client Secret"), {
+    fireEvent.change(screen.getByLabelText(/^Flair Client Secret/), {
       target: { value: "client-secret" },
     });
     fireEvent.click(
@@ -199,10 +199,10 @@ describe("SignupPage", () => {
       response: { data: { error: "That Client ID/Secret didn't work." } },
     });
 
-    fireEvent.change(screen.getByLabelText("Flair Client ID"), {
+    fireEvent.change(screen.getByLabelText(/^Flair Client ID/), {
       target: { value: "bad-id" },
     });
-    fireEvent.change(screen.getByLabelText("Flair Client Secret"), {
+    fireEvent.change(screen.getByLabelText(/^Flair Client Secret/), {
       target: { value: "bad-secret" },
     });
     fireEvent.click(
@@ -222,14 +222,14 @@ describe("SignupPage", () => {
       refresh,
     });
     renderPage();
-    expect(screen.getByLabelText("Flair Client ID")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Flair Client ID/)).toBeInTheDocument();
   });
 
   it("toggles the Flair Client Secret's visibility", async () => {
     renderPage();
     await completeUpToConnectFlair();
     const secretField = screen.getByLabelText(
-      "Flair Client Secret",
+      /^Flair Client Secret/,
     ) as HTMLInputElement;
     expect(secretField.type).toBe("password");
     fireEvent.click(screen.getByRole("button", { name: "Show secret" }));
