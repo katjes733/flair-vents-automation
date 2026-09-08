@@ -1,4 +1,12 @@
 import { FlairApiClient } from "~/server/util/flair/client";
+import {
+  HapControllerClient,
+  type HomeKitClient,
+} from "~/server/util/homekit/client";
+import {
+  getHomekitPairing,
+  recordHomekitConnectionInfo,
+} from "~/server/util/services/homekitPairingService";
 
 // Fails closed, per "Environment & Dev Modes": unset, missing, or anything
 // other than the literal string "false" means shadow mode. A missing env
@@ -31,5 +39,49 @@ export function getFlairClient(installationId: string): FlairApiClient {
     client = new FlairApiClient(installationId);
     clientsByInstallation.set(installationId, client);
   }
+  return client;
+}
+
+// One HomeKitClient per air handler, reused across ticks for the same
+// reason as clientsByInstallation above — HapControllerClient caches its
+// own connection/characteristic-map internally once connected, so reusing
+// the same instance avoids reconnecting (and re-discovering the
+// accessory's address/port over mDNS) every single tick.
+const homeKitClientsByAirHandler = new Map<string, HomeKitClient>();
+
+// Cleared by the unpair route so a *new* pairing (or none at all) is
+// picked up fresh on the next tick, rather than an earlier cached client
+// silently continuing to hold stale, now-invalid pairing data.
+export function clearHomeKitClientCache(airHandlerId: string): void {
+  homeKitClientsByAirHandler.delete(airHandlerId);
+}
+
+// Wired into TickDeps.getHomeKitClient — resolves to null (not a throw)
+// when this air handler has no stored pairing at all, which is the
+// ordinary, expected state for any handler not using "homekit" delivery
+// mode; tick.ts itself is what turns "no client" into a logged,
+// non-fatal dispatch failure for handlers that *are* configured for it.
+export async function getHomeKitClientForAirHandler(
+  airHandlerId: string,
+): Promise<HomeKitClient | null> {
+  const cached = homeKitClientsByAirHandler.get(airHandlerId);
+  if (cached) return cached;
+
+  const pairing = await getHomekitPairing(airHandlerId);
+  if (!pairing) return null;
+
+  const client = new HapControllerClient(
+    pairing.accessoryId,
+    pairing.pairingData,
+    pairing.lastKnownAddress,
+    pairing.lastKnownPort,
+    (address, port) => {
+      recordHomekitConnectionInfo(airHandlerId, address, port).catch(() => {
+        // Purely an opportunistic cache update for the *next* connect's
+        // fast path — a failure here has no bearing on this tick.
+      });
+    },
+  );
+  homeKitClientsByAirHandler.set(airHandlerId, client);
   return client;
 }

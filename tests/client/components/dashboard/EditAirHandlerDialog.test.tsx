@@ -36,6 +36,7 @@ const AIR_HANDLER: AirHandler = {
   active: true,
   config: {
     topology_mode: "variable_speed",
+    setpoint_delivery_mode: "flair",
     tonnage_tons: 5,
     blower_rated_flow_rate_is_estimate: true,
     minimum_aggregate_flow_is_estimate: true,
@@ -215,5 +216,51 @@ describe("EditAirHandlerDialog", () => {
     fireEvent.click(confirmButtons[confirmButtons.length - 1]);
     await screen.findByText(/still has zone\(s\): Bedroom/);
     expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it("defaults the Setpoint delivery field to Flair API and hides the pairing button", () => {
+    renderDialog();
+    expect(
+      screen.getByRole("combobox", { name: "Setpoint delivery" }),
+    ).toHaveTextContent("Flair API");
+    expect(
+      screen.queryByRole("button", { name: "Set up HomeKit pairing" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reveals the HomeKit pairing button when Direct (HomeKit) is selected", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(
+      screen.getByRole("combobox", { name: "Setpoint delivery" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Direct (HomeKit)" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Set up HomeKit pairing" }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves the selected setpoint delivery mode", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(
+      screen.getByRole("combobox", { name: "Setpoint delivery" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Direct (HomeKit)" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateAirHandler).toHaveBeenCalledWith(
+        "ah-1",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            setpoint_delivery_mode: "homekit",
+          }),
+        }),
+      );
+    });
   });
 });

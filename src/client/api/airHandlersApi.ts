@@ -14,6 +14,9 @@ export interface AirHandlerConfig {
   away_setpoint_cool_override?: number;
   away_setpoint_heat_override?: number;
   away_tolerance_override?: number;
+  // Which channel this handler's driving setpoint push is delivered
+  // through — see "Direct HomeKit Thermostat Control" in the plan.
+  setpoint_delivery_mode: "flair" | "homekit";
 }
 
 export interface AirHandler {

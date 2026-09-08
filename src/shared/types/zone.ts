@@ -56,6 +56,15 @@ export interface ZoneRuntimeState {
   // Sleep Mode override. See "Occupancy" in the implementation plan.
   occupied: boolean;
   occupancy_pending_flip_since: string | null;
+  // How long the debounced live signal above has been continuously true —
+  // distinct from occupancy_pending_flip_since, which clears the moment a
+  // flip stabilizes. Ecobee's own SmartSensors report a room "occupied"
+  // for a documented 30 minutes after the *last* real motion (per Flair's
+  // own support docs), so "occupied: true" alone can't distinguish someone
+  // still in the room from someone who left up to half an hour ago. See
+  // occupancy.ts's resolveTrustedOccupancy() and
+  // system_settings.occupancy_trust_window_minutes.
+  occupied_since: string | null;
 }
 
 export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
@@ -72,6 +81,7 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   classification_pending_since: null,
   occupied: false,
   occupancy_pending_flip_since: null,
+  occupied_since: null,
 };
 
 /** A zone is degraded if any of its vents are — see "Multi-Vent Zones". */

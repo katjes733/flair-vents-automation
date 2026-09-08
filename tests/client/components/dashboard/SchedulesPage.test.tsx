@@ -106,6 +106,7 @@ const AIR_HANDLER: AirHandler = {
   active: true,
   config: {
     topology_mode: "variable_speed",
+    setpoint_delivery_mode: "flair",
     blower_rated_flow_rate_is_estimate: true,
     minimum_aggregate_flow_is_estimate: true,
   },

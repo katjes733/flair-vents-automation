@@ -408,6 +408,15 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           "How long an occupancy reading has to hold steady before it's trusted — guards against a flickering sensor repeatedly flipping a zone's priority and idle-position treatment.",
         tier: "advanced",
       },
+      {
+        path: "occupancy_trust_window_minutes",
+        baseLabel: "Occupancy trust window",
+        kind: "minutes",
+        min: 1,
+        description:
+          "How long a continuously-true occupied reading is trusted for protecting a zone from closing. Ecobee's own SmartSensors report a room occupied for up to 30 minutes after the last real motion, so a sustained reading past this window stops being treated as proof someone's still there — the zone falls through to its normal unoccupied behavior instead. Only affects position math, not the displayed occupancy status.",
+        tier: "advanced",
+      },
     ],
   },
   {

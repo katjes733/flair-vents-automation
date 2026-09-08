@@ -29,7 +29,11 @@ import {
   type TickDeps,
 } from "~/server/control/tick";
 import { runStartupReconciliation } from "~/server/control/startupReconcile";
-import { isDryRunEnv, getFlairClient } from "~/server/control/scheduler";
+import {
+  isDryRunEnv,
+  getFlairClient,
+  getHomeKitClientForAirHandler,
+} from "~/server/control/scheduler";
 import { redis } from "~/server/util/redis";
 import { tickQueue } from "~/server/control/queue";
 import { getActiveInstallations } from "~/server/util/routes/installation";
@@ -47,6 +51,17 @@ const log = logger.child({ service: "control-loop" });
 // realistic tick_watchdog_seconds so it's never the thing that expires a
 // legitimately-still-running cycle.
 const TICK_LOCK_TTL_MS = 5 * 60 * 1000;
+
+// A real, confirmed bug found live on the first real shadow→live cutover:
+// this flag was being set with no expiry at all, so once it existed (from
+// any earlier run), every subsequent restart silently skipped startup
+// reconciliation forever — including the exact restart that most needs
+// it, a fresh promotion to live. Its actual purpose (preventing N workers
+// booting at once from each redundantly re-seeding) only needs a narrow
+// window, not a permanent latch — this TTL comfortably covers a
+// concurrent-boot race while still expiring well before any later,
+// genuinely separate restart.
+const STARTUP_SEEDED_FLAG_TTL_SECONDS = 5 * 60;
 
 /**
  * The BullMQ Worker's own job processor — dispatches on job name. A
@@ -229,6 +244,7 @@ async function runTickForInstallation(
     };
     const deps: TickDeps = {
       client,
+      getHomeKitClient: getHomeKitClientForAirHandler,
       reconciliationQueue,
       spikeBufferStore,
       airHandlerRuntimeStore,
@@ -332,7 +348,7 @@ async function maybeSeedStartupReconciliation(
     }
   }
 
-  await redis.set(flagKey, "1");
+  await redis.set(flagKey, "1", "EX", STARTUP_SEEDED_FLAG_TTL_SECONDS);
 }
 
 // The fleet-wide health snapshot job — see queue.ts's own registration.

@@ -1,4 +1,8 @@
 import type { FlairClient } from "~/server/util/flair/client";
+import type {
+  HomeKitClient,
+  HomeKitCurrentState,
+} from "~/server/util/homekit/client";
 import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
 import {
   ingestZoneRoomReading,
@@ -37,7 +41,10 @@ import {
   evaluateSpike,
   type SpikeHysteresisState,
 } from "~/server/domain/sensors/spikeDetection";
-import { evaluateOccupancy } from "~/server/domain/sensors/occupancy";
+import {
+  evaluateOccupancy,
+  resolveTrustedOccupancy,
+} from "~/server/domain/sensors/occupancy";
 import {
   resolveZoneTargets,
   type GoverningEvent,
@@ -60,6 +67,7 @@ import {
   type DrivingZoneCandidate,
 } from "~/server/domain/setpoint/drivingZone";
 import { computeSetpointPush } from "~/server/domain/setpoint/setpointPush";
+import { resolveHomeKitSetpointWrite } from "~/server/domain/setpoint/homekitCharacteristicSelection";
 import { evaluateReconciliation } from "~/server/domain/dispatch/reconciliation";
 import { detectDrift } from "~/server/domain/dispatch/stepDelta";
 import {
@@ -87,6 +95,7 @@ import {
   logContentionResolved,
   logPressureSafeguardEvaluated,
   logDrivingSetpointComputed,
+  logSetpointDispatchFailed,
   logZoneTelemetryPolled,
   logThermalSpikeDetected,
   logThermalSpikeDecayed,
@@ -113,6 +122,11 @@ export interface TickContext {
 
 export interface TickDeps {
   client: FlairClient;
+  // Only called when an air handler's setpoint_delivery_mode is
+  // "homekit" — resolves to null if that air handler has no stored
+  // HomeKit pairing. Optional so every existing test/caller that never
+  // touches the HomeKit path doesn't need to supply it.
+  getHomeKitClient?: (airHandlerId: string) => Promise<HomeKitClient | null>;
   reconciliationQueue: ReconciliationQueue;
   spikeBufferStore: SpikeBufferStore;
   airHandlerRuntimeStore: AirHandlerRuntimeStore;
@@ -928,6 +942,14 @@ export async function runTick(
   // is exactly why Sleep Mode exists as a schedule-time override on top of
   // it, not instead of it. See "Occupancy" in the implementation plan.
   const occupiedByZone = new Map<string, boolean>();
+  // Position-math input only (Step 1's occupancy boost, effectiveIdleBaseline,
+  // Step 3's contention bucket, and driving-zone tie-break) — discounts the
+  // live signal once it's been sustained past occupancy_trust_window_minutes.
+  // Deliberately NOT used for occupiedByZone/the tick decision's own displayed
+  // `occupied` field, which stay showing the raw signal so the dashboard
+  // keeps agreeing with what Ecobee's own app reports. See resolveTrustedOccupancy.
+  const trustedOccupiedByZone = new Map<string, boolean>();
+  const occupiedSinceByZone = new Map<string, number | null>();
   const occupancyHysteresisByZone = new Map<
     string,
     { occupied: boolean; pendingFlipSince: number | null }
@@ -954,12 +976,29 @@ export async function runTick(
     });
     occupancyHysteresisByZone.set(zone.id, hysteresis);
 
+    const priorOccupiedSinceMs = parseIsoOrNull(zone.state.occupied_since);
+    const occupiedSinceMs = !hysteresis.occupied
+      ? null
+      : zone.state.occupied && priorOccupiedSinceMs !== null
+        ? priorOccupiedSinceMs
+        : startedAtMs;
+    occupiedSinceByZone.set(zone.id, occupiedSinceMs);
+
     const governingCandidate = governingEventByZone.get(zone.id);
     const row = governingCandidate?.event.zone_settings.find(
       (r) => r.zone_id === zone.id,
     );
     const assumeOccupied = row?.assume_occupied ?? false;
     occupiedByZone.set(zone.id, hysteresis.occupied || assumeOccupied);
+    trustedOccupiedByZone.set(
+      zone.id,
+      resolveTrustedOccupancy({
+        rawOccupied: hysteresis.occupied,
+        occupiedSinceMs,
+        nowMs: startedAtMs,
+        trustWindowMinutes: ctx.settings.occupancy_trust_window_minutes,
+      }) || assumeOccupied,
+    );
     sleepModeActiveByZone.set(zone.id, assumeOccupied);
   }
 
@@ -1007,7 +1046,7 @@ export async function runTick(
       calibratedTemp: reading.calibratedTemp ?? asAbsoluteTemp(0),
       resolvedSetpoint: target.setpoint,
       tolerance: target.tolerance,
-      occupied: occupiedByZone.get(zone.id) ?? false,
+      occupied: trustedOccupiedByZone.get(zone.id) ?? false,
       staleOccupancy: false,
       staleReading: zoneStaleness.get(zone.id) ?? false,
       spiking: zoneSpike.get(zone.id)?.spiking ?? false,
@@ -1270,7 +1309,7 @@ export async function runTick(
         demanding: pipelineResult.classifications[z.id] === "demanding",
         deviation,
         priorityRank: ctx.settings.zone_priority_order.indexOf(z.id),
-        occupied: occupiedByZone.get(z.id) ?? false,
+        occupied: trustedOccupiedByZone.get(z.id) ?? false,
       };
     })
     .map((c) => ({
@@ -1417,6 +1456,31 @@ export async function runTick(
   let wouldWrite = false;
   let selectionReason = drivingSelection.reason;
 
+  // Which channel this handler's push goes through — see "Direct HomeKit
+  // Thermostat Control" in the plan. When "homekit", the read below feeds
+  // *both* the push-value computation (a fresher, local reading than
+  // Flair's cloud-relayed one) and the dispatch decision further down —
+  // read once, reused twice, rather than reading it again at write time.
+  const deliveryMode = airHandler.config.setpoint_delivery_mode ?? "flair";
+  let homeKitClient: HomeKitClient | null = null;
+  let homeKitState: HomeKitCurrentState | null = null;
+  let homeKitReadError: string | null = null;
+  if (deliveryMode === "homekit") {
+    try {
+      homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
+      if (!homeKitClient) {
+        throw new Error("No HomeKit pairing available for this air handler");
+      }
+      homeKitState = await homeKitClient.getCurrentState();
+    } catch (err) {
+      homeKitReadError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const thermostatReadingC =
+    deliveryMode === "homekit" && homeKitState
+      ? homeKitState.currentTempC
+      : (snapshot.thermostatState?.ambientTemperatureC ?? null);
+
   if (drivingSelection.zoneId) {
     const trackedZone = zones.find((z) => z.id === drivingSelection.zoneId)!;
     const trackedTarget = targetsByZone.get(trackedZone.id)!;
@@ -1430,7 +1494,7 @@ export async function runTick(
       trackedZoneSetpoint: trackedTarget.setpoint ?? 0,
       trackedZoneTemp: readings.get(trackedZone.id)!.room.calibratedTemp,
       trackedZoneStale: zoneStaleness.get(trackedZone.id) ?? false,
-      thermostatReading: snapshot.thermostatState?.ambientTemperatureC ?? null,
+      thermostatReading: thermostatReadingC,
       previousSmoothedOffset: priorRuntime.smoothedOffsetC,
       alpha: ctx.settings.offset_smoothing_alpha,
       maxAbsOffsetC: ctx.settings.offset_max_c,
@@ -1452,18 +1516,61 @@ export async function runTick(
     selection_reason: selectionReason,
     pushed_value: pushedValue,
     pushed_value_c: pushedValue,
-    thermostat_reading: snapshot.thermostatState?.ambientTemperatureC ?? null,
+    thermostat_reading: thermostatReadingC,
     would_write: wouldWrite && !dryRun && !controlDisarmed,
     dry_run: dryRun,
   });
 
+  let homeKitWriteKind: "target" | "threshold" | "skip" | null = null;
+  let setpointDispatchError: string | null = homeKitReadError;
+
   if (wouldWrite && !dryRun && !controlDisarmed && pushedValue !== null) {
-    await pushSetpoint(
-      deps.client,
-      ctx.structureId,
-      pushedValue,
-      ctx.settings.setpoint_push_rounding_c,
-    );
+    // Both branches below are wrapped in try/catch — a real, pre-existing
+    // gap fixed alongside this feature: this call previously had no
+    // try/catch at all, unlike every per-vent dispatch nearby (which
+    // explicitly guards "one vent's Flair API failure must never abort
+    // dispatch for every other vent"). An uncaught throw here used to
+    // abort the rest of runTick for this handler, including finalize() —
+    // meaning no tick decision was ever cached/logged for that tick.
+    try {
+      if (deliveryMode === "homekit") {
+        if (!homeKitClient || !homeKitState) {
+          throw new Error(
+            homeKitReadError ??
+              "HomeKit client unavailable for this air handler",
+          );
+        }
+        const write = resolveHomeKitSetpointWrite({
+          targetMode: homeKitState.targetMode,
+          callState: effectiveCallState,
+          pushedValueC: pushedValue,
+        });
+        if (write.kind === "target") {
+          await homeKitClient.setTargetTemperature(write.value);
+          homeKitWriteKind = "target";
+        } else if (write.kind === "threshold") {
+          await homeKitClient.setThresholdTemperature(write.which, write.value);
+          homeKitWriteKind = "threshold";
+        } else {
+          homeKitWriteKind = "skip";
+        }
+      } else {
+        await pushSetpoint(
+          deps.client,
+          ctx.structureId,
+          pushedValue,
+          ctx.settings.setpoint_push_rounding_c,
+        );
+      }
+      setpointDispatchError = null;
+    } catch (err) {
+      setpointDispatchError = err instanceof Error ? err.message : String(err);
+      logSetpointDispatchFailed(log, {
+        air_handler_id: airHandler.id,
+        delivery_mode: deliveryMode,
+        error: setpointDispatchError,
+      });
+    }
   }
 
   // --- Step 11: manual disarm override ------------------------------------
@@ -1652,6 +1759,9 @@ export async function runTick(
         ?.pendingFlipSince
         ? toIso(occupancyHysteresisByZone.get(zone.id)!.pendingFlipSince!)
         : null,
+      occupied_since: occupiedSinceByZone.get(zone.id)
+        ? toIso(occupiedSinceByZone.get(zone.id)!)
+        : null,
     });
   }
 
@@ -1735,11 +1845,15 @@ export async function runTick(
     setpoint_push: {
       pushed_value: pushedValue,
       pushed_value_c: pushedValue,
-      thermostat_reading: snapshot.thermostatState?.ambientTemperatureC ?? null,
+      thermostat_reading: thermostatReadingC,
       thermostat_current_setpoint:
         snapshot.thermostatState?.targetTemperatureC ?? null,
       would_write: wouldWrite && !dryRun && !controlDisarmed,
       demanding_zone_count: demandingZoneCount,
+      delivery_mode: deliveryMode,
+      homekit_paired: deliveryMode === "homekit" ? homeKitState !== null : null,
+      homekit_write_kind: homeKitWriteKind,
+      homekit_error: setpointDispatchError,
     },
     narrative: `${hvac.state}, tracking ${
       drivingSelection.zoneId

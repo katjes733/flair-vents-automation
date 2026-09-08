@@ -60,6 +60,16 @@ export const airHandlerConfigSchema = z.object({
   away_setpoint_cool_override: z.number().optional(),
   away_setpoint_heat_override: z.number().optional(),
   away_tolerance_override: z.number().positive().optional(),
+  // Which channel this handler's driving setpoint push is delivered
+  // through — see "Direct HomeKit Thermostat Control" in the plan.
+  // "flair" (default) is today's only-ever-shipped path, confirmed broken
+  // under System Mode "manual" (the mode this app's own vent control
+  // needs); "homekit" delivers the identical computed pushedValue over a
+  // direct local HAP connection instead, proven working end-to-end
+  // against the real unit. Per-handler, not global, and never silently
+  // falls back from one to the other — see the plan's "Explicitly
+  // deferred" note on why an automatic fallback isn't built.
+  setpoint_delivery_mode: z.enum(["flair", "homekit"]).default("flair"),
 });
 
 export type AirHandlerConfig = z.infer<typeof airHandlerConfigSchema>;

@@ -36,6 +36,7 @@ const BASE_CONFIG = {
   topology_mode: "variable_speed" as const,
   blower_rated_flow_rate_is_estimate: true,
   minimum_aggregate_flow_is_estimate: true,
+  setpoint_delivery_mode: "flair" as const,
 };
 
 describe("createAirHandlerForInstallation", () => {

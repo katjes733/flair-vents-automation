@@ -21,6 +21,7 @@ import { createInMemoryAirHandlerRuntimeStore } from "~/server/control/airHandle
 import { createInMemoryZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
 import { createInMemoryAlertingClient } from "~/server/util/alerting";
 import { FakeFlairClient } from "../../helpers/fakeFlairClient";
+import { FakeHomeKitClient } from "../../helpers/fakeHomeKitClient";
 
 // tickDecision.ts's cache is Redis-backed (see its own comment on why a
 // worker-process/API-server split made an in-memory Map wrong) — runTick()
@@ -2706,6 +2707,81 @@ describe("runTick — live occupancy sensing", () => {
     expect(persisted.get("z1")?.occupied).toBe(true);
   });
 
+  // Regression test for a real, confirmed live issue: two bedrooms sat
+  // fully open, unconditionally protected, for 20-30 minutes with nobody
+  // in them while a different room was demanding — traced to Ecobee's own
+  // SmartSensors reporting a room "occupied" for a documented 30 minutes
+  // after the last real motion, not a live fact. A live occupied signal
+  // sustained past occupancy_trust_window_minutes must stop protecting a
+  // satisfied zone from closing during an active call, even though the
+  // *displayed* `occupied` field stays true (matching what Ecobee/Flair
+  // themselves still report).
+  it("stops trusting a live-occupied signal once sustained past the trust window, letting a satisfied zone close", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-bedroom",
+        ventId: "vent-bedroom",
+        tempC: 15, // well past satisfied — should close hard toward the floor
+        ductC: 14,
+        percentOpen: 100,
+      },
+      {
+        roomId: "room-office",
+        ventId: "vent-office",
+        tempC: 30, // keeps the call genuinely active
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    client.setRemoteSensors([
+      {
+        id: "sensor-bedroom",
+        roomId: "room-bedroom",
+        isTstat: false,
+        sensorType: "ecobee_ecobee3_remote_sensor",
+        name: "Bedroom",
+      },
+    ]);
+    client.setRemoteSensorReading({
+      remoteSensorId: "sensor-bedroom",
+      occupied: true,
+      temperatureC: 15,
+      humidity: 40,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    const bedroom = makeZone({
+      id: "z-bedroom",
+      flairRoomId: "room-bedroom",
+      state: {
+        occupied: true,
+        // Already occupied for 31 minutes as of this tick — past the
+        // default 30-minute trust window.
+        occupied_since: new Date(NOW - 31 * 60000).toISOString(),
+      },
+    });
+    bedroom.config.has_occupancy_sensor = true;
+    const office = makeZone({ id: "z-office", flairRoomId: "room-office" });
+
+    const decision = await runTick(
+      makeAirHandler(),
+      [bedroom, office],
+      makeCtx(),
+      makeDeps(client, new Map(), NOW),
+    );
+
+    expect(decision.hvac_state).toBe("COOLING_CALL");
+    const bedroomDecision = decision.zones.find(
+      (z) => z.zone_id === "z-bedroom",
+    );
+    expect(bedroomDecision?.classification).toBe("satisfied");
+    // Still reported as occupied — the dashboard must keep agreeing with
+    // what Ecobee/Flair themselves report, even though it's no longer
+    // trusted for position math.
+    expect(bedroomDecision?.occupied).toBe(true);
+    expect(bedroomDecision?.vents[0]?.commanded_position_pct).toBeLessThan(50);
+  });
+
   it("does not flip on a single-tick flicker (stabilization dwell) — mirrors spike detection's hysteresis", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
@@ -2748,5 +2824,211 @@ describe("runTick — live occupancy sensing", () => {
 
     expect(decision.zones[0].occupied).toBe(false);
     expect(persisted.get("z1")?.occupancy_pending_flip_since).not.toBeNull();
+  });
+});
+
+describe("runTick — HomeKit setpoint delivery", () => {
+  function makeHomeKitDeps(
+    client: FakeFlairClient,
+    homeKitClient: FakeHomeKitClient | null,
+    persisted: Map<string, ZoneRuntimeState>,
+    nowMs: number,
+  ): TickDeps {
+    return {
+      client,
+      getHomeKitClient: async () => homeKitClient,
+      reconciliationQueue: createInMemoryReconciliationQueue(),
+      spikeBufferStore: createInMemorySpikeBufferStore(),
+      airHandlerRuntimeStore: createInMemoryAirHandlerRuntimeStore(),
+      zoneDemandTrackingStore: createInMemoryZoneDemandTrackingStore(),
+      alerting: createInMemoryAlertingClient(),
+      persistZoneState: vi.fn(async (zoneId: string, patch) => {
+        const current = persisted.get(zoneId) ?? EMPTY_ZONE_RUNTIME_STATE;
+        persisted.set(zoneId, { ...current, ...patch });
+      }),
+      now: () => nowMs,
+    };
+  }
+
+  it("dispatches via setTargetTemperature when mode is Cool, and never touches the mode itself", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({ targetMode: 2, currentTempC: 24 });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+    );
+
+    expect(decision.setpoint_push?.delivery_mode).toBe("homekit");
+    expect(decision.setpoint_push?.homekit_paired).toBe(true);
+    expect(decision.setpoint_push?.homekit_write_kind).toBe("target");
+    expect(decision.setpoint_push?.homekit_error).toBeNull();
+    expect(homeKitClient.writeHistory).toHaveLength(1);
+    expect(homeKitClient.writeHistory[0].kind).toBe("target");
+    // The FlairClient's own setpoint path must never fire for a handler
+    // in "homekit" delivery mode.
+    expect(client.getSetpointCommandHistory()).toHaveLength(0);
+  });
+
+  it("writes only the cooling threshold when mode is Auto and the call is cooling — never both, never the mode", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({ targetMode: 3, currentTempC: 24 });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+    );
+
+    expect(decision.setpoint_push?.homekit_write_kind).toBe("threshold");
+    expect(homeKitClient.writeHistory).toHaveLength(1);
+    expect(homeKitClient.writeHistory[0].kind).toBe("threshold-cool");
+  });
+
+  it("skips writing entirely when mode is Off, without erroring", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({ targetMode: 0, currentTempC: 24 });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+    );
+
+    expect(decision.setpoint_push?.homekit_write_kind).toBe("skip");
+    expect(homeKitClient.writeHistory).toHaveLength(0);
+  });
+
+  it("a thrown HomeKit error is caught, logged on the decision record, and never aborts the tick", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({ targetMode: 2, currentTempC: 24 });
+    homeKitClient.forceError(new Error("accessory unreachable"));
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+    );
+
+    // The tick still completed and produced a real decision record —
+    // this is the actual regression this fix guards against: a pre-
+    // existing gap meant an uncaught throw here aborted the rest of
+    // runTick, including finalize(), so no decision was ever cached.
+    expect(decision).toBeDefined();
+    expect(decision.setpoint_push?.homekit_error).toContain(
+      "accessory unreachable",
+    );
+    expect(homeKitClient.writeHistory).toHaveLength(0);
+  });
+
+  it("a missing HomeKit pairing (getHomeKitClient resolves null) is reported, not thrown", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      airHandler,
+      zones,
+      makeCtx(),
+      makeHomeKitDeps(client, null, persisted, NOW),
+    );
+
+    expect(decision.setpoint_push?.homekit_paired).toBe(false);
+    expect(decision.setpoint_push?.homekit_error).toContain(
+      "No HomeKit pairing available",
+    );
+  });
+
+  it("the existing Flair delivery path is unaffected when setpoint_delivery_mode is left at its default", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    const decision = await runTick(
+      makeAirHandler(), // no setpoint_delivery_mode override — defaults to "flair"
+      zones,
+      makeCtx(),
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.setpoint_push?.delivery_mode).toBe("flair");
+    expect(decision.setpoint_push?.homekit_paired).toBeNull();
+    expect(client.getSetpointCommandHistory().length).toBeGreaterThan(0);
   });
 });
