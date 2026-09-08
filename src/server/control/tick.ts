@@ -1896,10 +1896,49 @@ export async function runTick(
       // thermostat/Ecobee app has no reason to be reflected there until
       // Flair's own next cloud sync, which may lag well behind reality).
       // A local HomeKit read has no such intermediary.
+      //
+      // A real, confirmed bug this fixes: in Auto mode, `targetTemperatureC`
+      // is correctly null now (see client.ts's own getCurrentState fix),
+      // but falling all the way through to Flair's relayed value on that
+      // path would reintroduce the exact staleness problem this feature
+      // exists to avoid — Auto mode's real "currently held" value is
+      // whichever threshold the current call direction actually uses, and
+      // that's already read locally too. Only falls through to Flair when
+      // HomeKit genuinely has nothing for either (unpaired, read error).
       thermostat_current_setpoint:
         deliveryMode === "homekit" && homeKitState?.targetTemperatureC !== null
           ? (homeKitState?.targetTemperatureC ?? null)
-          : (snapshot.thermostatState?.targetTemperatureC ?? null),
+          : deliveryMode === "homekit" &&
+              homeKitState?.targetMode === 3 &&
+              (effectiveCallState === "COOLING_CALL"
+                ? homeKitState.coolThresholdC
+                : homeKitState.heatThresholdC) !== null
+            ? effectiveCallState === "COOLING_CALL"
+              ? homeKitState.coolThresholdC
+              : homeKitState.heatThresholdC
+            : (snapshot.thermostatState?.targetTemperatureC ?? null),
+      // Auto mode holds a genuine two-sided range (both thresholds always
+      // simultaneously in effect), not a single number — the field above
+      // picks one side to match the current call direction, which is a
+      // simplification. These two carry the real, full range whenever
+      // both sides are actually available, so the UI can show it as
+      // "holding 66°–72°" instead of collapsing it. Null outside a real
+      // Auto-mode HomeKit read (nothing to show — a single value already
+      // covers Heat/Cool mode and the Flair-relayed fallback).
+      thermostat_heat_threshold:
+        deliveryMode === "homekit" &&
+        homeKitState?.targetMode === 3 &&
+        homeKitState.heatThresholdC !== null &&
+        homeKitState.coolThresholdC !== null
+          ? homeKitState.heatThresholdC
+          : null,
+      thermostat_cool_threshold:
+        deliveryMode === "homekit" &&
+        homeKitState?.targetMode === 3 &&
+        homeKitState.heatThresholdC !== null &&
+        homeKitState.coolThresholdC !== null
+          ? homeKitState.coolThresholdC
+          : null,
       would_write: wouldWrite && !dryRun && !controlDisarmed,
       demanding_zone_count: demandingZoneCount,
       delivery_mode: deliveryMode,

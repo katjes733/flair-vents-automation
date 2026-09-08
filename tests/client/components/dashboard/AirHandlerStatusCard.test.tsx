@@ -332,6 +332,8 @@ describe("AirHandlerStatusCard", () => {
           pushed_value_c: 21.5,
           thermostat_reading: 22,
           thermostat_current_setpoint: 21,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
           would_write: true,
           demanding_zone_count: 1,
           delivery_mode: "flair" as const,
@@ -348,6 +350,69 @@ describe("AirHandlerStatusCard", () => {
     expect(screen.queryByText(/not written/)).not.toBeInTheDocument();
   });
 
+  it("renders the real two-sided Auto-mode hold as a colored heat–cool range instead of a single value", () => {
+    renderCard({
+      decision: makeDecision({
+        setpoint_push: {
+          pushed_value: 21.5,
+          pushed_value_c: 21.5,
+          thermostat_reading: 22,
+          thermostat_current_setpoint: 20.4,
+          thermostat_heat_threshold: 18.9,
+          thermostat_cool_threshold: 22.2,
+          would_write: true,
+          demanding_zone_count: 1,
+          delivery_mode: "homekit" as const,
+          homekit_paired: true,
+          homekit_write_kind: "threshold" as const,
+          homekit_error: null,
+        },
+      }),
+    });
+    const heat = screen.getByText("18.9°C");
+    const cool = screen.getByText("22.2°C");
+    expect(heat).toBeInTheDocument();
+    expect(cool).toBeInTheDocument();
+    // Distinctly colored (heat vs. cool) — not asserting exact hex values,
+    // just that they're actually styled and different from each other.
+    const heatColor = getComputedStyle(heat).color;
+    const coolColor = getComputedStyle(cool).color;
+    expect(heatColor).not.toBe("");
+    expect(coolColor).not.toBe("");
+    expect(heatColor).not.toBe(coolColor);
+    // Never collapses the real two-sided hold into the single-value
+    // simplification — the stale 20.4°C/68.7°F this bug used to show.
+    expect(screen.queryByText(/holding 20\.4°C/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the single-value display, not NaN, when the threshold fields are genuinely absent (not just null) — a real, confirmed bug from a stale/older API response", () => {
+    // Simulates exactly what was observed live: a cached tick decision
+    // written by an older server version has no
+    // thermostat_heat_threshold/thermostat_cool_threshold keys at all
+    // (`undefined`, not `null`) — TypeScript's own types can't catch this,
+    // since it's a real runtime/version-skew case, not a type error.
+    const setpointPush = {
+      pushed_value: 21.5,
+      pushed_value_c: 21.5,
+      thermostat_reading: 22,
+      thermostat_current_setpoint: 20.4,
+      would_write: true,
+      demanding_zone_count: 1,
+      delivery_mode: "homekit" as const,
+      homekit_paired: true,
+      homekit_write_kind: "threshold" as const,
+      homekit_error: null,
+    };
+    renderCard({
+      decision: makeDecision({
+        setpoint_push:
+          setpointPush as unknown as AirHandlerTickDecision["setpoint_push"],
+      }),
+    });
+    expect(screen.getByText(/holding 20\.4°C/)).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+  });
+
   it('flags the pushed value as "(not written)" when would_write is false', () => {
     renderCard({
       decision: makeDecision({
@@ -356,6 +421,8 @@ describe("AirHandlerStatusCard", () => {
           pushed_value_c: 21.5,
           thermostat_reading: 22,
           thermostat_current_setpoint: null,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
           would_write: false,
           demanding_zone_count: 1,
           delivery_mode: "flair" as const,
@@ -377,6 +444,8 @@ describe("AirHandlerStatusCard", () => {
           pushed_value_c: null,
           thermostat_reading: null,
           thermostat_current_setpoint: null,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
           would_write: false,
           demanding_zone_count: 0,
           delivery_mode: "flair" as const,
@@ -401,6 +470,8 @@ describe("AirHandlerStatusCard", () => {
           pushed_value_c: 21.5,
           thermostat_reading: 22,
           thermostat_current_setpoint: 21,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
           would_write: true,
           demanding_zone_count: 1,
           delivery_mode: "flair" as const,
@@ -425,6 +496,8 @@ describe("AirHandlerStatusCard", () => {
           pushed_value_c: 21.5,
           thermostat_reading: 22,
           thermostat_current_setpoint: 21,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
           would_write: true,
           demanding_zone_count: 0,
           delivery_mode: "flair" as const,

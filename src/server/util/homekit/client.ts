@@ -321,12 +321,29 @@ export class HapControllerClient implements HomeKitClient {
     })) as { characteristics: Array<{ iid: number; value: number }> };
     const byIid = new Map(result.characteristics.map((c) => [c.iid, c.value]));
 
+    const targetMode = byIid.get(
+      chars.targetHeatingCoolingStateIid,
+    ) as HapTargetHeatingCoolingState;
     return {
-      targetMode: byIid.get(
-        chars.targetHeatingCoolingStateIid,
-      ) as HapTargetHeatingCoolingState,
+      targetMode,
       currentTempC: byIid.get(chars.currentTemperatureIid)!,
-      targetTemperatureC: byIid.get(chars.targetTemperatureIid) ?? null,
+      // A real, confirmed bug found live: HAP always returns *some* value
+      // for TargetTemperature regardless of mode — it's never actually
+      // absent — but in Auto mode (3) that value is stale/non-authoritative
+      // (confirmed live: it held 20.4°C/68.7°F, a value from before the
+      // thermostat was last switched to Auto, while the real active
+      // comfort range — CoolingThresholdTemperature — read 22.0°C/71.6°F).
+      // This interface's own doc comment already stated the contract
+      // ("null in Auto... where the threshold pair is what's actually
+      // live"), but nothing enforced it — every caller downstream (the
+      // `thermostat_current_setpoint` display, in particular) trusted a
+      // non-null value unconditionally, which is never actually null while
+      // in Auto mode, so it never fell back to the real threshold. Enforced
+      // here, once, so the contract is real rather than aspirational.
+      targetTemperatureC:
+        targetMode === 3
+          ? null
+          : (byIid.get(chars.targetTemperatureIid) ?? null),
       coolThresholdC: chars.coolingThresholdIid
         ? (byIid.get(chars.coolingThresholdIid) ?? null)
         : null,

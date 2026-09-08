@@ -81,6 +81,8 @@ describe("TickDecisionInspector", () => {
         pushed_value_c: 20.5,
         thermostat_reading: 22,
         thermostat_current_setpoint: 21,
+        thermostat_heat_threshold: null,
+        thermostat_cool_threshold: null,
         would_write: true,
         demanding_zone_count: 1,
         delivery_mode: "flair" as const,

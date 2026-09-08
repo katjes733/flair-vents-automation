@@ -159,6 +159,11 @@ export interface AirHandlerTickDecision {
     // written by this app. Distinct from `pushed_value` (what this app
     // would push if live).
     thermostat_current_setpoint: number | null;
+    // Auto mode's real, two-sided hold (both simultaneously in effect) —
+    // populated only when a genuine dual-threshold HomeKit read is
+    // available. Null otherwise.
+    thermostat_heat_threshold: number | null;
+    thermostat_cool_threshold: number | null;
     would_write: boolean;
     demanding_zone_count: number;
     // Which channel this tick's push actually went through — see "Direct

@@ -103,6 +103,12 @@ export interface AirHandlerTickDecision {
     // shown side by side so it's clear which is Flair/Ecobee's own live
     // state and which is this app's own computed value.
     thermostat_current_setpoint: number | null;
+    // Auto mode's real, two-sided hold (both simultaneously in effect) —
+    // populated only when a genuine dual-threshold HomeKit read is
+    // available, so the UI can render "holding 66°–72°" instead of the
+    // single-value simplification above. Null otherwise.
+    thermostat_heat_threshold: number | null;
+    thermostat_cool_threshold: number | null;
     would_write: boolean;
     demanding_zone_count: number;
     // Which channel this tick's push actually went through — see "Direct
