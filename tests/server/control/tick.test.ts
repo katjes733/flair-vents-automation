@@ -3089,6 +3089,180 @@ describe("runTick — HomeKit setpoint delivery", () => {
     );
   });
 
+  describe("thermostat_current_setpoint in Auto mode — a real, confirmed bug: TargetTemperature is never actually null in Auto, it's just stale", () => {
+    it("falls through to the cooling threshold, not Flair's own relayed value, when the effective call is cooling", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      // Flair's own relayed value — must NOT win once a real HomeKit
+      // threshold is available, even though targetTemperatureC is null.
+      client.setThermostatState({
+        thermostatId: "therm-1",
+        operatingState: "cool",
+        mode: "cool",
+        ambientTemperatureC: 22,
+        targetTemperatureC: 24,
+        homeAway: "Home",
+        fanState: null,
+        online: true,
+        written: false,
+        writtenConfirmed: false,
+        writtenFailures: null,
+        createdAt: "2024-01-01T00:00:00.000Z",
+      });
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({
+        targetMode: 3,
+        targetTemperatureC: null,
+        coolThresholdC: 22,
+        heatThresholdC: 18.9,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.setpoint_push?.thermostat_current_setpoint).toBeCloseTo(
+        22,
+        5,
+      );
+    });
+
+    it("falls back to Flair's own relayed value only when HomeKit has nothing for either threshold", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      client.setThermostatState({
+        thermostatId: "therm-1",
+        operatingState: "cool",
+        mode: "cool",
+        ambientTemperatureC: 22,
+        targetTemperatureC: 24,
+        homeAway: "Home",
+        fanState: null,
+        online: true,
+        written: false,
+        writtenConfirmed: false,
+        writtenFailures: null,
+        createdAt: "2024-01-01T00:00:00.000Z",
+      });
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({
+        targetMode: 3,
+        targetTemperatureC: null,
+        coolThresholdC: null,
+        heatThresholdC: null,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.setpoint_push?.thermostat_current_setpoint).toBeCloseTo(
+        24,
+        5,
+      );
+    });
+
+    it("exposes the real two-sided hold (both thresholds) whenever both are genuinely available", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({
+        targetMode: 3,
+        targetTemperatureC: null,
+        heatThresholdC: 18.9,
+        coolThresholdC: 22.2,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.setpoint_push?.thermostat_heat_threshold).toBeCloseTo(
+        18.9,
+        5,
+      );
+      expect(decision.setpoint_push?.thermostat_cool_threshold).toBeCloseTo(
+        22.2,
+        5,
+      );
+    });
+
+    it("leaves both threshold fields null outside Auto mode, or when only one side is available", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({
+        targetMode: 2,
+        targetTemperatureC: 21,
+        heatThresholdC: null,
+        coolThresholdC: null,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.setpoint_push?.thermostat_heat_threshold).toBeNull();
+      expect(decision.setpoint_push?.thermostat_cool_threshold).toBeNull();
+    });
+  });
+
   describe("HVAC state via HomeKit — a real, confirmed incident where Flair's own relay went stale", () => {
     it("uses the HomeKit-derived HVAC state as authoritative, even when it disagrees with Flair's own relayed value", async () => {
       const client = new FakeFlairClient();

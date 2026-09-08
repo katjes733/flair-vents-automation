@@ -177,9 +177,48 @@ export default function AirHandlerStatusCard({
                       : "—"}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
+                    {/* Loose `!= null` deliberately, not `!== null` — the
+                        API response can be a tick or two behind the client
+                        bundle (e.g. mid-deploy, or a stale cached decision
+                        from an older server), in which case a field this
+                        new is `undefined`, not `null`. A strict-equality
+                        check would treat "missing" as "present" and render
+                        NaN°, exactly as confirmed live this session. */}
                     reading
-                    {decision.setpoint_push.thermostat_current_setpoint !==
-                      null &&
+                    {decision.setpoint_push.thermostat_heat_threshold != null &&
+                      decision.setpoint_push.thermostat_cool_threshold !=
+                        null && (
+                        <>
+                          {" · holding "}
+                          <Box component="span" sx={{ color: "error.main" }}>
+                            {toDisplayAbsolute(
+                              asAbsoluteTemp(
+                                decision.setpoint_push
+                                  .thermostat_heat_threshold,
+                              ),
+                              temperatureUnit,
+                            ).toFixed(1)}
+                            °{temperatureUnit}
+                          </Box>
+                          {"–"}
+                          <Box component="span" sx={{ color: "info.main" }}>
+                            {toDisplayAbsolute(
+                              asAbsoluteTemp(
+                                decision.setpoint_push
+                                  .thermostat_cool_threshold,
+                              ),
+                              temperatureUnit,
+                            ).toFixed(1)}
+                            °{temperatureUnit}
+                          </Box>
+                        </>
+                      )}
+                    {(decision.setpoint_push.thermostat_heat_threshold ==
+                      null ||
+                      decision.setpoint_push.thermostat_cool_threshold ==
+                        null) &&
+                      decision.setpoint_push.thermostat_current_setpoint !=
+                        null &&
                       ` · holding ${toDisplayAbsolute(asAbsoluteTemp(decision.setpoint_push.thermostat_current_setpoint), temperatureUnit).toFixed(1)}°${temperatureUnit}`}
                   </Typography>
                 </Box>
