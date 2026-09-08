@@ -47,8 +47,8 @@ describe("OverrideActivityLane", () => {
     expect(
       screen.queryByText("No overrides in this window."),
     ).not.toBeInTheDocument();
-    const segment = container.querySelector("[title]");
-    expect(segment).toHaveAttribute("title", "Martin: position 40% (2h)");
+    const segment = container.querySelector("[data-testid='timeline-segment']");
+    expect(segment).toHaveAttribute("data-label", "Martin: position 40% (2h)");
   });
 
   it("converts a setpoint override's value to the display unit and notes a revocation", () => {
@@ -67,13 +67,13 @@ describe("OverrideActivityLane", () => {
         revokedAtMs: 400,
       },
     ]);
-    const segment = container.querySelector("[title]");
+    const segment = container.querySelector("[data-testid='timeline-segment']");
     // No <DisplayUnitProvider> in this test — the context's own bare
     // default is Celsius (a deliberate no-op passthrough for isolated
     // component tests; see "Settings Page" in the implementation plan),
     // so this renders unconverted.
     expect(segment).toHaveAttribute(
-      "title",
+      "data-label",
       "Sherri: setpoint 22.2°C (permanent, revoked)",
     );
   });
