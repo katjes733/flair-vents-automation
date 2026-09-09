@@ -1549,6 +1549,56 @@ export async function runTick(
     wouldWrite = true;
   } else {
     selectionReason = "none_eligible";
+    // A real, confirmed bug this fixes: the exact tick every demanding
+    // zone becomes satisfied is also the tick selectDrivingZone() stops
+    // returning a zone at all (eligibility requires "currently
+    // demanding") — so computeSetpointPush's own termination logic
+    // (gated on demandingZoneCount === 0, and otherwise entirely
+    // correct) never got a chance to run at all, and the pushed value
+    // just froze wherever it last was, however cold, with nothing ever
+    // correcting it back toward the real thermostat reading. Confirmed
+    // live: a cooling threshold sat ~2°F below its real schedule for
+    // over 3.5 hours with zero recovery. Fixed by still running the
+    // termination computation exactly once, using whichever zone was
+    // tracked as of the *prior* tick — the very zone whose satisfaction
+    // is what triggered this transition — even though it's no longer
+    // eligible to keep tracking going forward. `priorRuntime
+    // .trackedDrivingZoneId` is only non-null on this one transition
+    // tick (it's persisted as `drivingSelection.zoneId` — null, this
+    // tick — at the end of runTick, so the next tick's own priorRuntime
+    // read is already null and this branch naturally doesn't re-fire).
+    const justExpiredZoneId = priorRuntime.trackedDrivingZoneId;
+    const justExpiredZone = justExpiredZoneId
+      ? zones.find((z) => z.id === justExpiredZoneId)
+      : undefined;
+    const justExpiredTarget = justExpiredZone
+      ? targetsByZone.get(justExpiredZone.id)
+      : undefined;
+    const justExpiredReading = justExpiredZone
+      ? readings.get(justExpiredZone.id)
+      : undefined;
+    if (
+      justExpiredZone &&
+      justExpiredTarget &&
+      justExpiredReading &&
+      demandingZoneCount === 0
+    ) {
+      const pushResult = computeSetpointPush({
+        state: effectiveCallState,
+        trackedZoneSetpoint: justExpiredTarget.setpoint ?? 0,
+        trackedZoneTemp: justExpiredReading.room.calibratedTemp,
+        trackedZoneStale: zoneStaleness.get(justExpiredZone.id) ?? false,
+        thermostatReading: thermostatReadingC,
+        previousSmoothedOffset: priorRuntime.smoothedOffsetC,
+        alpha: ctx.settings.offset_smoothing_alpha,
+        maxAbsOffsetC: ctx.settings.offset_max_c,
+        demandingZoneCount,
+        terminationMarginC: ctx.settings.termination_margin_c,
+      });
+      pushedValue = pushResult.pushedValue;
+      smoothedOffsetC = pushResult.smoothedOffset;
+      wouldWrite = true;
+    }
   }
 
   const controlDisarmed = ctx.settings.control_disarmed;

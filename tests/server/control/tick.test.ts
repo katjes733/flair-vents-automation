@@ -3414,3 +3414,120 @@ describe("runTick — HomeKit setpoint delivery", () => {
     });
   });
 });
+
+describe("runTick — setpoint-push termination when the last demanding zone becomes satisfied", () => {
+  // A real, confirmed bug found live: the exact tick every demanding zone
+  // becomes satisfied is also the tick selectDrivingZone() stops returning
+  // a zone at all (eligibility requires "currently demanding") — so
+  // computeSetpointPush's own termination logic (otherwise entirely
+  // correct — see setpointPush.ts's own tests) never got invoked, and the
+  // pushed setpoint just froze wherever it last was, however cold, with
+  // nothing ever correcting it back. Confirmed live: a real cooling
+  // threshold sat ~2°F below its real schedule for 3.5+ hours with zero
+  // recovery. These are the missing functional tests the plan's own
+  // "Prompt termination — the trigger, not just the safety guard" matrix
+  // entry called for but that were never actually written — exactly the
+  // gap that let this ship unnoticed.
+  it("fires the termination override the instant the last demanding zone becomes satisfied, instead of freezing at the last (cold) pushed value", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23.89, // exactly at the default fallback cool setpoint — satisfied
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "cool",
+      mode: "cool",
+      ambientTemperatureC: 25,
+      targetTemperatureC: 21,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: false,
+      writtenConfirmed: false,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    // Simulates exactly what a real prior tick leaves behind while z1 was
+    // still genuinely demanding and being tracked: a cold smoothed offset
+    // and a correspondingly cold last-pushed value.
+    const staleFrozenValue = 21.89;
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: "z1",
+      ticksSinceLeadChanged: 5,
+      smoothedOffsetC: -2,
+      lastPushedSetpointC: staleFrozenValue,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 600_000,
+      worstDeviationAtCallStartC: 1,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    // z1 is genuinely satisfied and no longer eligible to keep tracking —
+    // this part of the behavior is correct and unchanged.
+    expect(decision.driving_zone).toEqual({
+      zone_id: null,
+      reason: "none_eligible",
+    });
+    // But termination must still have fired this exact tick: a real write
+    // happens, and the pushed value moves back up (the stop direction for
+    // a cooling call) instead of staying frozen at the stale cold value.
+    expect(decision.setpoint_push?.would_write).toBe(true);
+    expect(decision.setpoint_push?.pushed_value).not.toBeNull();
+    expect(decision.setpoint_push!.pushed_value!).toBeGreaterThan(
+      staleFrozenValue,
+    );
+  });
+
+  it("does not re-fire on a later tick once termination has already run and nothing is tracked", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23.89,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    const alreadyTerminatedValue = 22.9;
+    // trackedDrivingZoneId is already null here — exactly what the fix's
+    // own prior tick would have persisted right after termination fired.
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: alreadyTerminatedValue,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: null,
+      worstDeviationAtCallStartC: null,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.driving_zone?.reason).toBe("none_eligible");
+    expect(decision.setpoint_push?.would_write).toBe(false);
+    expect(decision.setpoint_push?.pushed_value).toBeCloseTo(
+      alreadyTerminatedValue,
+      5,
+    );
+  });
+});
