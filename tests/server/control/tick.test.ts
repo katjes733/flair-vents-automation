@@ -3491,6 +3491,72 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
     );
   });
 
+  it("fires symmetrically for a heating call — moves the pushed value back down instead of staying frozen too warm", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(
+      client,
+      [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 21.11, // exactly at the default fallback heat setpoint — satisfied
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ],
+      "heat",
+    );
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "heat",
+      mode: "heat",
+      ambientTemperatureC: 19,
+      targetTemperatureC: 21,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: false,
+      writtenConfirmed: false,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    // The heating-direction mirror of the cooling test above: a stale
+    // *warm* smoothed offset and a correspondingly too-warm frozen value.
+    const staleFrozenValue = 23.11;
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: "z1",
+      ticksSinceLeadChanged: 5,
+      smoothedOffsetC: 2,
+      lastPushedSetpointC: staleFrozenValue,
+      lastHvacState: "HEATING_CALL",
+      // Well inside the equipment-fault grace period (default 10 min) —
+      // this fixture's duct-vs-room reading isn't meant to exercise that
+      // check, and a duct temp colder than room during a real heating
+      // call would otherwise trip it once past the grace window.
+      callStartedAtMs: NOW - 60_000,
+      worstDeviationAtCallStartC: 1,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.driving_zone).toEqual({
+      zone_id: null,
+      reason: "none_eligible",
+    });
+    expect(decision.setpoint_push?.would_write).toBe(true);
+    expect(decision.setpoint_push?.pushed_value).not.toBeNull();
+    // The stop direction for a heating call is *down*, not up.
+    expect(decision.setpoint_push!.pushed_value!).toBeLessThan(
+      staleFrozenValue,
+    );
+  });
+
   it("does not re-fire on a later tick once termination has already run and nothing is tracked", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
