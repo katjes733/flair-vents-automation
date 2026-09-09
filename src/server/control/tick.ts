@@ -1515,6 +1515,17 @@ export async function runTick(
   let smoothedOffsetC = priorRuntime.smoothedOffsetC;
   let wouldWrite = false;
   let selectionReason = drivingSelection.reason;
+  // Defensive hardening on top of the termination fix below: set only
+  // when this tick's push comes from the one-shot "last demanding zone
+  // just expired" path, and cleared only once its corrective write
+  // actually succeeds (checked after the dispatch attempt further down).
+  // If that write fails (a transient error), this stays set and gets
+  // persisted as trackedDrivingZoneId below instead of the normal
+  // (null) selection — so the very next tick retries the same
+  // termination computation/write, rather than the real device being
+  // left stuck at its last value until some unrelated future demand
+  // cycle happens to correct it.
+  let pendingTerminationRetryZoneId: string | null = null;
 
   // deliveryMode/homeKitClient/homeKitState/homeKitReadError were already
   // read once, up in Step 4, specifically so HVAC-state derivation could
@@ -1598,6 +1609,7 @@ export async function runTick(
       pushedValue = pushResult.pushedValue;
       smoothedOffsetC = pushResult.smoothedOffset;
       wouldWrite = true;
+      pendingTerminationRetryZoneId = justExpiredZone.id;
     }
   }
 
@@ -1617,7 +1629,9 @@ export async function runTick(
   let homeKitWriteKind: "target" | "threshold" | "skip" | null = null;
   let setpointDispatchError: string | null = homeKitReadError;
 
-  if (wouldWrite && !dryRun && !controlDisarmed && pushedValue !== null) {
+  const dispatchWasAttempted =
+    wouldWrite && !dryRun && !controlDisarmed && pushedValue !== null;
+  if (dispatchWasAttempted) {
     // Both branches below are wrapped in try/catch — a real, pre-existing
     // gap fixed alongside this feature: this call previously had no
     // try/catch at all, unlike every per-vent dispatch nearby (which
@@ -1636,7 +1650,10 @@ export async function runTick(
         const write = resolveHomeKitSetpointWrite({
           targetMode: homeKitState.targetMode,
           callState: effectiveCallState,
-          pushedValueC: pushedValue,
+          // Non-null by construction: dispatchWasAttempted already
+          // required pushedValue !== null, just not in a form TS's
+          // control-flow narrowing can see through a boolean variable.
+          pushedValueC: pushedValue!,
         });
         if (write.kind === "target") {
           await homeKitClient.setTargetTemperature(write.value);
@@ -1651,7 +1668,7 @@ export async function runTick(
         await pushSetpoint(
           deps.client,
           ctx.structureId,
-          pushedValue,
+          pushedValue!,
           ctx.settings.setpoint_push_rounding_c,
         );
       }
@@ -1664,6 +1681,17 @@ export async function runTick(
         error: setpointDispatchError,
       });
     }
+  }
+  // Only release the retry reference once the corrective write actually
+  // reached the real device — see pendingTerminationRetryZoneId's own
+  // comment above. Left set (and persisted below) on any failure, and
+  // also left set if dispatch wasn't genuinely attempted at all (shadow
+  // mode/disarmed) — there's nothing to retry differently in that case,
+  // so keep recomputing/attempting it every tick, mirroring how a still-
+  // actively-tracked zone's push already keeps recomputing every tick
+  // while shadowed rather than freezing.
+  if (dispatchWasAttempted && setpointDispatchError === null) {
+    pendingTerminationRetryZoneId = null;
   }
 
   // --- Step 11: manual disarm override ------------------------------------
@@ -1859,7 +1887,11 @@ export async function runTick(
   }
 
   await deps.airHandlerRuntimeStore.set(airHandler.id, {
-    trackedDrivingZoneId: drivingSelection.zoneId,
+    // pendingTerminationRetryZoneId overrides the normal (null)
+    // selection only while a termination write is still awaiting a
+    // successful retry — see its own comment above.
+    trackedDrivingZoneId:
+      pendingTerminationRetryZoneId ?? drivingSelection.zoneId,
     ticksSinceLeadChanged,
     smoothedOffsetC,
     lastPushedSetpointC: pushedValue,

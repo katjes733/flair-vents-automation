@@ -3596,4 +3596,66 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       5,
     );
   });
+
+  // Defensive hardening requested directly after the fix above shipped:
+  // the fix makes termination *fire*, but a transient dispatch failure
+  // at that exact moment would otherwise still leave the real device
+  // stuck — with no zone tracked anymore to retry from on the next tick.
+  it("retries the termination write on the next tick if the first attempt fails, instead of abandoning it", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23.89, // satisfied
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({ targetMode: 2, currentTempC: 25 });
+    const deps = makeDeps(client, persisted, NOW);
+    deps.getHomeKitClient = async () => homeKitClient;
+
+    const staleFrozenValue = 21.89;
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: "z1",
+      ticksSinceLeadChanged: 5,
+      smoothedOffsetC: -2,
+      lastPushedSetpointC: staleFrozenValue,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 600_000,
+      worstDeviationAtCallStartC: 1,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    // Tick 1: termination fires, but the corrective write fails.
+    homeKitClient.forceError(new Error("simulated transient failure"));
+    const decision1 = await runTick(airHandler, zones, makeCtx(), deps);
+    expect(decision1.setpoint_push?.would_write).toBe(true);
+    expect(decision1.setpoint_push?.homekit_error).not.toBeNull();
+    const runtimeAfterFailure = await deps.airHandlerRuntimeStore.get("ah-1");
+    // The zone reference must survive the failed write — this is the
+    // actual defensive mechanism: without it, the next tick would have
+    // nothing left to retry from at all.
+    expect(runtimeAfterFailure.trackedDrivingZoneId).toBe("z1");
+
+    // Tick 2: same deps (retains the persisted runtime state above), the
+    // transient failure has cleared — the retry now succeeds.
+    homeKitClient.forceError(null);
+    const decision2 = await runTick(airHandler, zones, makeCtx(), deps);
+    expect(decision2.setpoint_push?.would_write).toBe(true);
+    expect(decision2.setpoint_push?.homekit_error).toBeNull();
+    expect(decision2.setpoint_push?.pushed_value).toBeGreaterThan(
+      staleFrozenValue,
+    );
+    const runtimeAfterSuccess = await deps.airHandlerRuntimeStore.get("ah-1");
+    // Finally released now that a real write actually succeeded.
+    expect(runtimeAfterSuccess.trackedDrivingZoneId).toBeNull();
+  });
 });
