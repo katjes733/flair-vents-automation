@@ -182,11 +182,24 @@ interface ThermostatCharacteristicMap {
   targetHeatingCoolingStateIid: number;
   currentTemperatureIid: number;
   targetTemperatureIid: number;
+  // The real device's own minStep for each writable temperature
+  // characteristic (confirmed live: 0.1°C on the real "Upstairs" unit for
+  // all three) — resolved from the accessory database itself rather than
+  // hardcoded, since a write value not aligned to this step is silently
+  // rejected by the device (see writeCharacteristic's own comment). Falls
+  // back to 0.1 only if a characteristic genuinely reports no minStep at
+  // all, which HAP's own spec doesn't actually allow for a numeric
+  // characteristic but costs nothing to guard against.
+  targetTemperatureMinStep: number;
   coolingThresholdIid: number | null;
+  coolingThresholdMinStep: number;
   heatingThresholdIid: number | null;
+  heatingThresholdMinStep: number;
   currentHeatingCoolingStateIid: number | null;
   currentFanStateIid: number | null;
 }
+
+const DEFAULT_TEMPERATURE_MIN_STEP = 0.1;
 
 async function resolveThermostatCharacteristics(
   client: HttpClient,
@@ -196,7 +209,7 @@ async function resolveThermostatCharacteristics(
       aid: number;
       services: Array<{
         type: string;
-        characteristics: Array<{ iid: number; type: string }>;
+        characteristics: Array<{ iid: number; type: string; minStep?: number }>;
       }>;
     }>;
   };
@@ -209,35 +222,90 @@ async function resolveThermostatCharacteristics(
     const find = (type: string) =>
       thermostat.characteristics.find(
         (c) => normalizeType(c.type) === normalizeType(type),
-      )?.iid ?? null;
-    const targetHeatingCoolingStateIid = find(
+      ) ?? null;
+    const targetHeatingCoolingState = find(
       HAP_TYPE.TARGET_HEATING_COOLING_STATE,
     );
-    const currentTemperatureIid = find(HAP_TYPE.CURRENT_TEMPERATURE);
-    const targetTemperatureIid = find(HAP_TYPE.TARGET_TEMPERATURE);
+    const currentTemperature = find(HAP_TYPE.CURRENT_TEMPERATURE);
+    const targetTemperature = find(HAP_TYPE.TARGET_TEMPERATURE);
     if (
-      !targetHeatingCoolingStateIid ||
-      !currentTemperatureIid ||
-      !targetTemperatureIid
+      !targetHeatingCoolingState ||
+      !currentTemperature ||
+      !targetTemperature
     ) {
       throw new Error(
         "Thermostat service found but missing a required characteristic (TargetHeatingCoolingState/CurrentTemperature/TargetTemperature)",
       );
     }
+    const coolingThreshold = find(HAP_TYPE.COOLING_THRESHOLD_TEMPERATURE);
+    const heatingThreshold = find(HAP_TYPE.HEATING_THRESHOLD_TEMPERATURE);
     return {
       aid: accessory.aid,
-      targetHeatingCoolingStateIid,
-      currentTemperatureIid,
-      targetTemperatureIid,
-      coolingThresholdIid: find(HAP_TYPE.COOLING_THRESHOLD_TEMPERATURE),
-      heatingThresholdIid: find(HAP_TYPE.HEATING_THRESHOLD_TEMPERATURE),
-      currentHeatingCoolingStateIid: find(
-        HAP_TYPE.CURRENT_HEATING_COOLING_STATE,
-      ),
-      currentFanStateIid: find(HAP_TYPE.CURRENT_FAN_STATE),
+      targetHeatingCoolingStateIid: targetHeatingCoolingState.iid,
+      currentTemperatureIid: currentTemperature.iid,
+      targetTemperatureIid: targetTemperature.iid,
+      targetTemperatureMinStep:
+        targetTemperature.minStep ?? DEFAULT_TEMPERATURE_MIN_STEP,
+      coolingThresholdIid: coolingThreshold?.iid ?? null,
+      coolingThresholdMinStep:
+        coolingThreshold?.minStep ?? DEFAULT_TEMPERATURE_MIN_STEP,
+      heatingThresholdIid: heatingThreshold?.iid ?? null,
+      heatingThresholdMinStep:
+        heatingThreshold?.minStep ?? DEFAULT_TEMPERATURE_MIN_STEP,
+      currentHeatingCoolingStateIid:
+        find(HAP_TYPE.CURRENT_HEATING_COOLING_STATE)?.iid ?? null,
+      currentFanStateIid: find(HAP_TYPE.CURRENT_FAN_STATE)?.iid ?? null,
     };
   }
   throw new Error("No Thermostat service found on this HAP accessory");
+}
+
+// A characteristic write silently rejected by the device (e.g. a value not
+// aligned to its own minStep) surfaces as HAP status 207 (Multi-Status),
+// not a thrown error — hap-controller's own setCharacteristics() resolves
+// normally for a 207 response, returning the parsed per-characteristic
+// status codes rather than throwing. Confirmed live: this app pushed
+// unrounded values (e.g. 21.204661939005074) against a real
+// CoolingThresholdTemperature characteristic whose own minStep is 0.1, and
+// every one of those writes was silently ignored for ~10 minutes — no
+// exception, no homekit_error, nothing — until a later value happened to
+// land close enough to a valid step to be accepted. Rounding (below) is
+// the actual fix; this check is the safety net for whatever it doesn't
+// catch (a real device-side rejection for some other reason).
+export function roundToStep(valueC: number, step: number): number {
+  if (!(step > 0)) return valueC;
+  const rounded = Math.round(valueC / step) * step;
+  // Clean up floating-point noise (e.g. 21.1/0.1 → 210.99999999999997)
+  // without assuming a fixed decimal precision — derive it from the step
+  // itself so a device with a coarser (e.g. 0.5) or finer step still
+  // rounds cleanly.
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+  return Number(rounded.toFixed(decimals));
+}
+
+export function assertCharacteristicWriteSucceeded(
+  result: unknown,
+  aid: number,
+  iid: number,
+): void {
+  const characteristics = (
+    result as {
+      characteristics?: Array<{
+        aid?: unknown;
+        iid?: unknown;
+        status?: number;
+      }>;
+    }
+  )?.characteristics;
+  if (!Array.isArray(characteristics)) return; // the 204 (full-success) shape carries no status field at all
+  const entry = characteristics.find(
+    (c) => Number(c.aid) === aid && Number(c.iid) === iid,
+  );
+  if (entry && typeof entry.status === "number" && entry.status !== 0) {
+    throw new Error(
+      `HomeKit rejected the write to ${aid}.${iid} (HAP status ${entry.status})`,
+    );
+  }
 }
 
 // One Ecobee SmartSensor accessory's resolved characteristic iids —
@@ -515,9 +583,15 @@ export class HapControllerClient implements HomeKitClient {
   async setTargetTemperature(valueC: number): Promise<void> {
     const client = await this.connect();
     const chars = this.characteristics!;
-    await client.setCharacteristics({
-      [`${chars.aid}.${chars.targetTemperatureIid}`]: valueC,
+    const rounded = roundToStep(valueC, chars.targetTemperatureMinStep);
+    const result = await client.setCharacteristics({
+      [`${chars.aid}.${chars.targetTemperatureIid}`]: rounded,
     });
+    assertCharacteristicWriteSucceeded(
+      result,
+      chars.aid,
+      chars.targetTemperatureIid,
+    );
   }
 
   async setThresholdTemperature(
@@ -533,7 +607,15 @@ export class HapControllerClient implements HomeKitClient {
         `This accessory does not expose a ${which} threshold characteristic`,
       );
     }
-    await client.setCharacteristics({ [`${chars.aid}.${iid}`]: valueC });
+    const minStep =
+      which === "heat"
+        ? chars.heatingThresholdMinStep
+        : chars.coolingThresholdMinStep;
+    const rounded = roundToStep(valueC, minStep);
+    const result = await client.setCharacteristics({
+      [`${chars.aid}.${iid}`]: rounded,
+    });
+    assertCharacteristicWriteSucceeded(result, chars.aid, iid);
   }
 
   async getSensorReadings(): Promise<Map<string, HomeKitSensorReading>> {
