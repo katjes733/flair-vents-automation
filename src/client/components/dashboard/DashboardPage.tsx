@@ -250,6 +250,9 @@ export default function DashboardPage() {
         <SyncZonesDialog
           open
           airHandlerId={syncingAirHandlerId}
+          airHandlerName={
+            airHandlers.find((a) => a.id === syncingAirHandlerId)?.name ?? ""
+          }
           zones={zones.filter((z) => z.airHandlerId === syncingAirHandlerId)}
           onClose={() => setSyncingAirHandlerId(null)}
           onSynced={loadAll}

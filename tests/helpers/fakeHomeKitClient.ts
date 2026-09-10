@@ -1,6 +1,7 @@
 import type {
   HomeKitClient,
   HomeKitCurrentState,
+  HomeKitSensorReading,
 } from "~/server/util/homekit/client";
 
 // A stateful, in-memory fake — mirrors tests/helpers/fakeFlairClient.ts's
@@ -25,11 +26,33 @@ export class FakeHomeKitClient implements HomeKitClient {
   };
   private paired = true;
   private forcedError: Error | null = null;
+  private sensorReadings = new Map<string, HomeKitSensorReading>();
   readonly writeHistory: HomeKitWriteCall[] = [];
   removePairingCallCount = 0;
 
   setState(state: Partial<HomeKitCurrentState>): void {
     this.state = { ...this.state, ...state };
+  }
+
+  /** Seeds (or replaces) one SmartSensor's reading, keyed by its Serial Number. */
+  setSensorReading(
+    serial: string,
+    reading: Partial<HomeKitSensorReading>,
+  ): void {
+    const existing = this.sensorReadings.get(serial);
+    this.sensorReadings.set(serial, {
+      name: "",
+      tempC: null,
+      occupied: null,
+      motion: null,
+      ...existing,
+      ...reading,
+      serial,
+    });
+  }
+
+  clearSensorReadings(): void {
+    this.sensorReadings.clear();
   }
 
   setPaired(paired: boolean): void {
@@ -71,6 +94,11 @@ export class FakeHomeKitClient implements HomeKitClient {
       value: valueC,
       at: Date.now(),
     });
+  }
+
+  async getSensorReadings(): Promise<Map<string, HomeKitSensorReading>> {
+    this.maybeThrow();
+    return new Map(this.sensorReadings);
   }
 
   async removePairing(): Promise<void> {

@@ -36,6 +36,11 @@ export interface FlairVentConfig {
 export interface ZoneConfig {
   has_temperature_sensor: boolean;
   has_occupancy_sensor: boolean;
+  // Which local HomeKit SmartSensor accessory (by Serial Number) this
+  // zone reads live temperature/occupancy from, once its air handler is
+  // on setpoint_delivery_mode "homekit" — null until confirmed via the
+  // matching dialog. See "Ecobee SmartSensor Reading via HomeKit".
+  homekit_sensor_serial: string | null;
   // Every physical manual vent in this zone — required to have at least
   // one entry for a manual_fixed_vent zone, empty for every other type.
   // See "Multi-Vent Manual Zones" and zoneConfigSchema's own comment.

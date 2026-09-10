@@ -218,7 +218,7 @@ describe("EditAirHandlerDialog", () => {
     expect(onDeleted).not.toHaveBeenCalled();
   });
 
-  it("defaults the Setpoint delivery field to Flair API and hides the pairing button", () => {
+  it("defaults the Setpoint delivery field to Flair API and hides both HomeKit buttons", () => {
     renderDialog();
     expect(
       screen.getByRole("combobox", { name: "Setpoint delivery" }),
@@ -226,9 +226,12 @@ describe("EditAirHandlerDialog", () => {
     expect(
       screen.queryByRole("button", { name: "Set up HomeKit pairing" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Match HomeKit Sensors" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("reveals the HomeKit pairing button when Direct (HomeKit) is selected", async () => {
+  it("reveals the HomeKit pairing and sensor-matching buttons when Direct (HomeKit) is selected", async () => {
     const user = userEvent.setup();
     renderDialog();
     await user.click(
@@ -239,6 +242,9 @@ describe("EditAirHandlerDialog", () => {
     );
     expect(
       screen.getByRole("button", { name: "Set up HomeKit pairing" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Match HomeKit Sensors" }),
     ).toBeInTheDocument();
   });
 

@@ -69,6 +69,15 @@ export const airHandlerConfigSchema = z.object({
   // against the real unit. Per-handler, not global, and never silently
   // falls back from one to the other — see the plan's "Explicitly
   // deferred" note on why an automatic fallback isn't built.
+  //
+  // Also gates whether any of this handler's zones read live sensor data
+  // (temperature/occupancy) via HomeKit at all — see "Ecobee SmartSensor
+  // Reading via HomeKit". Deliberately one combined switch, not two
+  // independent ones: once a handler is fully committed to HomeKit for
+  // setpoint delivery, every possible signal should come through that
+  // same local, low-latency path rather than leaving sensor reads on
+  // Flair's slower relay for no reason. A zone's own
+  // `config.homekit_sensor_serial` is inert while this stays "flair".
   setpoint_delivery_mode: z.enum(["flair", "homekit"]).default("flair"),
 });
 

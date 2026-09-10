@@ -19,6 +19,7 @@ import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
 import FlairZoneSelect from "~/client/components/shared/FlairZoneSelect";
 import HomeKitPairingDialog from "~/client/components/dashboard/HomeKitPairingDialog";
+import HomeKitSensorMatchDialog from "~/client/components/dashboard/HomeKitSensorMatchDialog";
 import { useCanWrite } from "~/client/permissions/usePermission";
 import { useDisplayUnit } from "~/client/theme/useDisplayUnit";
 import {
@@ -68,6 +69,7 @@ export default function EditAirHandlerDialog({
     "flair" | "homekit"
   >("flair");
   const [homeKitDialogOpen, setHomeKitDialogOpen] = useState(false);
+  const [sensorMatchDialogOpen, setSensorMatchDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -255,13 +257,22 @@ export default function EditAirHandlerDialog({
               <MenuItem value="homekit">Direct (HomeKit)</MenuItem>
             </TextField>
             {setpointDeliveryMode === "homekit" && (
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => setHomeKitDialogOpen(true)}
-              >
-                Set up HomeKit pairing
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setHomeKitDialogOpen(true)}
+                >
+                  Set up HomeKit pairing
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setSensorMatchDialogOpen(true)}
+                >
+                  Match HomeKit Sensors
+                </Button>
+              </Stack>
             )}
             {error && (
               <DialogContentText color="error">{error}</DialogContentText>
@@ -323,6 +334,13 @@ export default function EditAirHandlerDialog({
         airHandlerId={airHandler.id}
         airHandlerName={airHandler.name}
         onClose={() => setHomeKitDialogOpen(false)}
+      />
+
+      <HomeKitSensorMatchDialog
+        open={sensorMatchDialogOpen}
+        airHandlerId={airHandler.id}
+        airHandlerName={airHandler.name}
+        onClose={() => setSensorMatchDialogOpen(false)}
       />
     </>
   );

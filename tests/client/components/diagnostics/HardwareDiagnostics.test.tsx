@@ -21,6 +21,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
     config: {
       has_temperature_sensor: true,
       has_occupancy_sensor: false,
+      homekit_sensor_serial: null,
       thermal_load_flags: [],
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
@@ -163,6 +164,7 @@ describe("HardwareDiagnostics", () => {
         config: {
           has_temperature_sensor: true,
           has_occupancy_sensor: false,
+          homekit_sensor_serial: null,
           thermal_load_flags: [],
           idle_baseline_position: 100,
           sensor_calibration_offset: 0,

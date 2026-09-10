@@ -27,6 +27,24 @@ const HAP_TYPE = {
   // only has Off/Heat/Cool, no fourth "fan" value).
   CURRENT_HEATING_COOLING_STATE: "0000000F-0000-1000-8000-0026BB765291",
   CURRENT_FAN_STATE: "000000AF-0000-1000-8000-0026BB765291",
+  // Ecobee SmartSensor accessories — each is its own HAP accessory under
+  // the same pairing as the thermostat (aid=1), not folded into it. All
+  // confirmed live against the real "Upstairs" pairing's four SmartSensors
+  // — see docs/homekit-ecobee-control-research.md §7.
+  ACCESSORY_INFORMATION_SERVICE: "0000003E-0000-1000-8000-0026BB765291",
+  SERIAL_NUMBER: "00000030-0000-1000-8000-0026BB765291",
+  // The accessory's own HomeKit name (e.g. "Extra Den") — read alongside
+  // Serial Number specifically for the matching dialog, since Name is what
+  // a household member actually recognizes their room by, even though it's
+  // never trusted as the mapping key itself (Name doesn't reliably match
+  // Flair's own room name — see docs/homekit-ecobee-control-research.md
+  // §7's "Extra Den" finding).
+  NAME: "00000023-0000-1000-8000-0026BB765291",
+  TEMPERATURE_SENSOR_SERVICE: "0000008A-0000-1000-8000-0026BB765291",
+  OCCUPANCY_SENSOR_SERVICE: "00000086-0000-1000-8000-0026BB765291",
+  OCCUPANCY_DETECTED: "00000071-0000-1000-8000-0026BB765291",
+  MOTION_SENSOR_SERVICE: "00000085-0000-1000-8000-0026BB765291",
+  MOTION_DETECTED: "00000022-0000-1000-8000-0026BB765291",
 } as const;
 
 export type HapCurrentFanState = 0 | 1 | 2;
@@ -54,6 +72,28 @@ export interface HomeKitCurrentState {
   currentFanState: HapCurrentFanState | null;
 }
 
+// One Ecobee SmartSensor's live reading, keyed by its own Serial Number
+// (never `aid` — see resolveSensorAccessories' own comment on why). A
+// field is `null` when that particular characteristic isn't exposed by
+// this accessory/firmware, mirroring HomeKitCurrentState's own convention
+// for an absent-vs-error distinction. The two undocumented vendor
+// "seconds since change" characteristics observed on these accessories
+// (docs/homekit-ecobee-control-research.md §7) are deliberately not
+// decoded here — never confirmed by any public spec, and explicitly
+// never meant to be load-bearing for a control decision.
+export interface HomeKitSensorReading {
+  serial: string;
+  // The accessory's own HomeKit name — "" if it doesn't expose one for
+  // some reason (not expected in practice; every real accessory checked
+  // has carried a Name characteristic). Optional in this type only so
+  // fixtures/tests that don't care about display naming don't all need to
+  // supply it — every real read populates it.
+  name?: string;
+  tempC: number | null;
+  occupied: boolean | null;
+  motion: boolean | null;
+}
+
 export interface HomeKitClient {
   /** Live check — attempts to actually connect/authenticate, not just "do we have stored bytes." */
   isPaired(): Promise<boolean>;
@@ -63,6 +103,16 @@ export interface HomeKitClient {
     which: "heat" | "cool",
     valueC: number,
   ): Promise<void>;
+  /**
+   * Every Ecobee SmartSensor accessory found under this pairing, keyed by
+   * Serial Number — see "Ecobee SmartSensor Reading via HomeKit" in the
+   * plan. Resolves to an empty map (never throws) if no such accessory is
+   * found or none currently answers, mirroring getCurrentState()'s own
+   * "an absent value reads as null, not as an exception" convention where
+   * feasible — a caller with no zone mapped to a serial never needs to
+   * distinguish "empty" from "unreachable."
+   */
+  getSensorReadings(): Promise<Map<string, HomeKitSensorReading>>;
   /** Cleanly releases this admin's own pairing slot on the accessory, then the caller deletes the stored row. */
   removePairing(): Promise<void>;
 }
@@ -190,6 +240,106 @@ async function resolveThermostatCharacteristics(
   throw new Error("No Thermostat service found on this HAP accessory");
 }
 
+// One Ecobee SmartSensor accessory's resolved characteristic iids —
+// `serialIid` locates its Serial Number characteristic's *iid*, not its
+// value (getAccessories() never returns live values, only the shape — see
+// getSensorReadings()'s own two-phase comment). `temperatureIid`/
+// `occupancyIid`/`motionIid` are independently nullable: an accessory may
+// expose only a subset of these three services.
+interface SensorAccessoryCharacteristics {
+  aid: number;
+  serialIid: number;
+  // Nullable, unlike serialIid — a missing Name shouldn't disqualify an
+  // otherwise-usable sensor accessory, it just falls back to "" for display.
+  nameIid: number | null;
+  temperatureIid: number | null;
+  occupancyIid: number | null;
+  motionIid: number | null;
+}
+
+/**
+ * Every accessory under this pairing that exposes at least one of
+ * TemperatureSensor/OccupancySensor/MotionSensor, alongside its own
+ * AccessoryInformation Serial Number iid — the SmartSensor accessories,
+ * confirmed live to sit as their own separate `aid`s under the same
+ * pairing as the thermostat (docs/homekit-ecobee-control-research.md §7).
+ * Unlike resolveThermostatCharacteristics (which stops at the first
+ * match), this iterates every accessory, since a household can have
+ * several SmartSensors under one pairing. An accessory with no Serial
+ * Number characteristic is skipped outright — Serial Number, not `aid`,
+ * is this app's own persisted mapping key (see homekit_sensor_serial's
+ * own comment), so an accessory this app could never key a reading by is
+ * not worth resolving further.
+ */
+function resolveSensorAccessories(db: {
+  accessories: Array<{
+    aid: number;
+    services: Array<{
+      type: string;
+      characteristics: Array<{ iid: number; type: string }>;
+    }>;
+  }>;
+}): SensorAccessoryCharacteristics[] {
+  const result: SensorAccessoryCharacteristics[] = [];
+  for (const accessory of db.accessories) {
+    const infoService = accessory.services.find(
+      (s) =>
+        normalizeType(s.type) ===
+        normalizeType(HAP_TYPE.ACCESSORY_INFORMATION_SERVICE),
+    );
+    const serialIid = infoService?.characteristics.find(
+      (c) => normalizeType(c.type) === normalizeType(HAP_TYPE.SERIAL_NUMBER),
+    )?.iid;
+    const nameIid =
+      infoService?.characteristics.find(
+        (c) => normalizeType(c.type) === normalizeType(HAP_TYPE.NAME),
+      )?.iid ?? null;
+    const findIn = (
+      service: (typeof accessory.services)[number] | undefined,
+      type: string,
+    ) =>
+      service?.characteristics.find(
+        (c) => normalizeType(c.type) === normalizeType(type),
+      )?.iid ?? null;
+    const temperatureIid = findIn(
+      accessory.services.find(
+        (s) =>
+          normalizeType(s.type) ===
+          normalizeType(HAP_TYPE.TEMPERATURE_SENSOR_SERVICE),
+      ),
+      HAP_TYPE.CURRENT_TEMPERATURE,
+    );
+    const occupancyIid = findIn(
+      accessory.services.find(
+        (s) =>
+          normalizeType(s.type) ===
+          normalizeType(HAP_TYPE.OCCUPANCY_SENSOR_SERVICE),
+      ),
+      HAP_TYPE.OCCUPANCY_DETECTED,
+    );
+    const motionIid = findIn(
+      accessory.services.find(
+        (s) =>
+          normalizeType(s.type) ===
+          normalizeType(HAP_TYPE.MOTION_SENSOR_SERVICE),
+      ),
+      HAP_TYPE.MOTION_DETECTED,
+    );
+    if (!serialIid || (!temperatureIid && !occupancyIid && !motionIid)) {
+      continue;
+    }
+    result.push({
+      aid: accessory.aid,
+      serialIid,
+      nameIid,
+      temperatureIid,
+      occupancyIid,
+      motionIid,
+    });
+  }
+  return result;
+}
+
 // HAP type UUIDs are sometimes reported in their full 36-char form and
 // sometimes shortened (e.g. "35" instead of "00000035-0000-1000-8000-
 // 0026BB765291") depending on the accessory's own firmware — normalize to
@@ -233,6 +383,7 @@ export async function pairHomeKitAccessory(
 export class HapControllerClient implements HomeKitClient {
   private client: HttpClient | null = null;
   private characteristics: ThermostatCharacteristicMap | null = null;
+  private sensorAccessories: SensorAccessoryCharacteristics[] | null = null;
 
   constructor(
     private readonly accessoryId: string,
@@ -383,6 +534,93 @@ export class HapControllerClient implements HomeKitClient {
       );
     }
     await client.setCharacteristics({ [`${chars.aid}.${iid}`]: valueC });
+  }
+
+  async getSensorReadings(): Promise<Map<string, HomeKitSensorReading>> {
+    const client = await this.connect();
+
+    const fetchValues = async (
+      accessories: SensorAccessoryCharacteristics[],
+    ): Promise<{
+      characteristics: Array<{ aid?: number; iid: number; value: unknown }>;
+    }> => {
+      const ids: string[] = [];
+      for (const acc of accessories) {
+        ids.push(`${acc.aid}.${acc.serialIid}`);
+        if (acc.nameIid) ids.push(`${acc.aid}.${acc.nameIid}`);
+        if (acc.temperatureIid) ids.push(`${acc.aid}.${acc.temperatureIid}`);
+        if (acc.occupancyIid) ids.push(`${acc.aid}.${acc.occupancyIid}`);
+        if (acc.motionIid) ids.push(`${acc.aid}.${acc.motionIid}`);
+      }
+      return (await client.getCharacteristics(ids, {
+        meta: false,
+        perms: false,
+        type: false,
+        ev: false,
+      })) as {
+        characteristics: Array<{ aid?: number; iid: number; value: unknown }>;
+      };
+    };
+
+    const resolveAccessories = async (): Promise<
+      SensorAccessoryCharacteristics[]
+    > => {
+      const db = (await client.getAccessories()) as Parameters<
+        typeof resolveSensorAccessories
+      >[0];
+      return resolveSensorAccessories(db);
+    };
+
+    if (!this.sensorAccessories) {
+      this.sensorAccessories = await resolveAccessories();
+    }
+    if (this.sensorAccessories.length === 0) return new Map();
+
+    let result: {
+      characteristics: Array<{ aid?: number; iid: number; value: unknown }>;
+    };
+    try {
+      result = await fetchValues(this.sensorAccessories);
+    } catch {
+      // A cached accessory list can go stale (an accessory's aid was
+      // reassigned, or it was removed from the pairing) — re-resolve
+      // fresh once before giving up, mirroring connect()'s own
+      // cached-address-then-rediscover fallback.
+      this.sensorAccessories = await resolveAccessories();
+      if (this.sensorAccessories.length === 0) return new Map();
+      result = await fetchValues(this.sensorAccessories);
+    }
+
+    // Keyed by "aid.iid" — an iid is only unique *within* one accessory,
+    // so a bare iid can collide across the several accessories queried in
+    // this one batched call, unlike getCurrentState()'s single-accessory
+    // query, where that collision can't happen.
+    const byId = new Map(
+      result.characteristics.map((c) => [`${c.aid}.${c.iid}`, c.value]),
+    );
+    const readings = new Map<string, HomeKitSensorReading>();
+    for (const acc of this.sensorAccessories) {
+      const serial = byId.get(`${acc.aid}.${acc.serialIid}`);
+      if (typeof serial !== "string" || !serial) continue;
+      readings.set(serial, {
+        serial,
+        name: acc.nameIid
+          ? ((byId.get(`${acc.aid}.${acc.nameIid}`) as string | undefined) ??
+            "")
+          : "",
+        tempC: acc.temperatureIid
+          ? ((byId.get(`${acc.aid}.${acc.temperatureIid}`) as
+              number | undefined) ?? null)
+          : null,
+        occupied: acc.occupancyIid
+          ? Boolean(byId.get(`${acc.aid}.${acc.occupancyIid}`))
+          : null,
+        motion: acc.motionIid
+          ? Boolean(byId.get(`${acc.aid}.${acc.motionIid}`))
+          : null,
+      });
+    }
+    return readings;
   }
 
   async removePairing(): Promise<void> {

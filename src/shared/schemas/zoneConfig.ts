@@ -62,6 +62,21 @@ export type FlairVentConfig = z.infer<typeof flairVentSchema>;
 export const zoneConfigSchema = z.object({
   has_temperature_sensor: z.boolean().default(false),
   has_occupancy_sensor: z.boolean().default(false),
+  // Which local HomeKit SmartSensor accessory (keyed by its Serial Number —
+  // see "Ecobee SmartSensor Reading via HomeKit") to read this zone's live
+  // temperature/occupancy from, in place of Flair's own relayed room
+  // reading. Null by default — a zone with no confirmed match keeps
+  // reading from Flair exactly as today, zero behavior change. Deliberately
+  // separate from flair_room_id: Flair remains the sole source of truth
+  // for which physical sensor/vent belongs to which room (the Sync
+  // Engine's job, unchanged); this field only decides which local HomeKit
+  // accessory to *read* from for a room Flair has already told this app
+  // about. Set only via the matching dialog's explicit confirm — a Serial
+  // Number, not an `aid`, since an `aid` isn't confirmed stable long-term
+  // (see the HomeKitClient doc comment on Serial-Number-first re-matching).
+  // Only consulted when the zone's own air handler has
+  // setpoint_delivery_mode === "homekit" — see that field's own comment.
+  homekit_sensor_serial: z.string().nullable().default(null),
   // Every physical manual vent in this zone, each with its own fixed
   // position and (optionally) its own duct airflow rating. Supersedes an
   // earlier design (a single assumed_fixed_position + a bare

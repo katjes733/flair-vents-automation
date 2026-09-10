@@ -2,6 +2,7 @@ import type { FlairClient } from "~/server/util/flair/client";
 import type {
   HomeKitClient,
   HomeKitCurrentState,
+  HomeKitSensorReading,
 } from "~/server/util/homekit/client";
 import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
 import {
@@ -277,6 +278,48 @@ export async function runTick(
     airHandler.flairZoneId,
   );
 
+  // Which channel this handler reads live thermostat state through — see
+  // "Direct HomeKit Thermostat Control" in the plan. Acquired here, before
+  // ingestion, rather than down at "Step 4," so Step 1 below can also use
+  // it for a per-zone SmartSensor reading in place of Flair's own room
+  // reading — see "Ecobee SmartSensor Reading via HomeKit." Reused four
+  // ways total: (a) here, in ingestion; (b) Step 4's HVAC-state derivation,
+  // in place of Flair's own cloud-relayed operating-state (see
+  // deriveHvacStateViaHomeKit's own doc comment for why — a real,
+  // confirmed incident where Flair's relay went stale for over an hour);
+  // (c) the setpoint-push computation further down (a fresher, local
+  // reading than Flair's); (d) the dispatch decision at write time.
+  const deliveryMode = airHandler.config.setpoint_delivery_mode ?? "flair";
+  let homeKitClient: HomeKitClient | null = null;
+  let homeKitState: HomeKitCurrentState | null = null;
+  let homeKitReadError: string | null = null;
+  // Keyed by Serial Number — see homekit_sensor_serial's own comment on
+  // why that, not `aid`, is this app's persisted mapping key. Left `null`
+  // (as opposed to an empty map) specifically to distinguish "never
+  // attempted" from "attempted, found nothing" — not currently consumed
+  // differently, but keeps the two states honest rather than conflated.
+  let homeKitSensorReadings: Map<string, HomeKitSensorReading> | null = null;
+  if (deliveryMode === "homekit") {
+    try {
+      homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
+      if (!homeKitClient) {
+        throw new Error("No HomeKit pairing available for this air handler");
+      }
+      homeKitState = await homeKitClient.getCurrentState();
+      try {
+        homeKitSensorReadings = await homeKitClient.getSensorReadings();
+      } catch {
+        // A sensor-readings fetch failing doesn't fail the whole HomeKit
+        // path — HVAC state/setpoint delivery above already succeeded via
+        // getCurrentState(); every zone's ingestion below just falls back
+        // to Flair, same as a zone with no homekit_sensor_serial mapped.
+        homeKitSensorReadings = null;
+      }
+    } catch (err) {
+      homeKitReadError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   // --- Step 1: ingest ------------------------------------------------
   const readings = new Map<string, ZoneReadingBundle>(
     zones.map((zone) => {
@@ -297,6 +340,10 @@ export async function runTick(
           ventReading,
         });
       });
+      const homeKitReading = zone.config.homekit_sensor_serial
+        ? (homeKitSensorReadings?.get(zone.config.homekit_sensor_serial) ??
+          null)
+        : null;
       return [
         zone.id,
         {
@@ -307,6 +354,7 @@ export async function runTick(
             calibrationOffsetC: asTempDelta(
               zone.config.sensor_calibration_offset,
             ),
+            homeKitReading,
           }),
           vents,
         },
@@ -469,30 +517,9 @@ export async function runTick(
   }
 
   // --- Step 4: HVAC state ---------------------------------------------
-  // Which channel this handler reads live thermostat state through — see
-  // "Direct HomeKit Thermostat Control" in the plan. Read once, up here,
-  // and reused three ways below: (a) HVAC-state derivation right below,
-  // when available, in place of Flair's own cloud-relayed operating-state
-  // (see deriveHvacStateViaHomeKit's own doc comment for why — a real,
-  // confirmed incident where Flair's relay went stale for over an hour);
-  // (b) the setpoint-push computation further down (a fresher, local
-  // reading than Flair's); (c) the dispatch decision at write time.
-  const deliveryMode = airHandler.config.setpoint_delivery_mode ?? "flair";
-  let homeKitClient: HomeKitClient | null = null;
-  let homeKitState: HomeKitCurrentState | null = null;
-  let homeKitReadError: string | null = null;
-  if (deliveryMode === "homekit") {
-    try {
-      homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
-      if (!homeKitClient) {
-        throw new Error("No HomeKit pairing available for this air handler");
-      }
-      homeKitState = await homeKitClient.getCurrentState();
-    } catch (err) {
-      homeKitReadError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
+  // deliveryMode/homeKitClient/homeKitState/homeKitReadError were already
+  // resolved above, before Step 1, so ingestion could also use them for a
+  // per-zone SmartSensor reading — see that acquisition's own comment.
   const flairHvac = deriveHvacState(
     snapshot.thermostatState?.operatingState ?? null,
   );
@@ -1528,8 +1555,9 @@ export async function runTick(
   let pendingTerminationRetryZoneId: string | null = null;
 
   // deliveryMode/homeKitClient/homeKitState/homeKitReadError were already
-  // read once, up in Step 4, specifically so HVAC-state derivation could
-  // use the same read — reused here rather than reading it again.
+  // read once, up before Step 1, specifically so ingestion could use the
+  // same read too (see that acquisition's own comment) — reused here
+  // rather than reading it again.
   const thermostatReadingC =
     deliveryMode === "homekit" && homeKitState
       ? homeKitState.currentTempC
