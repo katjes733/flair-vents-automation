@@ -152,7 +152,7 @@ describe("computeZoneCommands — the join between classification and contention
       zone({
         zoneId: "satisfied",
         priorityRank: 0,
-        calibratedTemp: asAbsoluteTemp(19.5),
+        calibratedTemp: asAbsoluteTemp(21),
         tolerance: asTempDelta(1),
       }),
       zone({
@@ -173,8 +173,7 @@ describe("computeZoneCommands — the join between classification and contention
     // The satisfied zone closes proportionally toward its floor (see
     // step1DesiredPosition.ts's not-demanding branch) — it was never a
     // Step 3 candidate to reduce, regardless of what it closed to.
-    // deviation=19.5-21=-1.5, tolerance=1 -> the closing curve's own zero
-    // point is the lower edge (setpoint-tolerance/2=20.5), so overshoot=1
+    // deviation=0 (temp 21 == setpoint 21), tolerance=1, so overshoot=1
     // against effectiveBand=1.67 (unboosted): 100 - 100*(1/1.67) ≈ 40.12,
     // quantized to the nearest modulationStepPct (1%) by Step 2.
     expect(result.commandedPositions["satisfied"]).toBe(40);
@@ -624,11 +623,8 @@ describe("computeZoneCommands — pressure floor clamp", () => {
       zone({
         zoneId: "high",
         priorityRank: 0,
-        // Well below the closing curve's own lower edge (setpoint -
-        // tolerance/2 = 18.5) so both zones fully saturate to their floor
-        // — satisfied, closes to floor.
-        calibratedTemp: asAbsoluteTemp(10),
-        tolerance: asTempDelta(5),
+        calibratedTemp: asAbsoluteTemp(21),
+        tolerance: asTempDelta(5), // satisfied, closes to floor
         minVentPosition: 0,
         maxVentPosition: 100,
         flowRateLps: 100,
@@ -636,7 +632,7 @@ describe("computeZoneCommands — pressure floor clamp", () => {
       zone({
         zoneId: "low",
         priorityRank: 1,
-        calibratedTemp: asAbsoluteTemp(10),
+        calibratedTemp: asAbsoluteTemp(21),
         tolerance: asTempDelta(5),
         minVentPosition: 0,
         maxVentPosition: 100,
