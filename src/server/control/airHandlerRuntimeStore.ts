@@ -28,6 +28,14 @@ export interface AirHandlerRuntimeState {
   // the fault state. See "Emergency fail-safe".
   equipmentFaultActive: boolean;
   equipmentFaultClearDwellSinceMs: number | null;
+  // The symmetric dwell on the way IN: a failing tick doesn't declare a
+  // fault immediately — the failing condition must persist for
+  // equipment_fault_trigger_dwell_minutes first, so a single borderline
+  // reading (e.g. a variable-speed unit at a low capacity stage) can't trip
+  // the whole-system fail-safe on its own. Reset to null the moment any
+  // tick passes, exactly like the clear-side dwell resets on any failing
+  // tick.
+  equipmentFaultTriggerDwellSinceMs: number | null;
   // The periodic drift-check backstop's own cadence — independent of
   // reconciliation's per-command retry state, since a vent that already
   // reconciled successfully is exactly the case this re-checks: it has no
@@ -47,6 +55,7 @@ export const EMPTY_AIR_HANDLER_RUNTIME_STATE: AirHandlerRuntimeState = {
   worstDeviationAtCallStartC: null,
   equipmentFaultActive: false,
   equipmentFaultClearDwellSinceMs: null,
+  equipmentFaultTriggerDwellSinceMs: null,
   ticksSinceDriftCheck: 0,
 };
 

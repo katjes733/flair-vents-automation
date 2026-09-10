@@ -155,6 +155,19 @@ export const systemSettingsConfigSchema = z.object({
   equipment_fault_grace_period_minutes: z.number().positive().default(10),
   equipment_fault_duct_delta_threshold_c: z.number().positive().default(5.56),
   equipment_fault_clear_dwell_minutes: z.number().positive().default(5),
+  // A real, confirmed false-positive class distinct from the near-closed-vent
+  // one below: a variable-speed unit legitimately running at a low capacity
+  // stage (overnight, light load) can produce a real, healthy duct
+  // differential that's a little short of the configured threshold — not a
+  // fault, just a smaller true differential than a full-capacity call
+  // produces. Confirmed live: 5 overnight triggers, every one on a genuinely
+  // open vent with a real 4-5°C differential, every one self-clearing within
+  // 6-7 minutes once the differential drifted back over threshold — the
+  // signature of a borderline reading, not a sustained equipment problem.
+  // Mirrors the clear-side dwell above: the failing condition must persist
+  // for this long before a fault is actually declared, so one marginal tick
+  // can't trip the whole-system fail-safe on its own.
+  equipment_fault_trigger_dwell_minutes: z.number().positive().default(3),
   // A real, confirmed false-positive fail-safe trigger: a smart vent
   // sitting near-closed (satisfied, resting low) has little real airflow
   // through its own duct segment, so its duct temperature drifts toward

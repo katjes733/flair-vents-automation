@@ -682,49 +682,70 @@ export async function runTick(
   let faultActive = priorRuntime.equipmentFaultActive ?? false;
   let faultClearDwellSinceMs =
     priorRuntime.equipmentFaultClearDwellSinceMs ?? null;
+  let faultTriggerDwellSinceMs =
+    priorRuntime.equipmentFaultTriggerDwellSinceMs ?? null;
   const failSafeAlertKey = `alert:failsafe:${airHandler.id}`;
   if (faultCheck.faulted) {
-    if (!faultActive) {
-      const closestToPassing = faultCheck.ductDeltasC.reduce<number | null>(
-        (best, d) => (best === null || d.deltaC > best ? d.deltaC : best),
-        null,
-      );
-      logEmergencyFailSafeTriggered(log, {
-        air_handler_id: airHandler.id,
-        fault_signal: "duct_temperature_differential",
-        duct_delta_c: closestToPassing,
-        duct_deltas_c: faultCheck.ductDeltasC.map((d) => ({
-          zone_id: d.zoneId,
-          vent_id: d.ventId,
-          delta_c: d.deltaC,
-        })),
-      });
-      await deps.alerting.alertOnce({
-        key: failSafeAlertKey,
-        subject: `${airHandler.name}: Emergency fail-safe triggered`,
-        text: `Every smart vent on air handler "${airHandler.name}" has been forced to 100% open — no vent is showing the expected duct-temperature differential for an active call, which this app treats as a possible equipment fault.`,
-        rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
-        nowMs: startedAtMs,
-      });
-    }
-    faultActive = true;
     faultClearDwellSinceMs = null;
-  } else if (faultActive) {
-    const dwellSince = faultClearDwellSinceMs ?? startedAtMs;
-    const dwellElapsedMinutes = (startedAtMs - dwellSince) / 60000;
-    if (
-      dwellElapsedMinutes >= ctx.settings.equipment_fault_clear_dwell_minutes
-    ) {
-      faultActive = false;
-      faultClearDwellSinceMs = null;
-      logEmergencyFailSafeCleared(log, {
-        air_handler_id: airHandler.id,
-        fault_signal: "duct_temperature_differential",
-        duct_delta_c: null,
-      });
-      await deps.alerting.clearAlert(failSafeAlertKey);
-    } else {
-      faultClearDwellSinceMs = dwellSince;
+    if (!faultActive) {
+      // Symmetric to the clear-side dwell below: a single failing tick
+      // doesn't declare a fault — the condition has to persist for
+      // equipment_fault_trigger_dwell_minutes first. See
+      // equipment_fault_trigger_dwell_minutes's own comment for the real
+      // incident this guards against (a variable-speed unit at a low
+      // capacity stage producing a real but borderline differential).
+      const dwellSince = faultTriggerDwellSinceMs ?? startedAtMs;
+      const dwellElapsedMinutes = (startedAtMs - dwellSince) / 60000;
+      if (
+        dwellElapsedMinutes >=
+        ctx.settings.equipment_fault_trigger_dwell_minutes
+      ) {
+        const closestToPassing = faultCheck.ductDeltasC.reduce<number | null>(
+          (best, d) => (best === null || d.deltaC > best ? d.deltaC : best),
+          null,
+        );
+        logEmergencyFailSafeTriggered(log, {
+          air_handler_id: airHandler.id,
+          fault_signal: "duct_temperature_differential",
+          duct_delta_c: closestToPassing,
+          duct_deltas_c: faultCheck.ductDeltasC.map((d) => ({
+            zone_id: d.zoneId,
+            vent_id: d.ventId,
+            delta_c: d.deltaC,
+          })),
+        });
+        await deps.alerting.alertOnce({
+          key: failSafeAlertKey,
+          subject: `${airHandler.name}: Emergency fail-safe triggered`,
+          text: `Every smart vent on air handler "${airHandler.name}" has been forced to 100% open — no vent is showing the expected duct-temperature differential for an active call, which this app treats as a possible equipment fault.`,
+          rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+          nowMs: startedAtMs,
+        });
+        faultActive = true;
+        faultTriggerDwellSinceMs = null;
+      } else {
+        faultTriggerDwellSinceMs = dwellSince;
+      }
+    }
+  } else {
+    faultTriggerDwellSinceMs = null;
+    if (faultActive) {
+      const dwellSince = faultClearDwellSinceMs ?? startedAtMs;
+      const dwellElapsedMinutes = (startedAtMs - dwellSince) / 60000;
+      if (
+        dwellElapsedMinutes >= ctx.settings.equipment_fault_clear_dwell_minutes
+      ) {
+        faultActive = false;
+        faultClearDwellSinceMs = null;
+        logEmergencyFailSafeCleared(log, {
+          air_handler_id: airHandler.id,
+          fault_signal: "duct_temperature_differential",
+          duct_delta_c: null,
+        });
+        await deps.alerting.clearAlert(failSafeAlertKey);
+      } else {
+        faultClearDwellSinceMs = dwellSince;
+      }
     }
   }
 
@@ -787,6 +808,7 @@ export async function runTick(
       callStartedAtMs,
       equipmentFaultActive: true,
       equipmentFaultClearDwellSinceMs: faultClearDwellSinceMs,
+      equipmentFaultTriggerDwellSinceMs: faultTriggerDwellSinceMs,
       ticksSinceDriftCheck: nextTicksSinceDriftCheck,
     });
     const decision = buildFaultDecision(
@@ -1940,6 +1962,7 @@ export async function runTick(
     worstDeviationAtCallStartC,
     equipmentFaultActive: faultActive,
     equipmentFaultClearDwellSinceMs: faultClearDwellSinceMs,
+    equipmentFaultTriggerDwellSinceMs: faultTriggerDwellSinceMs,
     ticksSinceDriftCheck: nextTicksSinceDriftCheck,
   });
 
