@@ -652,7 +652,17 @@ export async function runTick(
         ),
         roomTemperatureC,
         demanding: false,
-        commandedPositionPct: 0,
+        // Step 5 runs before this tick's own position pipeline (Step 9),
+        // so the only real signal available yet is the vent's own last
+        // *reported* position from the previous tick — a reasonable proxy
+        // for "has there been meaningful airflow through this duct
+        // segment recently," which is exactly what usableZones()'s new
+        // minVentOpenPct filter needs. A real, confirmed bug this fixes:
+        // this was hardcoded to 0 for every vent, which — combined with
+        // that filter being newly added — would have made every vent
+        // permanently "too closed to be usable," never what was intended.
+        commandedPositionPct:
+          ventStateNow(z.id, v.flairVentId)?.last_reported_position ?? 0,
       }));
     })
     .filter((z) => Number.isFinite(z.roomTemperatureC));
@@ -664,6 +674,7 @@ export async function runTick(
         gracePeriodMinutes: ctx.settings.equipment_fault_grace_period_minutes,
         ductDeltaThresholdC:
           ctx.settings.equipment_fault_duct_delta_threshold_c,
+        minVentOpenPct: ctx.settings.equipment_fault_min_vent_open_pct,
         zones: ductZones,
       })
     : { faulted: false, reason: "not in a call state", ductDeltasC: [] };
@@ -1297,6 +1308,7 @@ export async function runTick(
     const anomalies = detectDuctAirflowAnomaly({
       state: hvac.state as "COOLING_CALL" | "HEATING_CALL",
       ductDeltaThresholdC: ctx.settings.equipment_fault_duct_delta_threshold_c,
+      minVentOpenPct: ctx.settings.equipment_fault_min_vent_open_pct,
       zones: anomalyZones,
     });
     // Iterate every controllable vent this tick — not just the ones

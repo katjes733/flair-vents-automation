@@ -1074,7 +1074,20 @@ describe("runTick — emergency fail-safe", () => {
         percentOpen: 20,
       },
     ]);
-    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        // A vent's duct reading is only "usable" for the fault check if
+        // it was actually open enough recently — see minVentOpenPct's own
+        // comment. Seeded open here since this test's own intent is "the
+        // vent IS open, but duct temp still doesn't show a differential
+        // — a real fault," not "the vent happens to be closed."
+        state: {
+          vents: [makeVentState("vent-1", { last_reported_position: 100 })],
+        },
+      }),
+    ];
     const persisted = new Map<string, ZoneRuntimeState>();
     const deps = makeDeps(client, persisted, NOW);
     // Pre-seed the runtime store as if the call has already been running
@@ -1124,7 +1137,15 @@ describe("runTick — emergency fail-safe", () => {
         percentOpen: 20,
       },
     ]);
-    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          vents: [makeVentState("vent-1", { last_reported_position: 100 })],
+        },
+      }),
+    ];
     const deps = makeDeps(client, new Map(), NOW);
     await deps.airHandlerRuntimeStore.set("ah-1", {
       trackedDrivingZoneId: null,
@@ -1196,6 +1217,56 @@ describe("runTick — emergency fail-safe", () => {
       lastPushedSetpointC: null,
       lastHvacState: "COOLING_CALL",
       callStartedAtMs: NOW - 30 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(false);
+    expect(decision.narrative).not.toMatch(/Emergency fail-safe/);
+  });
+
+  // Regression test for a real, confirmed live false-positive: a call was
+  // sustained entirely by a manual-vent zone (no duct sensor at all),
+  // while the only smart vent on the handler happened to be
+  // satisfied-and-near-closed at the exact moment the grace period
+  // elapsed — its own duct reading, warmed toward room-ambient by the
+  // lack of real airflow through it, was still counted as "usable,"
+  // tripping a fault with no genuine equipment problem. A near-closed
+  // vent's duct reading must be excluded ("dormant"), the same way a
+  // stale one already is above.
+  it("does not trigger the fail-safe on a near-closed smart vent's own room-warmed duct reading", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 23, // would fail the differential if this near-closed vent were trusted
+        percentOpen: 10,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          vents: [makeVentState("vent-1", { last_reported_position: 10 })],
+        },
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
       worstDeviationAtCallStartC: null,

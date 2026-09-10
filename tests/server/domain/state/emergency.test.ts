@@ -24,6 +24,7 @@ describe("detectEquipmentFault", () => {
     state: "COOLING_CALL" as const,
     gracePeriodMinutes: 10,
     ductDeltaThresholdC: 5.56,
+    minVentOpenPct: 20,
   };
 
   it("never faults within the grace period, even with zero differential everywhere", () => {
@@ -115,6 +116,7 @@ describe("detectEquipmentFault", () => {
       state: "HEATING_CALL",
       gracePeriodMinutes: 10,
       ductDeltaThresholdC: 5.56,
+      minVentOpenPct: 20,
       callDurationMinutes: 15,
       zones: [
         zone({
@@ -130,10 +132,60 @@ describe("detectEquipmentFault", () => {
       { zoneId: "z1", ventId: "v1", deltaC: 1 },
     ]);
   });
+
+  // Regression test for a real, confirmed live false-positive: a call was
+  // sustained entirely by manual-vent zones (no duct sensor at all), while
+  // every smart vent happened to be satisfied-and-mostly-closed at the
+  // same moment the grace period elapsed — leaving no genuinely usable
+  // duct reading, yet the old code still tripped a fault since a
+  // near-closed vent's stale-toward-room-ambient reading was still
+  // counted as "usable." See "Emergency fail-safe" in the plan.
+  it("excludes a near-closed vent from 'usable' — a closed vent's duct reading doesn't mean anything, real incident", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          zoneId: "closed",
+          commandedPositionPct: 0,
+          roomTemperatureC: 22.4,
+          ductTemperatureC: 21.5, // small delta — a near-closed vent's stale, room-adjacent reading
+        }),
+        zone({
+          zoneId: "barely-open",
+          commandedPositionPct: 10,
+          roomTemperatureC: 22.9,
+          ductTemperatureC: 18.6, // real, but not enough — 20% is the configured floor
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(false);
+    expect(result.reason).toMatch(/no usable duct data/);
+  });
+
+  it("still counts a vent open at or above the configured minVentOpenPct as usable", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          commandedPositionPct: 20,
+          roomTemperatureC: 22,
+          ductTemperatureC: 15,
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(false);
+    expect(result.reason).toMatch(/expected duct differential/);
+  });
 });
 
 describe("detectDuctAirflowAnomaly", () => {
-  const base = { state: "COOLING_CALL" as const, ductDeltaThresholdC: 5.56 };
+  const base = {
+    state: "COOLING_CALL" as const,
+    ductDeltaThresholdC: 5.56,
+    minVentOpenPct: 20,
+  };
 
   it("flags a demanding, meaningfully-open zone whose duct fails while a sibling passes", () => {
     const results = detectDuctAirflowAnomaly({
@@ -170,12 +222,32 @@ describe("detectDuctAirflowAnomaly", () => {
           zoneId: "idle",
           ductTemperatureC: 22,
           demanding: false,
-          commandedPositionPct: 0,
+          commandedPositionPct: 30, // open enough to be "usable," but not demanding
         }),
         zone({ zoneId: "passing", ductTemperatureC: 15 }),
       ],
     });
     expect(results.find((r) => r.zoneId === "idle")?.anomalous).toBe(false);
+  });
+
+  // A zone below minVentOpenPct is excluded from "usable" entirely now
+  // (see detectEquipmentFault's own regression test above for why) — it
+  // no longer appears in the results at all, rather than appearing with
+  // anomalous:false.
+  it("excludes a near-closed vent from the result set entirely, rather than reporting it as not-anomalous", () => {
+    const results = detectDuctAirflowAnomaly({
+      ...base,
+      zones: [
+        zone({
+          zoneId: "closed",
+          ductTemperatureC: 22,
+          demanding: false,
+          commandedPositionPct: 0,
+        }),
+        zone({ zoneId: "passing", ductTemperatureC: 15 }),
+      ],
+    });
+    expect(results.find((r) => r.zoneId === "closed")).toBeUndefined();
   });
 });
 
