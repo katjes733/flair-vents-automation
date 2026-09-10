@@ -21,6 +21,16 @@ vi.mock("~/client/api/syncApi", () => ({
 const { triggerTick } = vi.hoisted(() => ({ triggerTick: vi.fn() }));
 vi.mock("~/client/api/controlApi", () => ({ triggerTick }));
 
+// SyncZonesDialog fetches HomeKit pairing status on open to gate its own
+// "Match HomeKit Sensors" call to action — see "Ecobee SmartSensor
+// Reading via HomeKit". Mocked here so every test in this file stays
+// deterministic and network-free, matching this file's own established
+// convention for every other API module the component under test calls.
+const { fetchHomeKitStatus } = vi.hoisted(() => ({
+  fetchHomeKitStatus: vi.fn(),
+}));
+vi.mock("~/client/api/homekitApi", () => ({ fetchHomeKitStatus }));
+
 const { default: SyncZonesDialog } =
   await import("~/client/components/dashboard/SyncZonesDialog");
 
@@ -37,6 +47,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
     config: {
       has_temperature_sensor: true,
       has_occupancy_sensor: false,
+      homekit_sensor_serial: null,
       thermal_load_flags: [],
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
@@ -70,6 +81,7 @@ function renderDialog(zones: Zone[] = [], onSynced = vi.fn()) {
         <SyncZonesDialog
           open
           airHandlerId="ah-1"
+          airHandlerName="Upstairs"
           zones={zones}
           onClose={vi.fn()}
           onSynced={onSynced}
@@ -85,6 +97,7 @@ describe("SyncZonesDialog", () => {
     linkRoomToZone.mockReset().mockResolvedValue({});
     createZoneFromRoom.mockReset().mockResolvedValue({});
     triggerTick.mockReset().mockResolvedValue(undefined);
+    fetchHomeKitStatus.mockReset().mockResolvedValue({ paired: false });
   });
 
   it("shows the applied summary and 'no unmatched rooms' when everything is linked", async () => {

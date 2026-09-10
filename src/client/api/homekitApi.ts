@@ -14,6 +14,35 @@ export interface DiscoveredAccessory {
   accessoryId: string;
 }
 
+// Mirrors sync.ts's own SyncDiffEntry discriminated-union shape (see
+// syncApi.ts) — "Ecobee SmartSensor Reading via HomeKit".
+export type SensorMatchEntry =
+  | {
+      kind: "already_mapped";
+      serial: string;
+      name: string;
+      tempC: number | null;
+      occupied: boolean | null;
+      zoneId: string;
+      zoneName: string;
+    }
+  | {
+      kind: "unmapped_suggested";
+      serial: string;
+      name: string;
+      tempC: number | null;
+      occupied: boolean | null;
+      suggestedZoneId: string;
+      suggestedZoneName: string;
+    }
+  | {
+      kind: "unmapped_new";
+      serial: string;
+      name: string;
+      tempC: number | null;
+      occupied: boolean | null;
+    };
+
 export async function fetchHomeKitStatus(
   airHandlerId: string,
 ): Promise<HomeKitStatus> {
@@ -47,4 +76,13 @@ export async function unpairHomeKitAccessory(
   airHandlerId: string,
 ): Promise<void> {
   await httpClient.post(`/air-handlers/${airHandlerId}/homekit/unpair`);
+}
+
+export async function fetchHomeKitSensorMatches(
+  airHandlerId: string,
+): Promise<SensorMatchEntry[]> {
+  const { data } = await httpClient.get<{ matches: SensorMatchEntry[] }>(
+    `/air-handlers/${airHandlerId}/homekit/sensor-matches`,
+  );
+  return data.matches;
 }

@@ -105,6 +105,79 @@ describe("ingestZoneRoomReading", () => {
     });
     expect(withoutSensor.occupiedRaw).toBeNull();
   });
+
+  // "Ecobee SmartSensor Reading via HomeKit" — a mapped, reachable
+  // SmartSensor reading is preferred over Flair's own relayed room
+  // reading, per field, falling back to Flair for whichever field the
+  // HomeKit reading doesn't have.
+  describe("HomeKit-sourced reading preference", () => {
+    it("defaults to Flair when no homeKitReading is supplied at all", () => {
+      const result = ingestZoneRoomReading({
+        zoneId: "z1",
+        room: room({ currentTemperatureC: 21 }),
+        occupancyReading: occupancyReading({ occupied: false }),
+        calibrationOffsetC: asTempDelta(0),
+      });
+      expect(result.source).toBe("flair");
+      expect(result.calibratedTemp).toBeCloseTo(21, 5);
+      expect(result.occupiedRaw).toBe(false);
+    });
+
+    it("prefers a HomeKit temperature/occupancy reading over Flair's own, calibrating it the same way", () => {
+      const result = ingestZoneRoomReading({
+        zoneId: "z1",
+        room: room({ currentTemperatureC: 21 }),
+        occupancyReading: occupancyReading({ occupied: false }),
+        calibrationOffsetC: asTempDelta(1),
+        homeKitReading: {
+          serial: "Y3H2",
+          tempC: 23,
+          occupied: true,
+          motion: true,
+        },
+      });
+      expect(result.source).toBe("homekit");
+      expect(result.calibratedTemp).toBeCloseTo(24, 5);
+      expect(result.occupiedRaw).toBe(true);
+      expect(result.diagnostics.rawTemp).toBe(23);
+      expect(result.diagnostics.sensorValues).toEqual({
+        room: 21,
+        homekit: 23,
+      });
+    });
+
+    it("falls back to Flair per-field when the HomeKit reading is missing just one field", () => {
+      const result = ingestZoneRoomReading({
+        zoneId: "z1",
+        room: room({ currentTemperatureC: 21 }),
+        occupancyReading: occupancyReading({ occupied: true }),
+        calibrationOffsetC: asTempDelta(0),
+        homeKitReading: {
+          serial: "Y3H2",
+          tempC: 23,
+          occupied: null,
+          motion: null,
+        },
+      });
+      expect(result.source).toBe("homekit");
+      expect(result.calibratedTemp).toBeCloseTo(23, 5);
+      // occupied fell back to Flair since the HomeKit reading had none.
+      expect(result.occupiedRaw).toBe(true);
+    });
+
+    it("falls back to Flair entirely when homeKitReading is explicitly null (unmapped or unreachable)", () => {
+      const result = ingestZoneRoomReading({
+        zoneId: "z1",
+        room: room({ currentTemperatureC: 21 }),
+        occupancyReading: occupancyReading({ occupied: true }),
+        calibrationOffsetC: asTempDelta(0),
+        homeKitReading: null,
+      });
+      expect(result.source).toBe("flair");
+      expect(result.calibratedTemp).toBeCloseTo(21, 5);
+      expect(result.occupiedRaw).toBe(true);
+    });
+  });
 });
 
 describe("ingestZoneVentReading", () => {

@@ -69,6 +69,11 @@ function makeZone(params: {
   // every existing call site follows it, so this keeps the diff for
   // adding flair_vents minimal. Pass explicitly for a multi-vent zone.
   flairVentIds?: string[];
+  // "Ecobee SmartSensor Reading via HomeKit" — the Serial Number this
+  // zone reads its live sensor data from when its air handler is on
+  // setpoint_delivery_mode "homekit". Left unset (null) by every existing
+  // call site — zero behavior change for tests that never touch this.
+  homekitSensorSerial?: string;
   state?: Partial<ZoneRuntimeState>;
 }): ZoneData {
   return {
@@ -84,6 +89,9 @@ function makeZone(params: {
       flair_vents: (
         params.flairVentIds ?? [params.flairRoomId.replace("room", "vent")]
       ).map((flair_vent_id) => ({ flair_vent_id })),
+      ...(params.homekitSensorSerial
+        ? { homekit_sensor_serial: params.homekitSensorSerial }
+        : {}),
     }),
     state: { ...EMPTY_ZONE_RUNTIME_STATE, ...params.state },
   };
@@ -3411,6 +3419,148 @@ describe("runTick — HomeKit setpoint delivery", () => {
       expect(decision.hvac_state).toBe("FAN_ONLY");
       expect(decision.hvac_state_source).toBe("flair");
       expect(getHomeKitClient).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Ecobee SmartSensor reading via HomeKit", () => {
+    it("prefers a mapped, reachable SmartSensor's own reading over Flair's own relayed room reading", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 20, // Flair's own (slower-to-catch-up) relayed value
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setSensorReading("Y3H2", {
+        tempC: 25,
+        occupied: true,
+      });
+      const zones = [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          homekitSensorSerial: "Y3H2",
+        }),
+      ];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      // The debounced `occupied` field's own timing is covered by "runTick
+      // — live occupancy sensing"; occupiedRaw's HomeKit-preferred sourcing
+      // itself is covered directly at the ingestZoneRoomReading unit level.
+      expect(decision.zones[0].temp_calibrated).toBeCloseTo(25, 5);
+    });
+
+    it("falls back to Flair for a zone with no homekit_sensor_serial mapped, even on a handler in HomeKit delivery mode", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 20,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setSensorReading("some-other-zones-serial", {
+        tempC: 25,
+        occupied: true,
+      });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })]; // no mapping
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.zones[0].temp_calibrated).toBeCloseTo(20, 5);
+    });
+
+    it("falls back to Flair when the mapped serial isn't found in this tick's live HomeKit sensor reading", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 20,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient(); // no sensor readings seeded at all
+      const zones = [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          homekitSensorSerial: "Y3H2",
+        }),
+      ];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      expect(decision.zones[0].temp_calibrated).toBeCloseTo(20, 5);
+    });
+
+    it("falls back to Flair for every zone when the HomeKit sensor-readings fetch itself fails", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 20,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setSensorReading("Y3H2", { tempC: 25, occupied: true });
+      homeKitClient.getSensorReadings = async () => {
+        throw new Error("simulated getAccessories failure");
+      };
+      const zones = [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          homekitSensorSerial: "Y3H2",
+        }),
+      ];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+
+      const decision = await runTick(
+        airHandler,
+        zones,
+        makeCtx(),
+        makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+      );
+
+      // getCurrentState() (used for HVAC state/setpoint delivery) is
+      // unaffected — only the separate sensor-readings fetch failed.
+      expect(decision.hvac_state_source).toBe("homekit");
+      expect(decision.zones[0].temp_calibrated).toBeCloseTo(20, 5);
     });
   });
 });

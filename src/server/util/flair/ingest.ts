@@ -10,6 +10,7 @@ import type {
   FlairVentReading,
   FlairRemoteSensorReading,
 } from "~/server/util/flair/client";
+import type { HomeKitSensorReading } from "~/server/util/homekit/client";
 
 // The type boundary that makes "every downstream consumer uses the
 // calibrated value" a compile-time property: no domain function signature
@@ -34,11 +35,21 @@ export interface ZoneRoomReading {
   // confirmed `false`.
   occupiedRaw: boolean | null;
   occupancyReadingCreatedAt: string | null;
+  // Which source this tick's calibratedTemp/occupiedRaw actually came
+  // from — "homekit" only once a real HomeKit-sourced value was used for
+  // at least one of the two fields; "flair" otherwise (including every
+  // zone with no homekit_sensor_serial mapped at all, the overwhelming
+  // majority today). See "Ecobee SmartSensor Reading via HomeKit."
+  source: "flair" | "homekit";
   diagnostics: {
     rawTemp: number | null;
     // Multi-sensor selection is dormant code today (one sensor per room in
     // this house) — see "Sensor-selection is a control input" in the
     // plan's Phase 0 section. Retained for the disagreement panel only.
+    // A "homekit" key is present only when a mapped SmartSensor's own
+    // reading was actually available this tick, regardless of which
+    // source ultimately won — so a disagreement is visible even on a
+    // tick where Flair's value happened to be used.
     sensorValues: Record<string, number>;
   };
 }
@@ -65,14 +76,29 @@ export interface ZoneVentReading {
  * function. `room`/`occupancyReading` are independently nullable (a brand
  * new room may have no reading yet; a room with no SmartSensor has no
  * occupancy reading at all).
+ *
+ * `homeKitReading`, when supplied (a zone with `config.homekit_sensor_serial`
+ * set, on an air handler with `setpoint_delivery_mode === "homekit"`, and
+ * that serial actually found in this tick's live HomeKit read), is
+ * preferred over Flair's own relayed room reading — the same "prefer
+ * HomeKit, fall back to Flair on any read failure or missing mapping"
+ * shape already proven for HVAC state and setpoint delivery. Preference
+ * is per-field, not all-or-nothing: a HomeKit reading missing just one of
+ * temperature/occupancy still falls back to Flair for that one field
+ * alone, rather than discarding the whole reading.
  */
 export function ingestZoneRoomReading(params: {
   zoneId: string;
   room: FlairRoom | null;
   occupancyReading: FlairRemoteSensorReading | null;
   calibrationOffsetC: TempDelta;
+  homeKitReading?: HomeKitSensorReading | null;
 }): ZoneRoomReading {
-  const rawTemp = params.room?.currentTemperatureC ?? null;
+  const homeKitReading = params.homeKitReading ?? null;
+  const flairRawTemp = params.room?.currentTemperatureC ?? null;
+  const rawTemp = homeKitReading?.tempC ?? flairRawTemp;
+  const source: "flair" | "homekit" =
+    homeKitReading?.tempC != null ? "homekit" : "flair";
   const calibratedTemp =
     rawTemp !== null
       ? applyCalibration(asAbsoluteTemp(rawTemp), params.calibrationOffsetC)
@@ -81,11 +107,18 @@ export function ingestZoneRoomReading(params: {
   return {
     zoneId: params.zoneId,
     calibratedTemp,
-    occupiedRaw: params.occupancyReading?.occupied ?? null,
+    source,
+    occupiedRaw:
+      homeKitReading?.occupied ?? params.occupancyReading?.occupied ?? null,
     occupancyReadingCreatedAt: params.occupancyReading?.createdAt ?? null,
     diagnostics: {
       rawTemp,
-      sensorValues: rawTemp !== null ? { room: rawTemp } : {},
+      sensorValues: {
+        ...(flairRawTemp !== null ? { room: flairRawTemp } : {}),
+        ...(homeKitReading?.tempC != null
+          ? { homekit: homeKitReading.tempC }
+          : {}),
+      },
     },
   };
 }

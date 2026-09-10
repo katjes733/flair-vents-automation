@@ -27,10 +27,13 @@ import { triggerTick } from "~/client/api/controlApi";
 import type { Zone } from "~/client/api/zonesApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
+import { fetchHomeKitStatus } from "~/client/api/homekitApi";
+import HomeKitSensorMatchDialog from "~/client/components/dashboard/HomeKitSensorMatchDialog";
 
 interface SyncZonesDialogProps {
   open: boolean;
   airHandlerId: string;
+  airHandlerName: string;
   // Only this air handler's zones — matches how the server itself scopes
   // both the existing-zone lookup and the name-suggestion match. See
   // "Flair Sync Engine".
@@ -74,6 +77,7 @@ function summarizeApplied(applied: SyncDiffEntry[]): string {
 export default function SyncZonesDialog({
   open,
   airHandlerId,
+  airHandlerName,
   zones,
   onClose,
   onSynced,
@@ -82,6 +86,13 @@ export default function SyncZonesDialog({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SyncRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Whether this air handler has a HomeKit pairing at all — independent
+  // of setpoint_delivery_mode, since matching sensors is harmless (and
+  // sometimes worth doing in advance) even before a handler is switched
+  // over to HomeKit delivery. Gates the "Match HomeKit Sensors" call to
+  // action below — see "Ecobee SmartSensor Reading via HomeKit."
+  const [homeKitPaired, setHomeKitPaired] = useState(false);
+  const [sensorMatchDialogOpen, setSensorMatchDialogOpen] = useState(false);
   const [linkTargetByRoomId, setLinkTargetByRoomId] = useState<
     Record<string, string>
   >({});
@@ -133,8 +144,11 @@ export default function SyncZonesDialog({
     if (open) {
       setResult(null);
       runTheSync();
+      fetchHomeKitStatus(airHandlerId)
+        .then((status) => setHomeKitPaired(status.paired))
+        .catch(() => setHomeKitPaired(false));
     }
-  }, [open, runTheSync]);
+  }, [open, airHandlerId, runTheSync]);
 
   // Forces one immediate control-loop tick before refreshing — without
   // this, a just-imported zone shows no reading/classification until the
@@ -307,219 +321,246 @@ export default function SyncZonesDialog({
   ]);
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Sync with Flair</DialogTitle>
-      <DialogContent>
-        {loading && (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-            <CircularProgress />
-          </Box>
-        )}
-        {error && <DialogContentText color="error">{error}</DialogContentText>}
-        {result && !loading && (
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              {summarizeApplied(result.applied)}
-            </Typography>
-
-            {result.unmatched.length === 0 ? (
-              <Typography variant="body2">
-                No unmatched rooms — every Flair room on this air handler is
-                linked.
+    <>
+      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+        <DialogTitle>Sync with Flair</DialogTitle>
+        <DialogContent>
+          {loading && (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          {error && (
+            <DialogContentText color="error">{error}</DialogContentText>
+          )}
+          {result && !loading && (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                {summarizeApplied(result.applied)}
               </Typography>
-            ) : (
-              <>
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={
-                          selectedRoomIds.size === result.unmatched.length
-                        }
-                        indeterminate={
-                          selectedRoomIds.size > 0 &&
-                          selectedRoomIds.size < result.unmatched.length
-                        }
-                        onChange={toggleSelectAll}
-                        disabled={bulkImporting}
-                      />
-                    }
-                    label={`${selectedRoomIds.size} of ${result.unmatched.length} selected`}
-                  />
+
+              {homeKitPaired && (
+                <Box>
                   <Button
                     size="small"
-                    variant="contained"
-                    disabled={
-                      bulkImporting ||
-                      selectedRoomIds.size === 0 ||
-                      result.unmatched.some(
-                        (e) =>
-                          selectedRoomIds.has(e.flairRoomId) &&
-                          !fixedPositionValid(e),
-                      )
-                    }
-                    onClick={handleImportSelected}
+                    variant="outlined"
+                    onClick={() => setSensorMatchDialogOpen(true)}
                   >
-                    {bulkImporting
-                      ? "Importing…"
-                      : `Import selected (${selectedRoomIds.size})`}
+                    Match HomeKit Sensors
                   </Button>
                 </Box>
-                {result.unmatched.map((entry) => (
-                  <Paper
-                    key={entry.flairRoomId}
-                    variant="outlined"
-                    sx={{ p: 2 }}
+              )}
+
+              {result.unmatched.length === 0 ? (
+                <Typography variant="body2">
+                  No unmatched rooms — every Flair room on this air handler is
+                  linked.
+                </Typography>
+              ) : (
+                <>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
                   >
-                    <Stack spacing={1.5}>
-                      <Box
-                        sx={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                        }}
-                      >
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={selectedRoomIds.has(entry.flairRoomId)}
-                              onChange={() =>
-                                toggleRoomSelected(entry.flairRoomId)
-                              }
-                              disabled={bulkImporting}
-                              size="small"
-                            />
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={
+                            selectedRoomIds.size === result.unmatched.length
                           }
-                          label={
-                            <Typography variant="subtitle2">
-                              {entry.name}
-                            </Typography>
+                          indeterminate={
+                            selectedRoomIds.size > 0 &&
+                            selectedRoomIds.size < result.unmatched.length
                           }
+                          onChange={toggleSelectAll}
+                          disabled={bulkImporting}
                         />
-                        {entry.kind === "unmatched_suggested" && (
-                          <Chip
+                      }
+                      label={`${selectedRoomIds.size} of ${result.unmatched.length} selected`}
+                    />
+                    <Button
+                      size="small"
+                      variant="contained"
+                      disabled={
+                        bulkImporting ||
+                        selectedRoomIds.size === 0 ||
+                        result.unmatched.some(
+                          (e) =>
+                            selectedRoomIds.has(e.flairRoomId) &&
+                            !fixedPositionValid(e),
+                        )
+                      }
+                      onClick={handleImportSelected}
+                    >
+                      {bulkImporting
+                        ? "Importing…"
+                        : `Import selected (${selectedRoomIds.size})`}
+                    </Button>
+                  </Box>
+                  {result.unmatched.map((entry) => (
+                    <Paper
+                      key={entry.flairRoomId}
+                      variant="outlined"
+                      sx={{ p: 2 }}
+                    >
+                      <Stack spacing={1.5}>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={selectedRoomIds.has(entry.flairRoomId)}
+                                onChange={() =>
+                                  toggleRoomSelected(entry.flairRoomId)
+                                }
+                                disabled={bulkImporting}
+                                size="small"
+                              />
+                            }
+                            label={
+                              <Typography variant="subtitle2">
+                                {entry.name}
+                              </Typography>
+                            }
+                          />
+                          {entry.kind === "unmatched_suggested" && (
+                            <Chip
+                              size="small"
+                              color="info"
+                              label="Suggested match found"
+                            />
+                          )}
+                        </Box>
+                        <Typography variant="caption" color="text.secondary">
+                          {entry.liveVentIds.length} vent(s) ·{" "}
+                          {entry.hasTemperatureSensor
+                            ? "has temperature sensor"
+                            : "no temperature sensor"}{" "}
+                          ·{" "}
+                          {entry.hasOccupancySensor
+                            ? "has occupancy sensor"
+                            : "no occupancy sensor"}
+                        </Typography>
+
+                        {needsFixedPosition(entry) && (
+                          <TextField
                             size="small"
-                            color="info"
-                            label="Suggested match found"
+                            type="number"
+                            label="Fixed position (0–100%)"
+                            value={
+                              fixedPositionByRoomId[entry.flairRoomId] ?? ""
+                            }
+                            onChange={(e) =>
+                              setFixedPositionByRoomId((prev) => ({
+                                ...prev,
+                                [entry.flairRoomId]: e.target.value,
+                              }))
+                            }
+                            helperText="No Flair-controlled vent reported — treated as a manual vent, which needs its position set here."
+                            sx={{ maxWidth: 240 }}
                           />
                         )}
-                      </Box>
-                      <Typography variant="caption" color="text.secondary">
-                        {entry.liveVentIds.length} vent(s) ·{" "}
-                        {entry.hasTemperatureSensor
-                          ? "has temperature sensor"
-                          : "no temperature sensor"}{" "}
-                        ·{" "}
-                        {entry.hasOccupancySensor
-                          ? "has occupancy sensor"
-                          : "no occupancy sensor"}
-                      </Typography>
 
-                      {needsFixedPosition(entry) && (
-                        <TextField
-                          size="small"
-                          type="number"
-                          label="Fixed position (0–100%)"
-                          value={fixedPositionByRoomId[entry.flairRoomId] ?? ""}
-                          onChange={(e) =>
-                            setFixedPositionByRoomId((prev) => ({
-                              ...prev,
-                              [entry.flairRoomId]: e.target.value,
-                            }))
-                          }
-                          helperText="No Flair-controlled vent reported — treated as a manual vent, which needs its position set here."
-                          sx={{ maxWidth: 240 }}
-                        />
-                      )}
-
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <TextField
-                          select
-                          size="small"
-                          label="Link to zone"
-                          value={
-                            linkTargetByRoomId[entry.flairRoomId] ??
-                            (entry.kind === "unmatched_suggested"
-                              ? entry.suggestedZoneId
-                              : "")
-                          }
-                          onChange={(e) =>
-                            setLinkTargetByRoomId((prev) => ({
-                              ...prev,
-                              [entry.flairRoomId]: e.target.value,
-                            }))
-                          }
-                          sx={{ minWidth: 180 }}
-                        >
-                          {unlinkedZones.map((z) => (
-                            <MenuItem key={z.id} value={z.id}>
-                              {z.name}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                        <Button
-                          size="small"
-                          disabled={
-                            bulkImporting ||
-                            busyRoomId === entry.flairRoomId ||
-                            unlinkedZones.length === 0 ||
-                            !(
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <TextField
+                            select
+                            size="small"
+                            label="Link to zone"
+                            value={
                               linkTargetByRoomId[entry.flairRoomId] ??
                               (entry.kind === "unmatched_suggested"
                                 ? entry.suggestedZoneId
                                 : "")
-                            ) ||
-                            !fixedPositionValid(entry)
-                          }
-                          onClick={() => handleLink(entry)}
-                        >
-                          Link
-                        </Button>
-                      </Stack>
+                            }
+                            onChange={(e) =>
+                              setLinkTargetByRoomId((prev) => ({
+                                ...prev,
+                                [entry.flairRoomId]: e.target.value,
+                              }))
+                            }
+                            sx={{ minWidth: 180 }}
+                          >
+                            {unlinkedZones.map((z) => (
+                              <MenuItem key={z.id} value={z.id}>
+                                {z.name}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                          <Button
+                            size="small"
+                            disabled={
+                              bulkImporting ||
+                              busyRoomId === entry.flairRoomId ||
+                              unlinkedZones.length === 0 ||
+                              !(
+                                linkTargetByRoomId[entry.flairRoomId] ??
+                                (entry.kind === "unmatched_suggested"
+                                  ? entry.suggestedZoneId
+                                  : "")
+                              ) ||
+                              !fixedPositionValid(entry)
+                            }
+                            onClick={() => handleLink(entry)}
+                          >
+                            Link
+                          </Button>
+                        </Stack>
 
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <TextField
-                          size="small"
-                          label="New zone name"
-                          value={nameByRoomId[entry.flairRoomId] ?? entry.name}
-                          onChange={(e) =>
-                            setNameByRoomId((prev) => ({
-                              ...prev,
-                              [entry.flairRoomId]: e.target.value,
-                            }))
-                          }
-                          sx={{ minWidth: 180 }}
-                        />
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={
-                            bulkImporting ||
-                            busyRoomId === entry.flairRoomId ||
-                            !fixedPositionValid(entry)
-                          }
-                          onClick={() => handleCreate(entry)}
-                        >
-                          Import as new zone
-                        </Button>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <TextField
+                            size="small"
+                            label="New zone name"
+                            value={
+                              nameByRoomId[entry.flairRoomId] ?? entry.name
+                            }
+                            onChange={(e) =>
+                              setNameByRoomId((prev) => ({
+                                ...prev,
+                                [entry.flairRoomId]: e.target.value,
+                              }))
+                            }
+                            sx={{ minWidth: 180 }}
+                          />
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={
+                              bulkImporting ||
+                              busyRoomId === entry.flairRoomId ||
+                              !fixedPositionValid(entry)
+                            }
+                            onClick={() => handleCreate(entry)}
+                          >
+                            Import as new zone
+                          </Button>
+                        </Stack>
                       </Stack>
-                    </Stack>
-                  </Paper>
-                ))}
-              </>
-            )}
-          </Stack>
-        )}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-      </DialogActions>
-    </Dialog>
+                    </Paper>
+                  ))}
+                </>
+              )}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <HomeKitSensorMatchDialog
+        open={sensorMatchDialogOpen}
+        airHandlerId={airHandlerId}
+        airHandlerName={airHandlerName}
+        onClose={() => setSensorMatchDialogOpen(false)}
+      />
+    </>
   );
 }

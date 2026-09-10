@@ -13,6 +13,14 @@
   - [Assessment](#assessment)
   - [Live prototype results (post-research, real hardware)](#live-prototype-results-post-research-real-hardware)
   - [6. Real-time HVAC/fan state via HomeKit — a local alternative to Flair's `operating-state`](#6-real-time-hvacfan-state-via-homekit--a-local-alternative-to-flairs-operating-state)
+  - [7. Reading Ecobee SmartSensor temperature/occupancy directly via HomeKit](#7-reading-ecobee-smartsensor-temperatureoccupancy-directly-via-homekit)
+    - [Live proof the lag is Flair's relay, not the sensor or HomeKit path](#live-proof-the-lag-is-flairs-relay-not-the-sensor-or-homekit-path)
+    - [What each SmartSensor actually exposes](#what-each-smartsensor-actually-exposes)
+    - [Open question 1 — reliably mapping a zone to the right accessory](#open-question-1--reliably-mapping-a-zone-to-the-right-accessory)
+    - [Open question 2 — is `aid` safe to persist as the mapping key?](#open-question-2--is-aid-safe-to-persist-as-the-mapping-key)
+    - [Proposed design](#proposed-design)
+    - [Explicitly deferred / out of scope for this design](#explicitly-deferred--out-of-scope-for-this-design)
+    - [Verification plan, once this is built](#verification-plan-once-this-is-built)
 
 ## How this was gathered
 
@@ -218,3 +226,87 @@ This reuses the exact same `HvacState` union every downstream consumer (`tick.ts
 **What's not yet confirmed, stated plainly rather than assumed away**: this check happened during a genuine, uncontested `IDLE` moment — `CurrentFanState=2` (Blowing Air) has not yet been directly observed and captured live against this exact unit, only inferred from HAP-NodeJS's own enum definition. The next real standalone-fan window (Ecobee's own equipment log is the independent ground truth to watch for one) is the concrete moment to re-run this same read-only check and confirm `CurrentFanState` actually flips to `2` in practice on this specific firmware, before this mapping is trusted as the sole source for a live air handler. Also unconfirmed: whether these two characteristics' `ev` (notify) capability could drive a push-based update instead of this app's existing per-tick poll — not needed for this app's own 60-second cadence either way, so not pursued now, but worth noting the capability exists.
 
 **Scope of this check**: read-only (`getCharacteristics`/`getAccessories`), no write performed, no risk to the live system — reused the pairing exactly as `HomeKitCurrentState` reads already do every tick.
+
+## 7. Reading Ecobee SmartSensor temperature/occupancy directly via HomeKit
+
+**Motivation, a real observation, not a hypothetical.** The household reported a persistent "feel" of significant delay in this app's sensor data, without being sure whether that's inherent to how Ecobee SmartSensors report, how Flair polls Ecobee's cloud, or something in between. Given §6 already found one real, confirmed instance of Flair's relay going stale for over an hour (a different field — `operating-state`), the same question was worth asking about temperature/occupancy specifically: is Flair's relay *also* the bottleneck for sensor data, or is that field actually fine and the perceived lag lives elsewhere?
+
+### Live proof the lag is Flair's relay, not the sensor or HomeKit path
+
+A direct, deliberate before/after test, not just a resting-state comparison: the household walked into Martin Bedroom (previously empty in both sources) and a live read was taken from both sources within the same ~20 seconds.
+
+| Source | Time (UTC) | Occupied | Motion | Temp |
+|---|---|---|---|---|
+| HomeKit (local, this pairing) | 22:08:39 | **1 (yes)** | **1 (yes)** | 23.0°C |
+| Flair (cloud-relayed) | 22:08:21 | **false (still empty)** | *(Flair exposes no motion field at all)* | 22.94°C |
+
+HomeKit already reflected the real-world change; Flair, at essentially the same moment, still reported the room empty. This is the same shape of problem §6 already confirmed for `operating-state` — Flair's own relay lagging behind a HomeKit path that's already near-real-time — now shown for occupancy too. A resting-state comparison taken moments earlier (both sources idle, nobody moving) showed the two agreeing within ~0.1–0.3°C and matching occupancy — consistent with Flair's lag being specifically about catching up to *changes*, not a constant offset on stable readings.
+
+### What each SmartSensor actually exposes
+
+Confirmed directly against the real pairing (`getAccessories()`, reusing the exact stored pairing §6 and the earlier setpoint-delivery work already use — no new pairing, no extra cost). Each paired Ecobee SmartSensor is its own HAP accessory under the same bridge/pairing as the thermostat itself (`aid=1`), not folded into it:
+
+| Accessory (`aid`) | Name | Serial (`00000030`) | Model (`00000021`) |
+|---|---|---|---|
+| 4297709749 | Martin Office | `Y3H2` | `EBERS41` |
+| 4297709230 | Martin Bedroom | `Y22S` | `EBERS41` |
+| 4297963767 | Luke Bedroom | `8SK4` | `EBERS41` |
+| 4297556809 | Extra Den | `TB7M` | `EBERS41` |
+
+**The Name doesn't always cleanly match Flair's own room name** — worth flagging directly, since it broke a naive assumption during this same investigation: "Extra Den" doesn't literally match either "Den Front" or "Den back" (Flair's own room names). It was identified as almost certainly = Flair's "Den back" only by cross-referencing temperature/occupancy values against the Flair-relayed reading for the same moment (both ~23.4–23.7°C, both occupied, while "Den Front" read ~22.9°C and unoccupied at the same time) — a real, working example of the exact ambiguity the design below has to solve for.
+
+Each accessory carries, confirmed with real live values:
+
+| Service | Characteristic | Confirmed value (Martin Office, resting) | Confirmed value (Martin Bedroom, moments after someone walked in) |
+|---|---|---|---|
+| `TemperatureSensor` (`0000008A`) | `CurrentTemperature` (`00000011`) | 22.3°C | 23.0°C |
+| `OccupancySensor` (`00000086`) | `OccupancyDetected` (`00000071`) | `1` | `1` |
+| `OccupancySensor` | vendor `A8F798E0-4A40-11E6-BDF4-0800200C9A66` | `631` (int) | `57` (int) |
+| `MotionSensor` (`00000085`) | `MotionDetected` (`00000022`) | `1` | `1` |
+| `MotionSensor` | vendor `BFE61C70-4A40-11E6-BDF4-0800200C9A66` | `167` (int) | `34` (int) |
+| `Battery` (`00000096`) | `BatteryLevel` (`00000068`) | `100` | `100` |
+
+**The two vendor characteristics — confirmed empirically live, not from any public spec.** Both UUIDs were searched for directly (public HAP-NodeJS/HAP-spec characteristic registries, the Elgato Eve custom-characteristic gist community projects commonly cross-reference, general web search) and **not found documented anywhere public** — marked "not found" rather than guessed, per this doc's own established convention. What *is* confirmed, directly, from this app's own real before/after read above: both values dropped sharply (631→57 on the Occupancy service's vendor characteristic, 167→34 on the Motion service's) at almost exactly the moment a real occupancy/motion transition was deliberately triggered. That behavior is consistent with each being a **"seconds since this service's own state last changed"** counter — a real, useful freshness/staleness signal straight from the device — but the exact semantic name and guarantees are Ecobee's own undocumented (publicly) extension, so this is treated as **probable, confirmed by direct observation, not by any written spec**.
+
+### Open question 1 — reliably mapping a zone to the right accessory
+
+The "Extra Den" mismatch above isn't a one-off curiosity — it's proof that **matching by accessory Name alone is not safe** as the sole mechanism, the same lesson the Flair Sync Engine already learned the hard way for room-name matching (see "Flair Sync Engine" in the implementation plan — name-based suggestion there is explicitly a *suggestion* requiring human confirmation, never an auto-apply). The same shape of solution applies here directly.
+
+### Open question 2 — is `aid` safe to persist as the mapping key?
+
+Researched directly rather than assumed, since this determines whether a cached mapping can be trusted long-term or must be re-verified. No public, authoritative confirmation of HAP's own guarantee was found (Apple's HAP spec itself isn't publicly hosted, per this doc's own "How this was gathered" note). The closest real, credible evidence: Home Assistant's own `homekit_controller` integration — a serious, widely-deployed third-party HAP client — directly grappling with this exact question in a real, merged PR ([home-assistant/core#58498](https://github.com/home-assistant/core/pull/58498)): its own author states plainly that **"the pairing identifier is the only thing that can be guaranteed to be stable within the lifetime of a pairing,"** and proposes composing a persistent device identity from `{pairing_unique_id}_{aid}` specifically because `aid` alone (and a device's Serial Number alone) can't be trusted as globally stable in every real-world case they'd already hit.
+
+**Design consequence**: don't persist a raw `aid` as the long-term mapping key. This app already has the exact right precedent for this shape of problem — `HapControllerClient`'s own `last_known_address`/`last_known_port` are explicitly documented as "opportunistic cache only, re-verified via mDNS on every connection attempt... never assumed static," and `resolveThermostatCharacteristics()` never hardcodes an `iid`, it re-resolves fresh from the live accessory database every connect. The same philosophy extends cleanly here: cache `aid` as a fast-path hint, but always be willing to re-scan the accessory database and re-match by the accessory's own **Serial Number** (a real, distinct-per-device, hardware-tied identifier — confirmed above, `Y3H2`/`Y22S`/`8SK4`/`TB7M`) if a cached `aid` stops resolving to a sensor service, rather than trusting a stale `aid` forever.
+
+### Proposed design
+
+**Room/sensor assignment stays in Flair, per explicit direction** — this design adds a *parallel, additive* mapping, never a replacement for Flair's own Sync Engine. Flair remains the sole source of truth for which physical sensor/vent belongs to which room; this only decides *which local HomeKit accessory to read from*, for a zone Flair has already told this app about.
+
+1. **Data model** — one new optional field on `zones.config`, matching this app's own established JSONB-optional-field convention (mirrors `homekit_pairings`' own per-air-handler shape, but this is genuinely per-*zone*, since sensors map 1:1 to rooms, not to the air handler as a whole):
+   ```ts
+   homekit_sensor_serial: z.string().nullable().default(null),
+   ```
+   Null by default — a zone with no confirmed match keeps reading from Flair exactly as today, no behavior change.
+
+2. **A one-time, human-confirmed matching step — never fully automatic.** Mirrors the Sync Engine's own `unmatched_suggested` UX exactly (a proven pattern already in this app, not a new one to invent): a new small dialog (reusing the existing `HomeKitPairingDialog`'s shape, or a new sibling) lists every SmartSensor accessory found under the air handler's existing pairing (Name, Serial, live temperature — enough for a human to recognize their own room), auto-suggests a match by Name similarity the same way `SyncZonesDialog` already does for Flair rooms, but always requires an explicit confirm click before writing `homekit_sensor_serial` — specifically because "Extra Den" already proved a same-session, real false-confidence case for name-only matching.
+
+3. **`HomeKitClient` interface extension** — a new method, e.g. `getSensorReadings(): Promise<Map<string, SensorReading>>` keyed by **Serial Number**, resolved fresh from `getAccessories()` each call (or cached with the same re-resolve-on-miss discipline `resolveThermostatCharacteristics()` already uses), returning `{ tempC, occupied, motion, batteryPct, secondsSinceOccupancyChange, secondsSinceMotionChange }` per serial found. One extra `getAccessories()`-shaped call, not a second pairing or connection — reuses the exact same live HAP session already open for setpoint delivery.
+
+4. **Ingestion**: for a zone with `homekit_sensor_serial` set, and the air handler's HomeKit client reachable, the room-level reading (`calibratedTemp`, `occupiedRaw`) is sourced from `getSensorReadings().get(serial)` instead of Flair's `rooms.current-temperature-c`/`remote-sensor-readings.occupied` — the exact same "prefer HomeKit, fall back to Flair on any read failure or missing mapping" shape already proven for HVAC state (§6) and setpoint (§4). A zone with no confirmed serial, or a HomeKit read failure, transparently falls back to today's Flair-sourced ingestion — never a hard dependency.
+
+5. **Existing occupancy debounce logic needs no changes.** `evaluateOccupancy()`'s own hysteresis dwell already exists specifically to absorb a flickering raw signal — a fresher, more-real-time HomeKit-sourced signal is a *better* input to that same existing debounce, not a new debounce requirement.
+
+6. **Forward-compatible with the sensors currently being installed** (raised in this same conversation, separately): once a new sensor is paired in Flair and Ecobee's own HomeKit bridge exposes it as a new accessory (expected, based on all four existing SmartSensors following this exact pattern), the same one-time matching dialog covers it — no new mechanism needed for future sensors.
+
+### Explicitly deferred / out of scope for this design
+
+- **Automatic, no-human-confirmation matching by name or any heuristic** — the "Extra Den" mismatch is direct, same-session proof this isn't safe alone.
+- **Decoding the two vendor "seconds since change" characteristics into a formally-named, guaranteed-stable contract** — used opportunistically/informationally if built, never load-bearing for a safety-relevant decision, since their exact semantics aren't confirmed by any public source.
+- **Push/event-driven updates** (both `ev`-capable) instead of this app's existing per-tick poll — not needed at a 60-second cadence, noted as available in §6 already, not pursued here either.
+- **Whether sensor-reading source should be tied to `setpoint_delivery_mode`, or independent of it** — a real open decision, not resolved here: a household could reasonably want direct sensor reads even on a Flair-delivery air handler, or vice versa. Flagged for a decision before implementation, not assumed.
+
+### Verification plan, once this is built
+
+- Unit tests for the new ingestion fallback logic (HomeKit-sourced when mapped and reachable; Flair-sourced otherwise) — same shape as the existing HVAC-state-source tests in `tick.test.ts`.
+- A live, deliberate before/after transition test per newly-mapped zone (walk into the room, compare timestamps) — the same test that produced this section's own live proof — before trusting a new zone's mapping in production.
+- Confirm the Serial-Number re-match path actually works by deliberately invalidating a cached `aid` (e.g. clearing the in-memory cache mid-session) and confirming a fresh scan still finds the right accessory by serial.

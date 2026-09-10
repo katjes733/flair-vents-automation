@@ -25,6 +25,11 @@ const { getAirHandlerById } = vi.hoisted(() => ({
 }));
 vi.mock("~/server/util/routes/airHandler", () => ({ getAirHandlerById }));
 
+const { getZonesForAirHandler } = vi.hoisted(() => ({
+  getZonesForAirHandler: vi.fn(),
+}));
+vi.mock("~/server/util/routes/zone", () => ({ getZonesForAirHandler }));
+
 const { getHomekitPairing, storeHomekitPairing, deleteHomekitPairing } =
   vi.hoisted(() => ({
     getHomekitPairing: vi.fn(),
@@ -44,6 +49,7 @@ const { getHomeKitClientForAirHandler, clearHomeKitClientCache, fakeClient } =
     fakeClient: {
       isPaired: vi.fn(),
       removePairing: vi.fn(),
+      getSensorReadings: vi.fn(),
     },
   }));
 vi.mock("~/server/control/scheduler", () => ({
@@ -85,8 +91,10 @@ beforeEach(() => {
   clearHomeKitClientCache.mockReset();
   fakeClient.isPaired.mockReset().mockResolvedValue(true);
   fakeClient.removePairing.mockReset().mockResolvedValue(undefined);
+  fakeClient.getSensorReadings.mockReset().mockResolvedValue(new Map());
   pairHomeKitAccessory.mockReset();
   discoverUnpairedAccessories.mockReset();
+  getZonesForAirHandler.mockReset().mockResolvedValue([]);
 });
 
 describe("GET /:id/homekit/status", () => {
@@ -193,5 +201,49 @@ describe("POST /:id/homekit/unpair", () => {
     );
     expect(res.status).toBe(200);
     expect(deleteHomekitPairing).toHaveBeenCalledWith("ah-1");
+  });
+});
+
+describe("GET /:id/homekit/sensor-matches", () => {
+  it("returns an empty match list for an unpaired air handler, not an error", async () => {
+    getHomeKitClientForAirHandler.mockResolvedValue(null);
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/ah-1/homekit/sensor-matches",
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toEqual([]);
+  });
+
+  it("computes matches by cross-referencing live sensor readings against this air handler's zones", async () => {
+    fakeClient.getSensorReadings.mockResolvedValue(
+      new Map([
+        [
+          "Y3H2",
+          { serial: "Y3H2", name: "Martin Office", tempC: 22, occupied: true },
+        ],
+      ]),
+    );
+    getZonesForAirHandler.mockResolvedValue([
+      {
+        id: "z1",
+        name: "Martin Office",
+        config: { homekit_sensor_serial: null },
+      },
+    ]);
+    const res = await request(buildApp()).get(
+      "/api/v1/air-handlers/ah-1/homekit/sensor-matches",
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toEqual([
+      {
+        kind: "unmapped_suggested",
+        serial: "Y3H2",
+        name: "Martin Office",
+        tempC: 22,
+        occupied: true,
+        suggestedZoneId: "z1",
+        suggestedZoneName: "Martin Office",
+      },
+    ]);
   });
 });

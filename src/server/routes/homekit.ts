@@ -5,6 +5,7 @@ import { HttpError } from "~/server/util/httpError";
 import { resolveActorMiddleware } from "~/server/middleware/resolveActorMiddleware";
 import { requirePermission } from "~/server/middleware/requirePermission";
 import { getAirHandlerById } from "~/server/util/routes/airHandler";
+import { getZonesForAirHandler } from "~/server/util/routes/zone";
 import {
   getHomekitPairing,
   storeHomekitPairing,
@@ -18,6 +19,7 @@ import {
   pairHomeKitAccessory,
   discoverUnpairedAccessories,
 } from "~/server/util/homekit/client";
+import { computeSensorMatches } from "~/server/util/homekit/sensorMatch";
 
 // Mounted at the same "/api/v1/air-handlers" base path as
 // routes/airHandlers.ts (a second router, not merged into that file) —
@@ -123,5 +125,30 @@ router.post(
     await deleteHomekitPairing(airHandler.id);
     clearHomeKitClientCache(airHandler.id);
     res.status(200).json({ paired: false });
+  },
+);
+
+// Backs the SmartSensor-matching dialog — see "Ecobee SmartSensor Reading
+// via HomeKit." Returns an empty match list (never a 404/500) for an
+// unpaired air handler, mirroring "/status"'s own graceful-degradation
+// shape, since "no pairing yet" is an ordinary state for this dialog to
+// render (nothing to match), not an error.
+router.get(
+  "/:id/homekit/sensor-matches",
+  requirePermission("dashboard.airHandler.access"),
+  async (req, res) => {
+    const airHandler = await requireOwnAirHandler(req);
+    const client = await getHomeKitClientForAirHandler(airHandler.id);
+    const readings = client ? await client.getSensorReadings() : new Map();
+    const zones = await getZonesForAirHandler(airHandler.id);
+    const matches = computeSensorMatches(
+      [...readings.values()],
+      zones.map((z) => ({
+        id: z.id,
+        name: z.name,
+        homekitSensorSerial: z.config.homekit_sensor_serial,
+      })),
+    );
+    res.status(200).json({ matches });
   },
 );
