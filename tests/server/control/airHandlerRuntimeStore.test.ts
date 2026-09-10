@@ -56,6 +56,7 @@ describe("createInMemoryAirHandlerRuntimeStore", () => {
       callStartedAtMs: 1704110400000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     };
@@ -74,6 +75,7 @@ describe("createInMemoryAirHandlerRuntimeStore", () => {
       callStartedAtMs: 1704110400000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });

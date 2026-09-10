@@ -866,6 +866,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       worstDeviationAtCallStartC: 3,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -931,6 +932,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       worstDeviationAtCallStartC: 3,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -978,6 +980,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       worstDeviationAtCallStartC: 0,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -1046,6 +1049,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       worstDeviationAtCallStartC: 3,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -1091,7 +1095,11 @@ describe("runTick — emergency fail-safe", () => {
     const persisted = new Map<string, ZoneRuntimeState>();
     const deps = makeDeps(client, persisted, NOW);
     // Pre-seed the runtime store as if the call has already been running
-    // for 20 minutes — past the default 10-minute grace period.
+    // for 20 minutes — past the default 10-minute grace period — and the
+    // failing differential has already persisted past the default 3-minute
+    // trigger dwell, so this tick is the one that actually declares the
+    // fault (see equipment_fault_trigger_dwell_minutes's own comment for
+    // why a single failing tick alone is no longer sufficient).
     await deps.airHandlerRuntimeStore.set("ah-1", {
       trackedDrivingZoneId: null,
       ticksSinceLeadChanged: 0,
@@ -1101,6 +1109,7 @@ describe("runTick — emergency fail-safe", () => {
       callStartedAtMs: NOW - 20 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
@@ -1147,6 +1156,9 @@ describe("runTick — emergency fail-safe", () => {
       }),
     ];
     const deps = makeDeps(client, new Map(), NOW);
+    // Trigger dwell already elapsed — see the equivalent comment in the
+    // previous test for why this is required for a single tick to declare
+    // the fault under the new dwell requirement.
     await deps.airHandlerRuntimeStore.set("ah-1", {
       trackedDrivingZoneId: null,
       ticksSinceLeadChanged: 0,
@@ -1156,6 +1168,7 @@ describe("runTick — emergency fail-safe", () => {
       callStartedAtMs: NOW - 20 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
@@ -1176,6 +1189,155 @@ describe("runTick — emergency fail-safe", () => {
       }),
       "Emergency fail-safe triggered",
     );
+  });
+
+  // Regression test for a real, confirmed false-positive class, distinct
+  // from the near-closed-vent one below: a variable-speed unit legitimately
+  // running at a low capacity stage (overnight, light load) can produce a
+  // real, healthy duct differential that's a little short of the
+  // configured threshold — not a fault, just a smaller true differential
+  // than a full-capacity call produces. Confirmed live: 5 overnight
+  // triggers, every one on a genuinely open vent with a real 4-5°C
+  // differential, every one self-clearing within 6-7 minutes once the
+  // differential drifted back over threshold — the signature of a
+  // borderline reading, not a sustained equipment problem. A single failing
+  // tick must not declare a fault outright — it starts the trigger dwell
+  // clock instead, and the normal pipeline keeps running (not bypassed).
+  it("does not declare a fault on the first failing tick — starts the trigger dwell instead of bypassing the pipeline", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 23, // 1°C differential — fails the 5.56°C default threshold
+        percentOpen: 100,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          vents: [makeVentState("vent-1", { last_reported_position: 100 })],
+        },
+      }),
+    ];
+    const deps = makeDeps(client, new Map(), NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(false);
+    expect(decision.narrative).not.toMatch(/Emergency fail-safe/);
+    // The normal pipeline actually ran this tick (not bypassed) — the zone
+    // has a real classification and a real calibrated reading, unlike the
+    // fault short-circuit path which reports null/unclassified.
+    expect(decision.zones[0].temp_calibrated).not.toBeNull();
+    const runtime = await deps.airHandlerRuntimeStore.get("ah-1");
+    expect(runtime.equipmentFaultActive).toBe(false);
+    expect(runtime.equipmentFaultTriggerDwellSinceMs).toBe(NOW);
+  });
+
+  it("declares the fault once the failing differential has persisted through the configured trigger dwell", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 23,
+        percentOpen: 100,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          vents: [makeVentState("vent-1", { last_reported_position: 100 })],
+        },
+      }),
+    ];
+    const deps = makeDeps(client, new Map(), NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      // The default trigger dwell is 3 minutes — already exceeded here.
+      equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(true);
+    expect(decision.narrative).toMatch(/Emergency fail-safe/);
+    const runtime = await deps.airHandlerRuntimeStore.get("ah-1");
+    expect(runtime.equipmentFaultTriggerDwellSinceMs).toBeNull();
+  });
+
+  it("resets the trigger dwell clock if even one tick mid-dwell shows a passing differential", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14, // healthy differential this tick — the dwell shouldn't survive it
+        percentOpen: 100,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          vents: [makeVentState("vent-1", { last_reported_position: 100 })],
+        },
+      }),
+    ];
+    const deps = makeDeps(client, new Map(), NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 20 * 60000,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      // Already past the dwell threshold, but this tick's own reading
+      // passes — the leftover timer must not survive to let a later,
+      // unrelated failing tick declare a fault instantly off a stale clock.
+      equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
+      worstDeviationAtCallStartC: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    expect(decision.equipment_fault_active).toBe(false);
+    const runtime = await deps.airHandlerRuntimeStore.get("ah-1");
+    expect(runtime.equipmentFaultTriggerDwellSinceMs).toBeNull();
   });
 
   // Regression test for a real, confirmed bug found live via telemetry
@@ -1219,6 +1381,7 @@ describe("runTick — emergency fail-safe", () => {
       callStartedAtMs: NOW - 30 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
@@ -1269,6 +1432,7 @@ describe("runTick — emergency fail-safe", () => {
       callStartedAtMs: NOW - 20 * 60000,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
@@ -1727,6 +1891,7 @@ describe("runTick — periodic drift-check backstop", () => {
       callStartedAtMs: null,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck,
     };
@@ -1907,6 +2072,7 @@ describe("runTick — equipment fault clearing", () => {
       equipmentFaultActive: true,
       // Dwell (default 5 min) already exceeded — should clear this tick.
       equipmentFaultClearDwellSinceMs: NOW - 10 * 60000,
+      equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
     });
@@ -3691,6 +3857,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       worstDeviationAtCallStartC: 1,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -3761,6 +3928,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       worstDeviationAtCallStartC: 1,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -3805,6 +3973,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       worstDeviationAtCallStartC: null,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
@@ -3852,6 +4021,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       worstDeviationAtCallStartC: 1,
       equipmentFaultActive: false,
       equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
     });
 
