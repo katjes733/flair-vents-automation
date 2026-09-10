@@ -58,7 +58,13 @@ export function computeDesiredPosition(
     i.calibratedTemp,
     i.resolvedSetpoint,
   );
-  const toleranceC = i.tolerance ?? 0;
+  // Half the resolved tolerance — the same symmetric edge classifyZone's
+  // own hysteresis uses (see its doc comment for why the band is split
+  // ±tolerance/2 rather than sitting entirely above setpoint). Both
+  // branches below zero out exactly at their own edge of that same band,
+  // so a zone's desired position is continuous across the classification
+  // flip in either direction, never a jump.
+  const halfToleranceC = (i.tolerance ?? 0) / 2;
 
   const { maxPositionPct, modifierBoosts } = i.settings;
 
@@ -107,7 +113,7 @@ export function computeDesiredPosition(
     // See "Occupancy" — this replaces effectiveIdleBaseline's old flat
     // idleBaselinePosition return for a satisfied zone during an active
     // call, which had no mechanism to correct an already-overcooled room.
-    const overshoot = Math.max(0, toleranceC - deviation);
+    const overshoot = Math.max(0, -halfToleranceC - deviation);
     const closeRatio =
       effectiveBand > 0 ? Math.min(1, overshoot / effectiveBand) : 1;
     const desiredPosition =
@@ -120,7 +126,7 @@ export function computeDesiredPosition(
     };
   }
 
-  const effectiveDemand = Math.max(0, deviation - toleranceC);
+  const effectiveDemand = Math.max(0, deviation - halfToleranceC);
   const ratio =
     effectiveBand > 0 ? Math.min(1, effectiveDemand / effectiveBand) : 1;
   let desiredPosition =

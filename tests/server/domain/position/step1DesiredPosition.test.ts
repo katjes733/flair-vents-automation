@@ -209,13 +209,20 @@ describe("computeDesiredPosition", () => {
   // implementation plan follow-up. This mirrors the demanding-side ramp
   // exactly, just closing instead of opening.
   describe("closing proportionally once satisfied", () => {
-    it("stays exactly at idle baseline right at the demanding/satisfied boundary (continuous with the demanding branch)", () => {
+    it("stays exactly at idle baseline throughout the dead band, continuous with the demanding branch's own zero point", () => {
       const result = computeDesiredPosition(
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
           tolerance: asTempDelta(1),
-          calibratedTemp: asAbsoluteTemp(22), // deviation = 22-21 = 1 = tolerance exactly
+          // deviation = 22-21 = 1, above the dead band's own upper edge
+          // (setpoint + tolerance/2 = 21.5) — a real caller would already
+          // be classified demanding here, but this function only cares
+          // about the `demanding` flag it's given, not deviation's sign on
+          // its own, so this still exercises the satisfied/closing branch
+          // directly and confirms its zero point (overshoot=0 at
+          // setpoint - tolerance/2 = 20.5) is never reached this far above.
+          calibratedTemp: asAbsoluteTemp(22),
         }),
       );
       expect(result.desiredPosition).toBe(100);
@@ -227,10 +234,12 @@ describe("computeDesiredPosition", () => {
           idleBaselinePosition: 100,
           minVentPosition: 0,
           tolerance: asTempDelta(1),
-          // deviation = 21 - 21 = 0 (colder than setpoint by 1 relative to
-          // the tolerance edge) -> overshoot = 1 - 0 = 1 against a
-          // 1.67 effectiveBand -> ~40% closed toward the floor.
-          calibratedTemp: asAbsoluteTemp(21),
+          // The closing curve's own zero point is the *lower* edge of the
+          // symmetric hysteresis band (setpoint - tolerance/2 = 20.5), not
+          // the full tolerance above setpoint — see classifyZone's own
+          // comment. deviation = 20 - 21 = -1, overshoot = 0.5 - 1 = 0.5
+          // against a 1.67 effectiveBand -> ~30% closed toward the floor.
+          calibratedTemp: asAbsoluteTemp(20),
         }),
       );
       expect(result.desiredPosition).toBeLessThan(100);
@@ -243,8 +252,8 @@ describe("computeDesiredPosition", () => {
           idleBaselinePosition: 100,
           minVentPosition: 5,
           tolerance: asTempDelta(1),
-          // deviation = 15 - 21 = -6, overshoot = 1 - (-6) = 7, far past a
-          // 1.67 effectiveBand -> saturates at the floor, not below it.
+          // deviation = 15 - 21 = -6, overshoot = 0.5 - (-6) = 6.5, far past
+          // a 1.67 effectiveBand -> saturates at the floor, not below it.
           calibratedTemp: asAbsoluteTemp(15),
         }),
       );
@@ -265,12 +274,14 @@ describe("computeDesiredPosition", () => {
     });
 
     it("a boost narrows the closing band too, same as it narrows the opening band", () => {
+      // deviation = 20 - 21 = -1, past the lower edge (20.5) either way —
+      // see the previous test for why the edge sits there, not at setpoint.
       const unboosted = computeDesiredPosition(
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
           tolerance: asTempDelta(1),
-          calibratedTemp: asAbsoluteTemp(20.5),
+          calibratedTemp: asAbsoluteTemp(20),
         }),
       );
       const boosted = computeDesiredPosition(
@@ -278,7 +289,7 @@ describe("computeDesiredPosition", () => {
           idleBaselinePosition: 100,
           minVentPosition: 0,
           tolerance: asTempDelta(1),
-          calibratedTemp: asAbsoluteTemp(20.5),
+          calibratedTemp: asAbsoluteTemp(20),
           occupied: true, // narrows effectiveBand -> reaches the floor sooner
         }),
       );
