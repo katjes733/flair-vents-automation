@@ -155,6 +155,19 @@ export const systemSettingsConfigSchema = z.object({
   equipment_fault_grace_period_minutes: z.number().positive().default(10),
   equipment_fault_duct_delta_threshold_c: z.number().positive().default(5.56),
   equipment_fault_clear_dwell_minutes: z.number().positive().default(5),
+  // A real, confirmed false-positive fail-safe trigger: a smart vent
+  // sitting near-closed (satisfied, resting low) has little real airflow
+  // through its own duct segment, so its duct temperature drifts toward
+  // room-ambient rather than reflecting what the compressor is actually
+  // producing — a bad witness for "is the equipment working," not evidence
+  // of a fault. Confirmed live: a call sustained entirely by two
+  // duct-sensorless manual-vent zones, while every smart vent happened to
+  // be satisfied-and-mostly-closed at the same moment, left no genuinely
+  // usable duct reading at all and tripped a false fault. A vent below
+  // this position is excluded from the "usable" set for both
+  // detectEquipmentFault and detectDuctAirflowAnomaly, the same way a
+  // stale or missing reading already is.
+  equipment_fault_min_vent_open_pct: z.number().min(0).max(100).default(20),
   // Alert-only backstop, never a fail-safe trigger — see the plan.
   hvac_no_improvement_alert_minutes: z.number().positive().default(75),
   // The zone-scoped sibling of the above, added after live hardware

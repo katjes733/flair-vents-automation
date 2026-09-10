@@ -47,9 +47,22 @@ function passesDifferential(
   return normalizedDelta(zone, state) >= thresholdC;
 }
 
-function usableZones(zones: DuctReadingZone[]): DuctReadingZone[] {
+// A vent sitting below this position has too little real airflow through
+// its own duct segment for its duct temperature to mean anything — the
+// reading drifts toward room-ambient rather than reflecting what the
+// compressor is actually producing. Excluded from "usable" the same way a
+// stale or missing reading already is — see minVentOpenPct's own comment
+// in systemSettings.ts for the real, confirmed false-positive this fixes.
+function usableZones(
+  zones: DuctReadingZone[],
+  minVentOpenPct: number,
+): DuctReadingZone[] {
   return zones.filter(
-    (z) => z.hasSmartVent && !z.ductReadingStale && z.ductTemperatureC !== null,
+    (z) =>
+      z.hasSmartVent &&
+      !z.ductReadingStale &&
+      z.ductTemperatureC !== null &&
+      z.commandedPositionPct >= minVentOpenPct,
   );
 }
 
@@ -70,6 +83,7 @@ export function detectEquipmentFault(params: {
   callDurationMinutes: number;
   gracePeriodMinutes: number;
   ductDeltaThresholdC: number;
+  minVentOpenPct: number;
   zones: DuctReadingZone[];
 }): EquipmentFaultResult {
   if (params.callDurationMinutes < params.gracePeriodMinutes) {
@@ -79,7 +93,7 @@ export function detectEquipmentFault(params: {
       ductDeltasC: [],
     };
   }
-  const usable = usableZones(params.zones);
+  const usable = usableZones(params.zones, params.minVentOpenPct);
   if (usable.length === 0) {
     return {
       faulted: false,
@@ -134,9 +148,10 @@ export interface DuctAnomalyResult {
 export function detectDuctAirflowAnomaly(params: {
   state: HvacCallState;
   ductDeltaThresholdC: number;
+  minVentOpenPct: number;
   zones: DuctReadingZone[];
 }): DuctAnomalyResult[] {
-  const usable = usableZones(params.zones);
+  const usable = usableZones(params.zones, params.minVentOpenPct);
   const passing = usable.filter((z) =>
     passesDifferential(z, params.state, params.ductDeltaThresholdC),
   );
