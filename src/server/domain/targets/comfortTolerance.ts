@@ -37,6 +37,24 @@ export function computeDeviation(
  * legitimately classifiable). Governs per-zone vent allocation only, never
  * equipment-call logic — see "Comfort tolerance & target resolution
  * order".
+ *
+ * Real thermostat cooling/heating differential, not a single static
+ * boundary: `tolerance` is split into a symmetric band of ± tolerance/2
+ * around the setpoint, and which edge governs depends on the *previous*
+ * classification — a zone that's demanding keeps demanding until it
+ * reaches the lower edge (deviation <= -tolerance/2), and a zone that's
+ * satisfied doesn't demand again until it crosses the upper edge
+ * (deviation > +tolerance/2). A single static boundary can't express this:
+ * it would let a call terminate the instant a zone re-enters the band from
+ * above, which is exactly what produced a room whose real average
+ * temperature ran systematically warmer than its own setpoint — confirmed
+ * live (a driving zone's own comfort band sat entirely above its
+ * configured target, 72-73°F for a 72°F setpoint, never below it). A
+ * `previousClassification` of `null` or `"unclassified_no_sensor"` gets
+ * the same "no protected continuity to preserve yet" treatment
+ * `stabilizeClassification` already gives these two cases — treated as
+ * "was satisfied" (the upper edge), so a brand-new or just-recovered zone
+ * doesn't demand until genuinely warm/cold enough to warrant it.
  */
 export function classifyZone(params: {
   hasTemperatureSensor: boolean;
@@ -44,6 +62,7 @@ export function classifyZone(params: {
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp;
   tolerance: TempDelta | null;
+  previousClassification: ZoneClassification | null;
 }): ZoneClassification {
   if (!params.hasTemperatureSensor) return "unclassified_no_sensor";
   const deviation = computeDeviation(
@@ -51,8 +70,10 @@ export function classifyZone(params: {
     params.calibratedTemp,
     params.resolvedSetpoint,
   );
-  const toleranceC = params.tolerance ?? 0;
-  return deviation > toleranceC ? "demanding" : "satisfied";
+  const halfToleranceC = (params.tolerance ?? 0) / 2;
+  const wasDemanding = params.previousClassification === "demanding";
+  const edge = wasDemanding ? -halfToleranceC : halfToleranceC;
+  return deviation > edge ? "demanding" : "satisfied";
 }
 
 export interface ClassificationStabilization {

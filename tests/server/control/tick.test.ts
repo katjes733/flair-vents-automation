@@ -2420,12 +2420,16 @@ describe("runTick — Away Mode (partial house)", () => {
   it("applies the away setpoint/tolerance only to the native-away zone, resolving the other zone normally in the same tick", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
-      // Same room temperature for both — any difference in outcome is
-      // purely due to away targeting, not a different starting point.
+      // Comfortably cold enough that the away zone's own closing curve
+      // (see step1DesiredPosition.ts — its zero point is the *lower* edge
+      // of the symmetric ± tolerance/2 band, not the full tolerance below
+      // setpoint) fully saturates to the floor regardless of any
+      // occupancy boost narrowing the band further, rather than landing
+      // partway down it.
       {
         roomId: "room-away",
         ventId: "vent-away",
-        tempC: 25,
+        tempC: 15,
         ductC: 14,
         percentOpen: 50,
       },
@@ -2455,9 +2459,9 @@ describe("runTick — Away Mode (partial house)", () => {
     );
 
     // Away setpoint (27.78°C default) + wide tolerance (±2.78°C) puts a
-    // 25°C room comfortably satisfied — closed to its floor once also
-    // unoccupied during an active call (see "Occupancy"). The fallback
-    // setpoint (23.89°C, unset/tight tolerance) leaves the same 25°C room
+    // 15°C room comfortably satisfied and well past the closing curve's
+    // own saturation point, closing fully to its floor. The fallback
+    // setpoint (23.89°C, unset/tight tolerance) leaves the 25°C home room
     // still genuinely demanding.
     expect(
       decision.zones.find((z) => z.zone_id === "z-away")?.classification,

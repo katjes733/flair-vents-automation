@@ -31,11 +31,12 @@ describe("classifyZone", () => {
         calibratedTemp: asAbsoluteTemp(30),
         resolvedSetpoint: setpoint,
         tolerance: null,
+        previousClassification: null,
       }),
     ).toBe("unclassified_no_sensor");
   });
 
-  it("treats unset tolerance as tight targeting (0)", () => {
+  it("treats unset tolerance as tight targeting (0) — both edges collapse to the setpoint itself", () => {
     expect(
       classifyZone({
         hasTemperatureSensor: true,
@@ -43,29 +44,130 @@ describe("classifyZone", () => {
         calibratedTemp: asAbsoluteTemp(21.1),
         resolvedSetpoint: setpoint,
         tolerance: null,
+        previousClassification: "satisfied",
       }),
     ).toBe("demanding");
   });
 
-  it("is satisfied exactly at the tolerance boundary, demanding just past it", () => {
-    expect(
-      classifyZone({
-        hasTemperatureSensor: true,
-        state: "COOLING_CALL",
-        calibratedTemp: asAbsoluteTemp(22),
-        resolvedSetpoint: setpoint,
-        tolerance: asTempDelta(1),
-      }),
-    ).toBe("satisfied");
-    expect(
-      classifyZone({
-        hasTemperatureSensor: true,
-        state: "COOLING_CALL",
-        calibratedTemp: asAbsoluteTemp(22.1),
-        resolvedSetpoint: setpoint,
-        tolerance: asTempDelta(1),
-      }),
-    ).toBe("demanding");
+  // Real thermostat cooling differential: tolerance=2 splits into a
+  // symmetric ±1 band around the 21° setpoint (20-22), and which edge
+  // governs depends on the *previous* classification, not a single static
+  // boundary — this is the actual mechanism a real production comfort
+  // complaint led to (a room's felt-average temperature running
+  // systematically warmer than its own setpoint, because the old design's
+  // "satisfied" band sat entirely above setpoint with no floor at all).
+  describe("hysteresis — a symmetric band whose active edge depends on the previous state", () => {
+    const tolerance = asTempDelta(2); // ±1°C around the 21° setpoint
+
+    it("a demanding zone stays demanding all the way down to the lower edge (setpoint - tolerance/2)", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(20.1), // still just above the 20° lower edge
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "demanding",
+        }),
+      ).toBe("demanding");
+    });
+
+    it("a demanding zone becomes satisfied once it reaches the lower edge", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(20), // exactly at the lower edge
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "demanding",
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("a satisfied zone stays satisfied all the way up to the upper edge (setpoint + tolerance/2)", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(22), // exactly at the upper edge
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("a satisfied zone becomes demanding once it crosses past the upper edge", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(22.1),
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("demanding");
+    });
+
+    // The whole point of real hysteresis: a reading sitting inside the
+    // band doesn't tell you the classification on its own — you also need
+    // to know which direction you were already going.
+    it("the same mid-band reading classifies differently depending on the previous state", () => {
+      const midBand = asAbsoluteTemp(21); // dead center — inside both edges
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: midBand,
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "demanding",
+        }),
+      ).toBe("demanding");
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: midBand,
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("satisfied");
+    });
+
+    // A brand-new zone (never classified) or one recovering from a stale/
+    // missing reading gets the same "no protected continuity to preserve
+    // yet" treatment stabilizeClassification already gives these two cases
+    // — treated as if it were previously satisfied (the upper edge), so it
+    // doesn't demand until genuinely warm enough to warrant it.
+    it("null previousClassification uses the upper edge, same as a satisfied zone", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(22),
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: null,
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("previousClassification of unclassified_no_sensor also uses the upper edge", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(22),
+          resolvedSetpoint: setpoint,
+          tolerance,
+          previousClassification: "unclassified_no_sensor",
+        }),
+      ).toBe("satisfied");
+    });
   });
 
   it("computes deviation in the correct direction for HEATING_CALL", () => {
@@ -76,6 +178,7 @@ describe("classifyZone", () => {
         calibratedTemp: asAbsoluteTemp(19),
         resolvedSetpoint: setpoint,
         tolerance: null,
+        previousClassification: "satisfied",
       }),
     ).toBe("demanding");
     expect(
@@ -85,6 +188,7 @@ describe("classifyZone", () => {
         calibratedTemp: asAbsoluteTemp(22),
         resolvedSetpoint: setpoint,
         tolerance: null,
+        previousClassification: "demanding",
       }),
     ).toBe("satisfied");
   });

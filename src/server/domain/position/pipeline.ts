@@ -219,6 +219,7 @@ export function computeZoneCommands(params: {
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
       tolerance: zone.tolerance,
+      previousClassification: zone.previousClassification,
     });
     return classifyWithStabilization(zone, raw);
   }
@@ -289,6 +290,7 @@ export function computeZoneCommands(params: {
         calibratedTemp: zone.calibratedTemp,
         resolvedSetpoint: zone.resolvedSetpoint,
         tolerance: zone.tolerance,
+        previousClassification: zone.previousClassification,
       });
       classifications[zone.zoneId] = classifyWithStabilization(
         zone,
@@ -328,6 +330,7 @@ export function computeZoneCommands(params: {
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
       tolerance: zone.tolerance,
+      previousClassification: zone.previousClassification,
     });
     const classification = classifyWithStabilization(zone, rawClassification);
     classifications[zone.zoneId] = classification;
