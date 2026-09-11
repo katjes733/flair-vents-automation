@@ -33,6 +33,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       has_occupancy_sensor: false,
       homekit_sensor_serial: null,
       thermal_load_flags: [],
+      observation_only: false,
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
@@ -84,6 +85,7 @@ function renderDialog(
     event: ScheduleEvent | null;
     otherEvents: ScheduleEvent[];
     open: boolean;
+    zones: Zone[];
     onClose: () => void;
     onSave: (e: unknown) => void;
     onDelete: () => void;
@@ -97,7 +99,7 @@ function renderDialog(
       <DisplayUnitProvider>
         <EventEditorDialog
           open={props.open ?? true}
-          zones={ZONES}
+          zones={props.zones ?? ZONES}
           airHandlers={AIR_HANDLERS}
           event={props.event ?? null}
           otherEvents={props.otherEvents ?? []}
@@ -154,6 +156,31 @@ describe("EventEditorDialog", () => {
     useSession.mockReturnValue({ user: { profile: "read", role: "read" } });
     renderDialog();
     expect(screen.getByRole("button", { name: "Add event" })).toBeDisabled();
+  });
+
+  // observation_only zones are never addable to a schedule — mirrors the
+  // server-side guard in scheduleService.ts's assertReferencedZonesValid.
+  it("excludes an observation-only zone from the 'add a room' picker", async () => {
+    renderDialog({
+      zones: [
+        makeZone({ id: "z1", name: "Den Front" }),
+        makeZone({
+          id: "z2",
+          name: "Martin Bedroom",
+          config: { ...makeZone().config, observation_only: true },
+        }),
+      ],
+    });
+    const select = screen.getByRole("combobox", {
+      name: "Add a room to this event",
+    });
+    fireEvent.mouseDown(select);
+    expect(
+      await screen.findByRole("option", { name: "Den Front" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Martin Bedroom" }),
+    ).not.toBeInTheDocument();
   });
 
   it("Save is disabled while start and end time are equal", () => {

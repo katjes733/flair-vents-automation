@@ -98,6 +98,7 @@ export default function ZoneDetailDialog({
   ]);
   const [hasTemperatureSensor, setHasTemperatureSensor] = useState(true);
   const [hasOccupancySensor, setHasOccupancySensor] = useState(false);
+  const [observationOnly, setObservationOnly] = useState(false);
   const [thermalLoadFlags, setThermalLoadFlags] = useState<ThermalLoadFlag[]>(
     [],
   );
@@ -142,6 +143,7 @@ export default function ZoneDetailDialog({
     );
     setHasTemperatureSensor(zone.config.has_temperature_sensor);
     setHasOccupancySensor(zone.config.has_occupancy_sensor);
+    setObservationOnly(zone.config.observation_only);
     setThermalLoadFlags(zone.config.thermal_load_flags);
     setFlairVents(
       zone.config.flair_vents.length > 0
@@ -184,6 +186,7 @@ export default function ZoneDetailDialog({
         config: {
           has_temperature_sensor: hasTemperatureSensor,
           has_occupancy_sensor: hasOccupancySensor,
+          observation_only: observationOnly,
           flair_vents:
             ventHardwareType === "flair_smart_vent"
               ? nonBlankFlairVents.map((v) => ({
@@ -248,6 +251,7 @@ export default function ZoneDetailDialog({
     maxPosition,
     minPosition,
     nonBlankFlairVents,
+    observationOnly,
     onClose,
     onSaved,
     showNotification,
@@ -320,6 +324,15 @@ export default function ZoneDetailDialog({
                 />
               }
               label="Has occupancy sensor"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={observationOnly}
+                  onChange={(e) => setObservationOnly(e.target.checked)}
+                />
+              }
+              label="Observation only (exclude from comfort tracking & alerts)"
             />
 
             {isSmartVent && (

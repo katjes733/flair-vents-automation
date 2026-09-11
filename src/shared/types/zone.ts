@@ -31,6 +31,11 @@ export interface ZoneRuntimeState {
   vents: VentRuntimeState[];
   last_reading_value: number | null; // calibrated Celsius
   last_reading_changed_at: string | null;
+  // Distinct from last_reading_changed_at's own staleness signal — this
+  // tracks "no reading has arrived at all" (calibratedTemp null), not "the
+  // reading hasn't changed." Set the first tick a reading is missing,
+  // cleared the moment one resumes. See sensor_offline_alert_minutes.
+  sensor_offline_since: string | null;
   stale: boolean;
   spike_active: boolean;
   spike_since: string | null;
@@ -73,6 +78,7 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   vents: [],
   last_reading_value: null,
   last_reading_changed_at: null,
+  sensor_offline_since: null,
   stale: false,
   spike_active: false,
   spike_since: null,

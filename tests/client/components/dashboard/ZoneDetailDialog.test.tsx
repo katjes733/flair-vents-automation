@@ -39,6 +39,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       has_occupancy_sensor: false,
       homekit_sensor_serial: null,
       thermal_load_flags: [],
+      observation_only: false,
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
@@ -114,6 +115,7 @@ describe("ZoneDetailDialog", () => {
           has_occupancy_sensor: false,
           homekit_sensor_serial: null,
           thermal_load_flags: [],
+          observation_only: false,
           idle_baseline_position: 80,
           comfort_tolerance: 1.5,
           sensor_calibration_offset: 0.5,
@@ -136,6 +138,7 @@ describe("ZoneDetailDialog", () => {
         config: {
           ...makeZone().config,
           thermal_load_flags: ["distant_high_duct_loss"],
+          observation_only: false,
         },
       }),
     );
@@ -154,6 +157,7 @@ describe("ZoneDetailDialog", () => {
         config: {
           ...makeZone().config,
           thermal_load_flags: ["distant_high_duct_loss"],
+          observation_only: false,
           manual_vents: [{ position: 75 }],
         },
       }),
@@ -175,10 +179,64 @@ describe("ZoneDetailDialog", () => {
         expect.objectContaining({
           config: expect.objectContaining({
             thermal_load_flags: ["high_internal_heat_load"],
+            observation_only: false,
           }),
         }),
       );
     });
+  });
+
+  it("seeds the observation-only checkbox from the zone's config", () => {
+    renderDialog(
+      makeZone({
+        config: { ...makeZone().config, observation_only: true },
+      }),
+    );
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Observation only (exclude from comfort tracking & alerts)",
+      }),
+    ).toBeChecked();
+  });
+
+  it("toggling observation-only and saving includes it in the submitted config", async () => {
+    renderDialog(makeZone());
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Observation only (exclude from comfort tracking & alerts)",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateZone).toHaveBeenCalledWith(
+        "z1",
+        expect.objectContaining({
+          config: expect.objectContaining({ observation_only: true }),
+        }),
+      );
+    });
+  });
+
+  // Server-side rejection (a schedule still references the zone) surfaces
+  // through the same generic error-display path as every other save
+  // failure in this dialog — no dedicated handling needed.
+  it("shows the server's rejection when enabling observation-only fails validation", async () => {
+    updateZone.mockRejectedValue({
+      response: {
+        data: {
+          error:
+            "Cannot mark zone z1 observation-only — referenced by schedule(s): Night. Remove it from those schedules first.",
+        },
+      },
+    });
+    renderDialog(makeZone());
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Observation only (exclude from comfort tracking & alerts)",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/referenced by schedule/);
   });
 
   it("hides position fields for a no_vent zone", () => {
@@ -190,6 +248,7 @@ describe("ZoneDetailDialog", () => {
           has_occupancy_sensor: false,
           homekit_sensor_serial: null,
           thermal_load_flags: [],
+          observation_only: false,
           idle_baseline_position: 100,
           sensor_calibration_offset: 0,
           min_vent_position: 0,

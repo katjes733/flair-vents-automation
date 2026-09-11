@@ -48,6 +48,9 @@ export interface ZoneConfig {
   manual_vents: ManualVent[];
   thermal_load_flags: ThermalLoadFlag[];
   idle_baseline_position: number;
+  // Telemetry-only — excluded from schedule-driven comfort tracking
+  // entirely. See zoneConfigSchema's own comment.
+  observation_only: boolean;
   comfort_tolerance?: number;
   sensor_calibration_offset: number;
   min_vent_position: number;
