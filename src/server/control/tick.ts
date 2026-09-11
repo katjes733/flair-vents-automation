@@ -1438,6 +1438,26 @@ export async function runTick(
       priorityRank: c.priorityRank === -1 ? Infinity : c.priorityRank,
     }));
 
+  // A demanding zone whose reading has merely gone stale isn't "resolved"
+  // — classifyStaleness can only ever trip for a zone that wasn't already
+  // satisfied (see its own doc comment), so a zone currently excluded for
+  // staleness is, by construction, still exactly the population these two
+  // no-improvement checks exist to catch. Treating "went stale for a tick"
+  // the same as "stopped demanding" was a real, confirmed bug: the
+  // underlying condition never actually changed, but losing the zone from
+  // this filter cleared the alert, and it re-fired as if it were a brand
+  // new incident the moment the reading ticked again — live production
+  // alerts for one ongoing "Den back" episode 46 minutes apart looked like
+  // two separate occurrences purely because of this flap.
+  function stillCountsTowardNoImprovement(
+    candidate: DrivingZoneCandidate,
+  ): boolean {
+    return (
+      (candidate.demanding || candidate.stale) &&
+      Number.isFinite(candidate.deviation)
+    );
+  }
+
   // --- Zone demand with no improvement -------------------------------
   // The zone-scoped sibling of "HVAC extended call with no improvement" —
   // added after live hardware verification confirmed a vent can silently
@@ -1454,11 +1474,7 @@ export async function runTick(
     const demandTracking = await deps.zoneDemandTrackingStore.get(zone.id);
     const zoneAlertKey = `alert:zoneNoImprovement:${zone.id}`;
 
-    if (
-      candidate.demanding &&
-      nearCeiling &&
-      Number.isFinite(candidate.deviation)
-    ) {
+    if (stillCountsTowardNoImprovement(candidate) && nearCeiling) {
       const demandStartedAtMs = demandTracking.demandStartedAtMs ?? startedAtMs;
       const worstDeviationAtDemandStart =
         demandTracking.worstDeviationAtDemandStart ?? candidate.deviation;
@@ -1524,7 +1540,9 @@ export async function runTick(
   // baseline rather than inheriting a stale one from a prior call.
   const currentWorstDeviationC = Math.max(
     0,
-    ...drivingCandidates.filter((c) => c.demanding).map((c) => c.deviation),
+    ...drivingCandidates
+      .filter(stillCountsTowardNoImprovement)
+      .map((c) => c.deviation),
   );
   const worstDeviationAtCallStartC = !callActive
     ? null
@@ -1551,16 +1569,16 @@ export async function runTick(
     // worst zone (when one exists) also makes the alert directly
     // actionable instead of a bare number with nothing to look at.
     const worstZoneCandidate = drivingCandidates
-      .filter((c) => c.demanding)
+      .filter(stillCountsTowardNoImprovement)
       .reduce<DrivingZoneCandidate | null>(
         (worst, c) =>
           worst === null || c.deviation > worst.deviation ? c : worst,
         null,
       );
     const text =
-      demandingZoneCount === 0
+      worstZoneCandidate === null
         ? `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s), but no zone this app tracks has been actively demanding the entire time — the call may be sustained by something outside this app's visibility (an unsensored zone, or the thermostat's own comfort-setting sensor group), not necessarily a problem with this app's own control.`
-        : `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no measurable improvement in its worst-off zone, "${zones.find((z) => z.id === worstZoneCandidate?.zoneId)?.name ?? worstZoneCandidate?.zoneId}" (deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`;
+        : `The ${hvac.state} call on air handler "${airHandler.name}" has run for ${Math.round(callDurationMinutes)} minute(s) with no measurable improvement in its worst-off zone, "${zones.find((z) => z.id === worstZoneCandidate.zoneId)?.name ?? worstZoneCandidate.zoneId}" (deviation ${currentWorstDeviationC.toFixed(2)}°C, vs ${(worstDeviationAtCallStartC ?? 0).toFixed(2)}°C at call start).`;
     await deps.alerting.alertOnce({
       key: hvacNoImprovementKey,
       subject: `${airHandler.name}: HVAC call running with no improvement`,

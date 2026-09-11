@@ -1,4 +1,5 @@
 import { httpClient } from "~/client/api/httpClient";
+import type { ThermalLoadFlag } from "~/shared/schemas/zoneConfig";
 
 export type VentHardwareType =
   "flair_smart_vent" | "manual_fixed_vent" | "no_vent";
@@ -45,7 +46,7 @@ export interface ZoneConfig {
   // one entry for a manual_fixed_vent zone, empty for every other type.
   // See "Multi-Vent Manual Zones" and zoneConfigSchema's own comment.
   manual_vents: ManualVent[];
-  thermal_load_flags: string[];
+  thermal_load_flags: ThermalLoadFlag[];
   idle_baseline_position: number;
   comfort_tolerance?: number;
   sensor_calibration_offset: number;

@@ -997,6 +997,110 @@ describe("runTick — HVAC extended call with no improvement", () => {
     expect(text).not.toMatch(/0\.00°C/);
   });
 
+  // Regression test for a real, confirmed bug found live: "Den back" ran
+  // demanding-with-no-improvement for hours, but its own reading also (
+  // correctly) tripped the stale-sensor safeguard every 25-90 minutes along
+  // the way, since it's a slow-responding zone with a coarse 0.1°C sensor.
+  // Each time that happened, the zone's classification flipped to
+  // unclassified_no_sensor for a tick, which used to drop it out of the
+  // "demanding" filter entirely — zeroing currentWorstDeviationC, making
+  // detectNoImprovement report false, and clearing the alert as if the
+  // problem had resolved. The moment the reading ticked again and the zone
+  // went back to "demanding" with the exact same bad deviation, alertOnce
+  // fired again as a brand-new incident. One ongoing, unresolved problem
+  // showed up as two separate "no improvement" emails 46 minutes apart.
+  it("keeps alerting on an unresolved deviation even while the worst zone's own reading is currently stale", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // 24°C vs. 21°C setpoint below — the same 3°C deviation as at call
+      // start, i.e. genuinely still unresolved.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 24,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          last_reading_value: 24,
+          // Unchanged for 10 minutes, past the 1-minute threshold below,
+          // and not "satisfied" — classifyStaleness only ever trips for a
+          // zone that wasn't already comfortable, so this is exactly the
+          // "still demanding, sensor just hasn't ticked yet" case.
+          last_reading_changed_at: new Date(NOW - 10 * 60000).toISOString(),
+          last_classification: "demanding",
+        },
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      hvac_no_improvement_alert_minutes: 75,
+      stale_threshold_minutes: 1,
+    });
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Fixed setpoint",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: false,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      lastPushedSetpointC: null,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: NOW - 80 * 60000,
+      worstDeviationAtCallStartC: 3,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+    });
+
+    const decision = await runTick(makeAirHandler(), zones, ctx, deps);
+
+    expect(decision.zones.find((z) => z.zone_id === "z1")?.classification).toBe(
+      "unclassified_no_sensor",
+    );
+    const alerting = deps.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting.getSentKeys().has("alert:hvacNoImprovement:ah-1")).toBe(
+      true,
+    );
+    const noImprovementText = alerting
+      .getSentTexts()
+      .find((text) => text.includes("no measurable improvement"));
+    expect(noImprovementText).toMatch(/worst-off zone, "z1"/);
+  });
+
   it("names the actual worst-off zone when a real, unimproving deviation exists", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
