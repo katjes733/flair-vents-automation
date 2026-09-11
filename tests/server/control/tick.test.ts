@@ -75,6 +75,7 @@ function makeZone(params: {
   // call site — zero behavior change for tests that never touch this.
   homekitSensorSerial?: string;
   observationOnly?: boolean;
+  hasTemperatureSensor?: boolean;
   state?: Partial<ZoneRuntimeState>;
 }): ZoneData {
   return {
@@ -85,7 +86,7 @@ function makeZone(params: {
     name: params.id,
     ventHardwareType: "flair_smart_vent",
     config: resolveZoneConfig({
-      has_temperature_sensor: true,
+      has_temperature_sensor: params.hasTemperatureSensor ?? true,
       idle_baseline_position: 100,
       observation_only: params.observationOnly ?? false,
       flair_vents: (
@@ -1887,6 +1888,61 @@ describe("runTick — sensor offline vs. observation-only", () => {
     >;
     expect(alerting3.getSentKeys().has("alert:staleSensor:z1")).toBe(true);
     expect(alerting3.getSentKeys().has("alert:sensorOffline:z1")).toBe(true);
+  });
+
+  // Regression test for a real, confirmed false positive found live: every
+  // sensorless zone in the house (bathrooms, closets — has_temperature_sensor
+  // false) fired "sensor offline" simultaneously ~60 minutes after this
+  // feature deployed. calibratedTemp is null on every tick forever for such
+  // a zone, by design — there's no sensor to have gone offline.
+  it("never fires sensor-offline for a zone with no temperature sensor at all", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-ghost",
+        hasTemperatureSensor: false,
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      stale_threshold_minutes: 1,
+      sensor_offline_alert_minutes: 1,
+    });
+
+    await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    // Ten minutes later — comfortably past both thresholds, if either
+    // applied to a sensorless zone at all.
+    const zonesTick2 = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-ghost",
+        hasTemperatureSensor: false,
+        state: persisted.get("z1"),
+      }),
+    ];
+    const deps2 = makeDeps(client, persisted, NOW + 10 * 60000);
+    await runTick(makeAirHandler(), zonesTick2, ctx, deps2);
+
+    const alerting2 = deps2.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting2.getSentKeys().has("alert:sensorOffline:z1")).toBe(false);
   });
 });
 

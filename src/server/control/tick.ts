@@ -885,11 +885,18 @@ export async function runTick(
     // matters regardless of tracking mode — deliberately NOT gated on
     // observation_only, since a dead sensor is exactly what that zone's
     // owner still wants to know about.
+    //
+    // It IS gated on has_temperature_sensor, though — a zone with no
+    // sensor at all has calibratedTemp null on every tick forever, by
+    // design; that's not a fault to alert on, it's the zone's permanent,
+    // expected state. A real, confirmed false positive found live: every
+    // sensorless zone in the house fired this alert simultaneously ~60
+    // minutes after this feature first deployed.
     const priorSensorOfflineSinceMs = parseIsoOrNull(
       zone.state.sensor_offline_since,
     );
     const sensorOfflineSinceMs =
-      reading.calibratedTemp === null
+      zone.config.has_temperature_sensor && reading.calibratedTemp === null
         ? (priorSensorOfflineSinceMs ?? startedAtMs)
         : null;
     zoneSensorOfflineSinceMs.set(zone.id, sensorOfflineSinceMs);
