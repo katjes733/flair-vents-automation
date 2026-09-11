@@ -130,6 +130,57 @@ describe("ZoneDetailDialog", () => {
     expect(screen.getByLabelText(/Sensor calibration offset/)).toHaveValue(0.5);
   });
 
+  it("seeds thermal load flag checkboxes from the zone's config, for a flair_smart_vent zone only", () => {
+    renderDialog(
+      makeZone({
+        config: {
+          ...makeZone().config,
+          thermal_load_flags: ["distant_high_duct_loss"],
+        },
+      }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Distant / high duct loss" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "High internal heat load" }),
+    ).not.toBeChecked();
+  });
+
+  it("hides the thermal load flag checkboxes for a manual_fixed_vent zone — both flags are no-ops off the flair_smart_vent position path", () => {
+    renderDialog(
+      makeZone({
+        ventHardwareType: "manual_fixed_vent",
+        config: {
+          ...makeZone().config,
+          thermal_load_flags: ["distant_high_duct_loss"],
+          manual_vents: [{ position: 75 }],
+        },
+      }),
+    );
+    expect(
+      screen.queryByRole("checkbox", { name: "Distant / high duct loss" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("toggling a thermal load flag checkbox and saving includes it in the submitted config", async () => {
+    renderDialog(makeZone());
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "High internal heat load" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateZone).toHaveBeenCalledWith(
+        "z1",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            thermal_load_flags: ["high_internal_heat_load"],
+          }),
+        }),
+      );
+    });
+  });
+
   it("hides position fields for a no_vent zone", () => {
     renderDialog(
       makeZone({

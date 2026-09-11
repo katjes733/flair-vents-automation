@@ -18,6 +18,10 @@ import {
   type VentHardwareType,
   type Zone,
 } from "~/client/api/zonesApi";
+import {
+  THERMAL_LOAD_FLAGS,
+  type ThermalLoadFlag,
+} from "~/shared/schemas/zoneConfig";
 import type { ZoneTickDecisionRecord } from "~/client/api/airHandlersApi";
 import { extractErrorMessage } from "~/client/api/errorMessage";
 import { useNotification } from "~/client/components/notification/useNotification";
@@ -36,6 +40,17 @@ import RepeatableFlairVentField, {
   type FlairVentRow,
 } from "~/client/components/shared/RepeatableFlairVentField";
 import { useCanWrite } from "~/client/permissions/usePermission";
+
+// Only meaningful for flair_smart_vent zones — both flags only ever feed
+// step1DesiredPosition's proportional-band math, which a manual_fixed_vent
+// zone's position never runs through (see pipeline.ts's classifyNonPositionZone
+// path). Hidden from the form entirely for a manual zone rather than
+// shown-but-disabled, so it isn't discoverable as a dead end before a zone
+// has an actual smart vent.
+const THERMAL_LOAD_FLAG_LABELS: Record<ThermalLoadFlag, string> = {
+  distant_high_duct_loss: "Distant / high duct loss",
+  high_internal_heat_load: "High internal heat load",
+};
 
 interface ZoneDetailDialogProps {
   open: boolean;
@@ -83,6 +98,9 @@ export default function ZoneDetailDialog({
   ]);
   const [hasTemperatureSensor, setHasTemperatureSensor] = useState(true);
   const [hasOccupancySensor, setHasOccupancySensor] = useState(false);
+  const [thermalLoadFlags, setThermalLoadFlags] = useState<ThermalLoadFlag[]>(
+    [],
+  );
   const [flairVents, setFlairVents] = useState<FlairVentRow[]>([
     { flairVentId: "", ductFlowRateLps: "" },
   ]);
@@ -124,6 +142,7 @@ export default function ZoneDetailDialog({
     );
     setHasTemperatureSensor(zone.config.has_temperature_sensor);
     setHasOccupancySensor(zone.config.has_occupancy_sensor);
+    setThermalLoadFlags(zone.config.thermal_load_flags);
     setFlairVents(
       zone.config.flair_vents.length > 0
         ? zone.config.flair_vents.map((v) => ({
@@ -148,6 +167,12 @@ export default function ZoneDetailDialog({
   const manualVentsValid =
     manualVents.length > 0 &&
     manualVents.every((v) => isValidManualVentPosition(v.position));
+
+  const toggleThermalLoadFlag = (flag: ThermalLoadFlag, checked: boolean) => {
+    setThermalLoadFlags((prev) =>
+      checked ? [...prev, flag] : prev.filter((f) => f !== flag),
+    );
+  };
 
   const handleSubmit = useCallback(async () => {
     if (!zone) return;
@@ -176,6 +201,7 @@ export default function ZoneDetailDialog({
           idle_baseline_position: Number(idleBaseline),
           min_vent_position: Number(minPosition),
           max_vent_position: Number(maxPosition),
+          thermal_load_flags: thermalLoadFlags,
           sensor_calibration_offset: fromDisplayDelta(
             Number(calibrationOffset),
             temperatureUnit,
@@ -226,6 +252,7 @@ export default function ZoneDetailDialog({
     onSaved,
     showNotification,
     temperatureUnit,
+    thermalLoadFlags,
     ventHardwareType,
     zone,
   ]);
@@ -332,6 +359,23 @@ export default function ZoneDetailDialog({
                     onChange={(e) => setMaxPosition(e.target.value)}
                   />
                 </Stack>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Thermal load
+                </Typography>
+                {THERMAL_LOAD_FLAGS.map((flag) => (
+                  <FormControlLabel
+                    key={flag}
+                    control={
+                      <Checkbox
+                        checked={thermalLoadFlags.includes(flag)}
+                        onChange={(e) =>
+                          toggleThermalLoadFlag(flag, e.target.checked)
+                        }
+                      />
+                    }
+                    label={THERMAL_LOAD_FLAG_LABELS[flag]}
+                  />
+                ))}
               </>
             )}
 
