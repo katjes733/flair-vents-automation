@@ -101,6 +101,21 @@ export const zoneConfigSchema = z.object({
   // set simultaneously — they aren't mutually exclusive.
   thermal_load_flags: z.array(z.enum(THERMAL_LOAD_FLAGS)).default([]),
   idle_baseline_position: z.number().min(0).max(100).default(100),
+  // Telemetry-only: excluded from schedule-driven comfort tracking
+  // entirely — target resolution short-circuits to "inactive" before even
+  // consulting a schedule (see resolveZoneTargets), so this zone never
+  // becomes demanding/satisfied, never counts toward any no-improvement
+  // calc, and never drives position math. Readings still flow through
+  // (dashboard/history keep working), and the stale-reading "hasn't
+  // changed" alert is suppressed since that's expected noise for a room
+  // nobody spends time in — but the sensor-offline alert ("no reading at
+  // all") still fires, since a dead sensor is worth knowing about
+  // regardless of tracking mode. Enabling this is refused server-side
+  // while any schedule still references the zone (updateZoneWithValidation)
+  // — mirrors the existing zone-delete guard's reasoning: silently
+  // orphaning a schedule row is the kind of change nobody notices until a
+  // room is uncomfortable.
+  observation_only: z.boolean().default(false),
   // Unset (undefined) means "tight targeting" — a real, distinct state from
   // 0, which is why this has no `.default()`: defaulting it to 0 would
   // silently collapse "unset" and "explicitly zero" into the same value.

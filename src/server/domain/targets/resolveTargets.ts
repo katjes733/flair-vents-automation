@@ -14,7 +14,7 @@ import {
 } from "~/server/domain/targets/awayMode";
 
 export type TargetSource =
-  "manual" | "away" | "schedule" | "fallback" | "inactive";
+  "manual" | "away" | "schedule" | "fallback" | "inactive" | "observation_only";
 
 export interface ResolvedTarget {
   setpoint: AbsoluteTemp | null;
@@ -32,18 +32,27 @@ export interface GoverningEvent {
 }
 
 /**
- * The Target Resolution Order: manual override (survives Away) → Away
- * Mode → active schedule event → fallback baseline (only when
- * default_inactive is false). A position-kind manual override bypasses
- * Steps 1-3's position math for that zone, but setpoint resolution keeps
- * running beneath it — a position override doesn't clear the zone's
- * setpoint entirely, since tolerance classification, spike detection, and
- * driving-zone candidacy all still need a real resolved setpoint. See
- * "Comfort tolerance & target resolution order".
+ * The Target Resolution Order: observation-only (always wins, unconditionally)
+ * → manual override (survives Away) → Away Mode → active schedule event →
+ * fallback baseline (only when default_inactive is false). A position-kind
+ * manual override bypasses Steps 1-3's position math for that zone, but
+ * setpoint resolution keeps running beneath it — a position override
+ * doesn't clear the zone's setpoint entirely, since tolerance
+ * classification, spike detection, and driving-zone candidacy all still
+ * need a real resolved setpoint. See "Comfort tolerance & target
+ * resolution order".
+ *
+ * observation_only is checked first, ahead of even a manual override —
+ * it's meant to be an unconditional "this zone is never tracked," not one
+ * more source a manual override could still shadow. Server-side validation
+ * (updateZoneWithValidation) already refuses to enable it while any
+ * schedule references the zone, but this ordering means even a stray
+ * schedule/override reference can't silently resurrect tracking.
  */
 export function resolveZoneTargets(params: {
   zoneId: string;
   nowMs: number;
+  observationOnly: boolean;
   manualOverride: StoredManualOverride | null;
   awaySource: AwaySource;
   awayTargets: { setpoint: AbsoluteTemp; tolerance: TempDelta };
@@ -63,6 +72,14 @@ export function resolveZoneTargets(params: {
   // fix for the same underlying flapping.
   minimumComfortTolerance: TempDelta;
 }): ResolvedTarget {
+  if (params.observationOnly) {
+    return {
+      setpoint: null,
+      tolerance: null,
+      source: "observation_only",
+      manualPositionPct: null,
+    };
+  }
   const manual = resolveManualOverride(params.manualOverride, params.nowMs);
   const result: ResolvedTarget = manual
     ? manual.kind === "position"

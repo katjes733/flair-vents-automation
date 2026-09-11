@@ -66,6 +66,7 @@ describe("updateZoneState", () => {
       vents: [],
       last_reading_value: null,
       last_reading_changed_at: null,
+      sensor_offline_since: null,
       stale: false,
       spike_active: false,
       spike_since: null,

@@ -826,6 +826,7 @@ export async function runTick(
 
   // --- Steps 6-7: staleness + spike, per zone ---------------------------
   const zoneStaleness = new Map<string, boolean>();
+  const zoneSensorOfflineSinceMs = new Map<string, number | null>();
   const zoneSpike = new Map<
     string,
     { spiking: boolean; belowThresholdSinceMs: number | null }
@@ -862,8 +863,11 @@ export async function runTick(
     });
     zoneStaleness.set(zone.id, staleness.stale);
 
+    // "Hasn't changed" is expected/benign for an observation-only zone
+    // nobody spends time in — see zoneConfigSchema's own comment on
+    // observation_only — so that alert alone is suppressed for it.
     const staleAlertKey = `alert:staleSensor:${zone.id}`;
-    if (staleness.stale) {
+    if (staleness.stale && !zone.config.observation_only) {
       await deps.alerting.alertOnce({
         key: staleAlertKey,
         subject: `${zone.name}: sensor reading is stale`,
@@ -873,6 +877,41 @@ export async function runTick(
       });
     } else {
       await deps.alerting.clearAlert(staleAlertKey);
+    }
+
+    // Distinct from the "hasn't changed" staleness check above: this is
+    // "no reading has arrived at all" (calibratedTemp null — see
+    // ingestZoneRoomReading), a real connectivity/hardware signal that
+    // matters regardless of tracking mode — deliberately NOT gated on
+    // observation_only, since a dead sensor is exactly what that zone's
+    // owner still wants to know about.
+    const priorSensorOfflineSinceMs = parseIsoOrNull(
+      zone.state.sensor_offline_since,
+    );
+    const sensorOfflineSinceMs =
+      reading.calibratedTemp === null
+        ? (priorSensorOfflineSinceMs ?? startedAtMs)
+        : null;
+    zoneSensorOfflineSinceMs.set(zone.id, sensorOfflineSinceMs);
+
+    const sensorOfflineAlertKey = `alert:sensorOffline:${zone.id}`;
+    const offlineMinutes =
+      sensorOfflineSinceMs !== null
+        ? (startedAtMs - sensorOfflineSinceMs) / 60000
+        : 0;
+    if (
+      sensorOfflineSinceMs !== null &&
+      offlineMinutes >= ctx.settings.sensor_offline_alert_minutes
+    ) {
+      await deps.alerting.alertOnce({
+        key: sensorOfflineAlertKey,
+        subject: `${zone.name}: sensor offline`,
+        text: `Zone "${zone.name}" has reported no sensor reading at all for over ${ctx.settings.sensor_offline_alert_minutes} minute(s) — the sensor may be offline or disconnected.`,
+        rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+        nowMs: startedAtMs,
+      });
+    } else {
+      await deps.alerting.clearAlert(sensorOfflineAlertKey);
     }
 
     // Zone-level rollup: degraded if ANY of its vents are. degraded_since
@@ -1022,6 +1061,7 @@ export async function runTick(
     const target = resolveZoneTargets({
       zoneId: zone.id,
       nowMs: startedAtMs,
+      observationOnly: zone.config.observation_only,
       manualOverride: override
         ? {
             config: override.config,
@@ -1941,6 +1981,9 @@ export async function runTick(
         reading.calibratedTemp !== zone.state.last_reading_value
           ? toIso(startedAtMs)
           : zone.state.last_reading_changed_at,
+      sensor_offline_since: zoneSensorOfflineSinceMs.get(zone.id)
+        ? toIso(zoneSensorOfflineSinceMs.get(zone.id)!)
+        : null,
       stale: zoneStaleness.get(zone.id) ?? false,
       spike_active: zoneSpike.get(zone.id)?.spiking ?? false,
       spike_since: zoneSpike.get(zone.id)?.belowThresholdSinceMs

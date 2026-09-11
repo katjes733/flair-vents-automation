@@ -45,6 +45,7 @@ const BASE_CONFIG = {
   homekit_sensor_serial: null,
   thermal_load_flags: [],
   idle_baseline_position: 100,
+  observation_only: false,
   sensor_calibration_offset: 0,
   min_vent_position: 0,
   max_vent_position: 100,
@@ -355,6 +356,55 @@ describe("updateZoneWithValidation", () => {
     ]);
     await updateZoneWithValidation("inst-1", "z1", { name: "Bedroom" });
     expect(updateZone).toHaveBeenCalledOnce();
+  });
+
+  // Mirrors deleteZoneWithValidation's own schedule-reference guard, from
+  // the other direction: observation_only is meant to unconditionally
+  // detach a zone from schedule-driven tracking (see resolveZoneTargets),
+  // so enabling it while a schedule still assigns the zone is refused
+  // rather than silently orphaning that schedule row.
+  it("refuses to enable observation_only while a schedule still references the zone", async () => {
+    getZoneById.mockResolvedValue({
+      id: "z1",
+      installationId: "inst-1",
+      ventHardwareType: "flair_smart_vent",
+      flairRoomId: null,
+      config: BASE_CONFIG,
+    });
+    getSchedulesForInstallation.mockResolvedValue([
+      {
+        name: "Night",
+        events: [{ zone_settings: [{ zone_id: "z1" }] }],
+      },
+    ]);
+    await expect(
+      updateZoneWithValidation("inst-1", "z1", {
+        config: { observation_only: true },
+      }),
+    ).rejects.toThrow(/Night/);
+    expect(updateZone).not.toHaveBeenCalled();
+  });
+
+  it("allows enabling observation_only once no schedule references the zone", async () => {
+    getZoneById
+      .mockResolvedValueOnce({
+        id: "z1",
+        installationId: "inst-1",
+        ventHardwareType: "flair_smart_vent",
+        flairRoomId: null,
+        config: BASE_CONFIG,
+      })
+      .mockResolvedValueOnce({ id: "z1", name: "Bedroom" });
+    getSchedulesForInstallation.mockResolvedValue([]);
+    await updateZoneWithValidation("inst-1", "z1", {
+      config: { observation_only: true },
+    });
+    expect(updateZone).toHaveBeenCalledWith(
+      "z1",
+      expect.objectContaining({
+        config: expect.objectContaining({ observation_only: true }),
+      }),
+    );
   });
 });
 

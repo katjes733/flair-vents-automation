@@ -17,6 +17,7 @@ function base() {
   return {
     zoneId: "z1",
     nowMs: NOW,
+    observationOnly: false,
     manualOverride: null,
     awaySource: NO_AWAY,
     awayTargets: AWAY_TARGETS,
@@ -249,6 +250,48 @@ describe("resolveZoneTargets", () => {
         },
       });
       expect(result.tolerance).toBe(0.56);
+    });
+  });
+
+  describe("observation_only", () => {
+    it("wins over everything else, including a manual override", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        observationOnly: true,
+        manualOverride: {
+          config: {
+            kind: "setpoint",
+            value: 20,
+            hold_type: "permanent",
+            actor: "Martin",
+          },
+          expiresAtMs: null,
+          revokedAtMs: null,
+        },
+        governingEvent: {
+          mode: "active",
+          coolSetpoint: asAbsoluteTemp(22),
+          heatSetpoint: asAbsoluteTemp(20),
+          toleranceOverride: null,
+        },
+      });
+      expect(result.setpoint).toBeNull();
+      expect(result.tolerance).toBeNull();
+      expect(result.source).toBe("observation_only");
+      expect(result.manualPositionPct).toBeNull();
+    });
+
+    it("wins over Away Mode too", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        observationOnly: true,
+        awaySource: {
+          ecobeeAwayZoneIds: new Set(["z1"]),
+          nativeAwayZoneIds: new Set(),
+        },
+      });
+      expect(result.setpoint).toBeNull();
+      expect(result.source).toBe("observation_only");
     });
   });
 });

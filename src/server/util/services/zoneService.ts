@@ -9,8 +9,35 @@ import {
   getZonesForInstallation,
   type ZoneData,
 } from "~/server/util/routes/zone";
-import { getSchedulesForInstallation } from "~/server/util/routes/schedule";
+import {
+  getSchedulesForInstallation,
+  type ScheduleData,
+} from "~/server/util/routes/schedule";
 import type { VentHardwareType, ZoneConfig } from "~/shared/schemas/zoneConfig";
+
+/**
+ * Every schedule that assigns this zone anywhere — zone_settings,
+ * zone_priority_order, or a driving_zone_overrides target. Shared by the
+ * delete guard below and updateZoneWithValidation's observation_only guard,
+ * since both are really the same question: "can this zone still be safely
+ * detached from schedule-driven control?"
+ */
+async function findSchedulesReferencingZone(
+  installationId: string,
+  zoneId: string,
+): Promise<ScheduleData[]> {
+  const schedules = await getSchedulesForInstallation(installationId);
+  return schedules.filter(
+    (s) =>
+      s.events.some((e) =>
+        e.zone_settings.some((row) => row.zone_id === zoneId),
+      ) ||
+      s.events.some((e) => e.zone_priority_order?.includes(zoneId)) ||
+      s.events.some((e) =>
+        Object.values(e.driving_zone_overrides ?? {}).includes(zoneId),
+      ),
+  );
+}
 
 /**
  * A column-level FK on air_handler_id guarantees the referenced row
@@ -180,6 +207,25 @@ export async function updateZoneWithValidation(
     mergedConfig.flair_vents.map((v) => v.flair_vent_id),
     zoneId,
   );
+  // Mirrors the delete guard above — an observation_only zone is meant to
+  // be unconditionally detached from schedule-driven control (see
+  // resolveZoneTargets), so enabling it while a schedule still assigns
+  // this zone would either silently orphan that schedule row or (worse)
+  // create a config that looks consistent but the target-resolution
+  // ordering quietly ignores. Refused rather than auto-cleaned, same
+  // reasoning as the delete guard's own comment.
+  if (mergedConfig.observation_only) {
+    const referencing = await findSchedulesReferencingZone(
+      existing.installationId,
+      zoneId,
+    );
+    if (referencing.length > 0) {
+      throw new HttpError(
+        `Cannot mark zone ${zoneId} observation-only — referenced by schedule(s): ${referencing.map((s) => s.name).join(", ")}. Remove it from those schedules first.`,
+        409,
+      );
+    }
+  }
   if (patch.name !== undefined || patch.airHandlerId !== undefined) {
     await assertNoNameConflict(
       existing.installationId,
@@ -219,16 +265,9 @@ export async function deleteZoneWithValidation(
   if (!existing || existing.installationId !== installationId) {
     throw new HttpError(`Zone ${zoneId} not found.`, 404);
   }
-  const schedules = await getSchedulesForInstallation(existing.installationId);
-  const referencing = schedules.filter(
-    (s) =>
-      s.events.some((e) =>
-        e.zone_settings.some((row) => row.zone_id === zoneId),
-      ) ||
-      s.events.some((e) => e.zone_priority_order?.includes(zoneId)) ||
-      s.events.some((e) =>
-        Object.values(e.driving_zone_overrides ?? {}).includes(zoneId),
-      ),
+  const referencing = await findSchedulesReferencingZone(
+    existing.installationId,
+    zoneId,
   );
   if (referencing.length > 0) {
     throw new HttpError(

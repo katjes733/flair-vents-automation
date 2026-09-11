@@ -74,6 +74,7 @@ const ZONE: Zone = {
     has_occupancy_sensor: false,
     homekit_sensor_serial: null,
     thermal_load_flags: [],
+    observation_only: false,
     idle_baseline_position: 100,
     sensor_calibration_offset: 0,
     min_vent_position: 0,

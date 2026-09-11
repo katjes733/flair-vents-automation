@@ -74,6 +74,7 @@ function makeZone(params: {
   // setpoint_delivery_mode "homekit". Left unset (null) by every existing
   // call site — zero behavior change for tests that never touch this.
   homekitSensorSerial?: string;
+  observationOnly?: boolean;
   state?: Partial<ZoneRuntimeState>;
 }): ZoneData {
   return {
@@ -86,6 +87,7 @@ function makeZone(params: {
     config: resolveZoneConfig({
       has_temperature_sensor: true,
       idle_baseline_position: 100,
+      observation_only: params.observationOnly ?? false,
       flair_vents: (
         params.flairVentIds ?? [params.flairRoomId.replace("room", "vent")]
       ).map((flair_vent_id) => ({ flair_vent_id })),
@@ -1715,6 +1717,204 @@ describe("runTick — stale sensor safeguard", () => {
     expect(
       decision3.zones.find((z) => z.zone_id === "z1")?.classification,
     ).toBe("demanding");
+  });
+});
+
+describe("runTick — sensor offline vs. observation-only", () => {
+  // "room-ghost" is deliberately never registered via setupFlairFixture —
+  // snapshot.roomsById.get() misses, so `room` ingests as null and
+  // calibratedTemp is null every tick, exactly simulating a sensor that
+  // has stopped reporting entirely (as opposed to one that's reporting an
+  // unchanged value, which is what the "stale sensor safeguard" tests
+  // above exercise).
+  it("fires the sensor-offline alert once a reading has been missing entirely for longer than the threshold", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-ghost" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ sensor_offline_alert_minutes: 1 });
+
+    // Tick 1: first tick with no reading — starts the offline timer.
+    const deps1 = makeDeps(client, persisted, NOW);
+    await runTick(makeAirHandler(), zones, ctx, deps1);
+    const alerting1 = deps1.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting1.getSentKeys().has("alert:sensorOffline:z1")).toBe(false);
+
+    // Tick 2, two minutes later, still no reading — past the 1-minute
+    // threshold.
+    const zonesTick2 = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-ghost",
+        state: persisted.get("z1"),
+      }),
+    ];
+    const deps2 = makeDeps(client, persisted, NOW + 2 * 60000);
+    await runTick(makeAirHandler(), zonesTick2, ctx, deps2);
+    const alerting2 = deps2.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting2.getSentKeys().has("alert:sensorOffline:z1")).toBe(true);
+  });
+
+  // A zone whose sensor was working (so a real "last changed" baseline
+  // exists — classifyStaleness can't fire without one) and then goes
+  // dark: room-1 is deregistered from the fixture entirely partway
+  // through, so calibratedTemp flips from a real value to null on tick 2
+  // without the zone's own flairRoomId changing — the same shape a real
+  // dropped Flair/Ecobee sensor takes.
+  it("suppresses the 'hasn't changed' stale alert for an observation-only zone but still fires sensor-offline", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({ id: "z1", flairRoomId: "room-1", observationOnly: true }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      stale_threshold_minutes: 1,
+      sensor_offline_alert_minutes: 1,
+    });
+
+    // Tick 1: a real reading establishes the staleness baseline.
+    await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    // room-1 vanishes from the snapshot entirely — the sensor going dark.
+    // This tick alone only *starts* the offline timer (0 minutes elapsed
+    // since going dark, even though the stale-since-tick-1 timer is
+    // already past its own threshold) — a third tick is needed before the
+    // offline duration itself crosses sensor_offline_alert_minutes.
+    setupFlairFixture(client, []);
+    const zonesTick2 = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        observationOnly: true,
+        state: persisted.get("z1"),
+      }),
+    ];
+    await runTick(
+      makeAirHandler(),
+      zonesTick2,
+      ctx,
+      makeDeps(client, persisted, NOW + 60000),
+    );
+
+    const zonesTick3 = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        observationOnly: true,
+        state: persisted.get("z1"),
+      }),
+    ];
+    const deps3 = makeDeps(client, persisted, NOW + 3 * 60000);
+    await runTick(makeAirHandler(), zonesTick3, ctx, deps3);
+
+    const alerting3 = deps3.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting3.getSentKeys().has("alert:staleSensor:z1")).toBe(false);
+    expect(alerting3.getSentKeys().has("alert:sensorOffline:z1")).toBe(true);
+  });
+
+  it("keeps the 'hasn't changed' stale alert for a normal (non-observation-only) zone with a missing reading", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 26,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      stale_threshold_minutes: 1,
+      sensor_offline_alert_minutes: 1,
+    });
+
+    await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    setupFlairFixture(client, []);
+    const zonesTick2 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    await runTick(
+      makeAirHandler(),
+      zonesTick2,
+      ctx,
+      makeDeps(client, persisted, NOW + 60000),
+    );
+
+    const zonesTick3 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    const deps3 = makeDeps(client, persisted, NOW + 3 * 60000);
+    await runTick(makeAirHandler(), zonesTick3, ctx, deps3);
+
+    const alerting3 = deps3.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting3.getSentKeys().has("alert:staleSensor:z1")).toBe(true);
+    expect(alerting3.getSentKeys().has("alert:sensorOffline:z1")).toBe(true);
+  });
+});
+
+describe("runTick — observation-only target resolution", () => {
+  it("never resolves a setpoint or becomes demanding, even against the fallback setpoint", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // Far above any plausible setpoint — would be unambiguously
+      // "demanding" for a normally-tracked zone.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({ id: "z1", flairRoomId: "room-1", observationOnly: true }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+
+    const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+
+    const zoneDecision = decision.zones.find((z) => z.zone_id === "z1");
+    expect(zoneDecision?.resolved_setpoint).toBeNull();
+    expect(zoneDecision?.classification).not.toBe("demanding");
   });
 });
 

@@ -51,12 +51,26 @@ async function assertReferencedZonesValid(
 ): Promise<void> {
   const zones = await getZonesForInstallation(installationId);
   const knownZoneIds = new Set(zones.map((z) => z.id));
+  // The mirror of updateZoneWithValidation's own guard — that one refuses
+  // to mark a zone observation-only while a schedule references it; this
+  // refuses the schedule from the other direction, so there's no ordering
+  // where one side's check can be bypassed by editing the other resource
+  // first. See zoneConfigSchema's own comment on observation_only.
+  const observationOnlyZoneIds = new Set(
+    zones.filter((z) => z.config.observation_only).map((z) => z.id),
+  );
 
   for (const event of events) {
     for (const row of event.zone_settings) {
       if (!knownZoneIds.has(row.zone_id)) {
         throw new HttpError(
           `zone_settings references unknown or cross-installation zone ${row.zone_id}.`,
+          400,
+        );
+      }
+      if (observationOnlyZoneIds.has(row.zone_id)) {
+        throw new HttpError(
+          `zone_settings references zone ${row.zone_id}, which is observation-only and excluded from schedule-driven tracking.`,
           400,
         );
       }

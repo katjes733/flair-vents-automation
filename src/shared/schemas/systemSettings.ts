@@ -105,6 +105,15 @@ export const systemSettingsConfigSchema = z.object({
   // zone-specific) — 15 minutes was generating false-positive staleness
   // alerts/exclusions on ordinary reporting lag, not real freezes.
   stale_threshold_minutes: z.number().positive().default(25),
+  // A distinct, looser sibling of stale_threshold_minutes — that setting
+  // fires on "the reading hasn't *changed*," which is expected/benign for
+  // an observation-only zone nobody spends time in; this fires on "no
+  // reading has arrived *at all*" (`calibratedTemp` null — see
+  // ingestZoneRoomReading), which is a real connectivity/hardware signal
+  // regardless of how a zone is tracked. Looser than the 25-minute stale
+  // threshold for the same reason that one was raised from 15: ordinary
+  // Flair/Ecobee reporting gaps shouldn't false-positive as "offline."
+  sensor_offline_alert_minutes: z.number().positive().default(60),
 
   // --- Driving setpoint / Ecobee mechanism ---
   // Hysteresis margin/dwell are stated defaults (Driving setpoint selection

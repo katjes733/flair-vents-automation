@@ -212,7 +212,14 @@ export default function EventEditorDialog({
   }
 
   const assignedZoneIds = new Set(zoneSettings.map((r) => r.zoneId));
-  const unassignedZones = zones.filter((z) => !assignedZoneIds.has(z.id));
+  // observation_only zones are excluded from the "add zone" picker — never
+  // addable to a schedule, mirroring the server-side guard in
+  // scheduleService.ts's assertReferencedZonesValid. `zonesById` below
+  // still includes them so an already-assigned row (from before the flag
+  // was set, or a stale reference) still renders its name correctly.
+  const unassignedZones = zones.filter(
+    (z) => !assignedZoneIds.has(z.id) && !z.config.observation_only,
+  );
   const zonesById = new Map(zones.map((z) => [z.id, z]));
 
   const timesValid = startTime !== endTime;

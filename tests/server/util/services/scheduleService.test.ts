@@ -25,7 +25,10 @@ const {
   deleteScheduleWithValidation,
 } = await import("~/server/util/services/scheduleService");
 
-const ZONES = [{ id: "z1" }, { id: "z2" }];
+const ZONES = [
+  { id: "z1", config: { observation_only: false } },
+  { id: "z2", config: { observation_only: false } },
+];
 
 describe("createScheduleForInstallation", () => {
   beforeEach(() => {
@@ -72,6 +75,32 @@ describe("createScheduleForInstallation", () => {
         config: { enabled: true, default_inactive: false },
       }),
     ).rejects.toThrow(/unknown or cross-installation/);
+  });
+
+  // Mirrors updateZoneWithValidation's own observation_only guard, from
+  // the schedule side — see zoneConfigSchema's comment on observation_only.
+  it("rejects a zone_settings row referencing an observation-only zone", async () => {
+    getZonesForInstallation.mockResolvedValue([
+      { id: "z1", config: { observation_only: true } },
+      { id: "z2", config: { observation_only: false } },
+    ]);
+    await expect(
+      createScheduleForInstallation({
+        installationId: "inst-1",
+        name: "Night",
+        events: [
+          {
+            mode: "inactive",
+            start_time: "20:00",
+            end_time: "07:00",
+            days_of_week: 0b1111111,
+            zone_settings: [{ zone_id: "z1", assume_occupied: false }],
+          },
+        ],
+        config: { enabled: true, default_inactive: false },
+      }),
+    ).rejects.toThrow(/observation-only/);
+    expect(createSchedule).not.toHaveBeenCalled();
   });
 
   it("assigns a fresh id/created_at/modified_at to a brand-new event", async () => {
