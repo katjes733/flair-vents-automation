@@ -91,13 +91,23 @@ describe("buildZoneTemperatureData", () => {
       }),
     ];
     const rows = buildZoneTemperatureData(points, "z1", "F");
-    expect(rows).toEqual([{ time: 100, temp: 68, setpoint: 71.6 }]);
+    expect(rows).toEqual([
+      { time: 100, temp: 68, setpoint: 71.6, occupied: false },
+    ]);
   });
 
-  it("returns nulls for a tick where the zone doesn't appear", () => {
+  it("returns nulls for a tick where the zone doesn't appear, including occupied", () => {
     const points = [makePoint(100, { zones: [] })];
     const rows = buildZoneTemperatureData(points, "z1", "C");
-    expect(rows).toEqual([{ time: 100, temp: null, setpoint: null }]);
+    expect(rows).toEqual([
+      { time: 100, temp: null, setpoint: null, occupied: null },
+    ]);
+  });
+
+  it("reads the zone's own occupied flag when it appears in the tick", () => {
+    const points = [makePoint(100, { zones: [makeZone({ occupied: true })] })];
+    const rows = buildZoneTemperatureData(points, "z1", "C");
+    expect(rows[0].occupied).toBe(true);
   });
 });
 
