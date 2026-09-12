@@ -379,6 +379,57 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           "How often, in ticks, a vent's actual reported position is re-checked against its intended target as a backstop — independent of normal dispatch, so a vent that silently drifts between commands still gets caught.",
         tier: "advanced",
       },
+      {
+        path: "vent_misalignment_auto_recalibration_enabled",
+        baseLabel: "Vent misalignment auto-recalibration",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          "Detects a vent that's physically stuck partway open despite reporting 0% (a satisfied zone whose room keeps drifting with the active call anyway) and auto-corrects by forcing it fully open, then letting it re-close normally once it reports open. No email alert by default — see Vent misalignment alert below.",
+        tier: "advanced",
+      },
+      {
+        path: "vent_misalignment_temp_threshold_c",
+        baseLabel: "Vent misalignment temp threshold",
+        kind: "tempDelta",
+        step: 0.1,
+        description:
+          "How far a zone's temperature has to keep moving in the active call's direction, since its vent last reported fully closed, before a misalignment is suspected. Grounded in real observed drift (~1°F per call segment); only consulted while auto-recalibration above is enabled.",
+        tier: "advanced",
+      },
+      {
+        path: "vent_misalignment_recalibration_cooldown_hours",
+        baseLabel: "Vent misalignment recalibration cooldown",
+        kind: "hours",
+        min: 0,
+        description:
+          "How long to wait after a recalibration cycle finishes (opened or timed out) before starting a new detection window for the same zone — prevents repeatedly cycling a vent that's genuinely, persistently misaligned.",
+        tier: "advanced",
+      },
+      {
+        path: "vent_misalignment_max_open_wait_minutes",
+        baseLabel: "Vent misalignment max open wait",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long a forced-open recalibration will wait for the vent to actually report itself open before giving up and treating the cycle as timed out (still starting the cooldown either way).",
+        tier: "advanced",
+      },
+      {
+        path: "vent_misalignment_alert_enabled",
+        baseLabel: "Vent misalignment alert",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          "Send an email each time a vent misalignment is suspected. Off by default — auto-recalibration handles it without intervention, and this is common enough on real hardware that alerting on it would just be noise. History is always visible on the zone's Telemetry page regardless of this setting.",
+        tier: "advanced",
+      },
     ],
   },
   {
