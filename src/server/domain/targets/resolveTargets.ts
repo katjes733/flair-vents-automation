@@ -18,7 +18,10 @@ export type TargetSource =
 
 export interface ResolvedTarget {
   setpoint: AbsoluteTemp | null;
-  tolerance: TempDelta | null;
+  // Asymmetric — see zoneConfigSchema's own comment on
+  // comfort_demand_tolerance/comfort_overshoot_tolerance.
+  demandTolerance: TempDelta | null;
+  overshootTolerance: TempDelta | null;
   source: TargetSource;
   /** Set only when source is "manual" and the override kind is "position". */
   manualPositionPct: number | null;
@@ -28,7 +31,8 @@ export interface GoverningEvent {
   mode: "active" | "inactive";
   coolSetpoint: AbsoluteTemp | null;
   heatSetpoint: AbsoluteTemp | null;
-  toleranceOverride: TempDelta | null;
+  demandToleranceOverride: TempDelta | null;
+  overshootToleranceOverride: TempDelta | null;
 }
 
 /**
@@ -55,27 +59,36 @@ export function resolveZoneTargets(params: {
   observationOnly: boolean;
   manualOverride: StoredManualOverride | null;
   awaySource: AwaySource;
+  // Away Mode keeps one symmetric system-wide tolerance (away_tolerance) —
+  // not part of this feature's asymmetric split, so it's mapped to both
+  // sides equally below.
   awayTargets: { setpoint: AbsoluteTemp; tolerance: TempDelta };
   governingEvent: GoverningEvent | null;
   defaultInactive: boolean;
   fallback: { setpoint: AbsoluteTemp; tolerance: TempDelta | null };
-  zoneTolerance: TempDelta | null;
+  zoneDemandTolerance: TempDelta | null;
+  zoneOvershootTolerance: TempDelta | null;
   state: HvacCallState;
-  // A resolved tolerance of unset/zero — including a schedule event's own
-  // explicit `comfort_tolerance: 0`/unset — is floored up to at least this
-  // value wherever a real setpoint is resolved. A real, confirmed gap: a
-  // near-zero tolerance combined with ordinary sensor noise (~±0.5°C
-  // observed live) flapped a zone's raw classification every tick, which
-  // — for a zone whose idle_baseline_position equals its max_vent_position
-  // — snapped position straight back to fully open on any hairline
-  // "demanding" tick. See also stabilizeClassification, a second, layered
-  // fix for the same underlying flapping.
+  // A resolved demand tolerance of unset/zero — including a schedule
+  // event's own explicit `comfort_demand_tolerance: 0`/unset — is floored
+  // up to at least this value wherever a real setpoint is resolved. A
+  // real, confirmed gap: a near-zero tolerance combined with ordinary
+  // sensor noise (~±0.5°C observed live) flapped a zone's raw
+  // classification every tick, which — for a zone whose
+  // idle_baseline_position equals its max_vent_position — snapped
+  // position straight back to fully open on any hairline "demanding"
+  // tick. See also stabilizeClassification, a second, layered fix for the
+  // same underlying flapping. Deliberately NOT applied to the overshoot
+  // side — see minimum_comfort_tolerance_c's own comment in
+  // systemSettings.ts for why a tight/zero overshoot tolerance is meant to
+  // be reachable.
   minimumComfortTolerance: TempDelta;
 }): ResolvedTarget {
   if (params.observationOnly) {
     return {
       setpoint: null,
-      tolerance: null,
+      demandTolerance: null,
+      overshootTolerance: null,
       source: "observation_only",
       manualPositionPct: null,
     };
@@ -90,7 +103,8 @@ export function resolveZoneTargets(params: {
         }
       : {
           setpoint: manual.value as AbsoluteTemp,
-          tolerance: params.zoneTolerance,
+          demandTolerance: params.zoneDemandTolerance,
+          overshootTolerance: params.zoneOvershootTolerance,
           source: "manual",
           manualPositionPct: null,
         }
@@ -106,6 +120,8 @@ export function resolveZoneTargets(params: {
  * tolerance to a literal 0 would silently collapse "unset ⇒ tight
  * targeting" and "explicitly zero" into the same on-the-wire value, which
  * `resolveComfortTolerance`'s own contract explicitly treats as distinct.
+ * Only the demand side is floored — see minimumComfortTolerance's own
+ * comment above.
  */
 function applyMinimumToleranceFloor(
   target: ResolvedTarget,
@@ -114,7 +130,9 @@ function applyMinimumToleranceFloor(
   if (target.setpoint === null || minimum <= 0) return target;
   return {
     ...target,
-    tolerance: asTempDelta(Math.max(target.tolerance ?? 0, minimum)),
+    demandTolerance: asTempDelta(
+      Math.max(target.demandTolerance ?? 0, minimum),
+    ),
   };
 }
 
@@ -125,7 +143,8 @@ function resolveBeneathManual(
   if (away) {
     return {
       setpoint: params.awayTargets.setpoint,
-      tolerance: params.awayTargets.tolerance,
+      demandTolerance: params.awayTargets.tolerance,
+      overshootTolerance: params.awayTargets.tolerance,
       source: "away",
       manualPositionPct: null,
     };
@@ -135,7 +154,8 @@ function resolveBeneathManual(
     if (params.governingEvent.mode === "inactive") {
       return {
         setpoint: null,
-        tolerance: null,
+        demandTolerance: null,
+        overshootTolerance: null,
         source: "inactive",
         manualPositionPct: null,
       };
@@ -146,8 +166,12 @@ function resolveBeneathManual(
         : params.governingEvent.heatSetpoint;
     return {
       setpoint,
-      tolerance:
-        params.governingEvent.toleranceOverride ?? params.zoneTolerance,
+      demandTolerance:
+        params.governingEvent.demandToleranceOverride ??
+        params.zoneDemandTolerance,
+      overshootTolerance:
+        params.governingEvent.overshootToleranceOverride ??
+        params.zoneOvershootTolerance,
       source: "schedule",
       manualPositionPct: null,
     };
@@ -156,7 +180,8 @@ function resolveBeneathManual(
   if (params.defaultInactive) {
     return {
       setpoint: null,
-      tolerance: null,
+      demandTolerance: null,
+      overshootTolerance: null,
       source: "inactive",
       manualPositionPct: null,
     };
@@ -164,7 +189,9 @@ function resolveBeneathManual(
 
   return {
     setpoint: params.fallback.setpoint,
-    tolerance: params.fallback.tolerance ?? params.zoneTolerance,
+    demandTolerance: params.fallback.tolerance ?? params.zoneDemandTolerance,
+    overshootTolerance:
+      params.fallback.tolerance ?? params.zoneOvershootTolerance,
     source: "fallback",
     manualPositionPct: null,
   };

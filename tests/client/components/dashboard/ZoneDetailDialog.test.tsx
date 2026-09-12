@@ -119,7 +119,8 @@ describe("ZoneDetailDialog", () => {
           observation_only: false,
           capacity_sharing_exempt: false,
           idle_baseline_position: 80,
-          comfort_tolerance: 1.5,
+          comfort_demand_tolerance: 1.5,
+          comfort_overshoot_tolerance: 0.75,
           sensor_calibration_offset: 0.5,
           min_vent_position: 10,
           max_vent_position: 90,
@@ -130,7 +131,8 @@ describe("ZoneDetailDialog", () => {
       }),
     );
     expect(screen.getByLabelText("Idle baseline (0–100%)")).toHaveValue(80);
-    expect(screen.getByLabelText(/Comfort tolerance/)).toHaveValue(1.5);
+    expect(screen.getByLabelText(/Demand tolerance/)).toHaveValue(1.5);
+    expect(screen.getByLabelText(/Overshoot tolerance/)).toHaveValue(0.8);
     expect(screen.getByLabelText(/Sensor calibration offset/)).toHaveValue(0.5);
   });
 
@@ -320,11 +322,20 @@ describe("ZoneDetailDialog", () => {
     });
   });
 
-  it("treats a blank comfort tolerance as unset, not zero", async () => {
+  it("treats a blank demand/overshoot tolerance as unset, not zero", async () => {
     renderDialog(
-      makeZone({ config: { ...makeZone().config, comfort_tolerance: 2 } }),
+      makeZone({
+        config: {
+          ...makeZone().config,
+          comfort_demand_tolerance: 2,
+          comfort_overshoot_tolerance: 1,
+        },
+      }),
     );
-    fireEvent.change(screen.getByLabelText(/Comfort tolerance/), {
+    fireEvent.change(screen.getByLabelText(/Demand tolerance/), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText(/Overshoot tolerance/), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -332,7 +343,10 @@ describe("ZoneDetailDialog", () => {
       expect(updateZone).toHaveBeenCalledWith(
         "z1",
         expect.objectContaining({
-          config: expect.objectContaining({ comfort_tolerance: undefined }),
+          config: expect.objectContaining({
+            comfort_demand_tolerance: undefined,
+            comfort_overshoot_tolerance: undefined,
+          }),
         }),
       );
     });

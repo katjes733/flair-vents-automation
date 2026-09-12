@@ -24,7 +24,8 @@ function base() {
     governingEvent: null,
     defaultInactive: false,
     fallback: FALLBACK,
-    zoneTolerance: null,
+    zoneDemandTolerance: null,
+    zoneOvershootTolerance: null,
     state: "COOLING_CALL" as const,
     minimumComfortTolerance: asTempDelta(0),
   };
@@ -51,7 +52,8 @@ describe("resolveZoneTargets", () => {
     });
     expect(result).toEqual({
       setpoint: 20,
-      tolerance: null,
+      demandTolerance: null,
+      overshootTolerance: null,
       source: "manual",
       manualPositionPct: null,
     });
@@ -104,7 +106,8 @@ describe("resolveZoneTargets", () => {
         mode: "active",
         coolSetpoint: asAbsoluteTemp(21),
         heatSetpoint: asAbsoluteTemp(19),
-        toleranceOverride: null,
+        demandToleranceOverride: null,
+        overshootToleranceOverride: null,
       },
     });
     expect(result.source).toBe("away");
@@ -118,12 +121,14 @@ describe("resolveZoneTargets", () => {
         mode: "active",
         coolSetpoint: asAbsoluteTemp(21),
         heatSetpoint: asAbsoluteTemp(19),
-        toleranceOverride: null,
+        demandToleranceOverride: null,
+        overshootToleranceOverride: null,
       },
     });
     expect(result).toEqual({
       setpoint: 21,
-      tolerance: null,
+      demandTolerance: null,
+      overshootTolerance: null,
       source: "schedule",
       manualPositionPct: null,
     });
@@ -137,7 +142,8 @@ describe("resolveZoneTargets", () => {
         mode: "active",
         coolSetpoint: asAbsoluteTemp(21),
         heatSetpoint: asAbsoluteTemp(19),
-        toleranceOverride: null,
+        demandToleranceOverride: null,
+        overshootToleranceOverride: null,
       },
     });
     expect(result.setpoint).toBe(19);
@@ -150,12 +156,14 @@ describe("resolveZoneTargets", () => {
         mode: "inactive",
         coolSetpoint: null,
         heatSetpoint: null,
-        toleranceOverride: null,
+        demandToleranceOverride: null,
+        overshootToleranceOverride: null,
       },
     });
     expect(result).toEqual({
       setpoint: null,
-      tolerance: null,
+      demandTolerance: null,
+      overshootTolerance: null,
       source: "inactive",
       manualPositionPct: null,
     });
@@ -170,14 +178,34 @@ describe("resolveZoneTargets", () => {
     const result = resolveZoneTargets(base());
     expect(result).toEqual({
       setpoint: FALLBACK.setpoint,
-      tolerance: null,
+      demandTolerance: null,
+      overshootTolerance: null,
       source: "fallback",
       manualPositionPct: null,
     });
   });
 
+  describe("an event's own demand/overshoot tolerance overrides win independently", () => {
+    it("applies each override side independently, falling back to the zone default per-side", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        zoneDemandTolerance: asTempDelta(1),
+        zoneOvershootTolerance: asTempDelta(2),
+        governingEvent: {
+          mode: "active",
+          coolSetpoint: asAbsoluteTemp(21),
+          heatSetpoint: asAbsoluteTemp(19),
+          demandToleranceOverride: asTempDelta(3),
+          overshootToleranceOverride: null,
+        },
+      });
+      expect(result.demandTolerance).toBe(3);
+      expect(result.overshootTolerance).toBe(2);
+    });
+  });
+
   describe("minimum comfort tolerance floor", () => {
-    it("floors an unset schedule-event tolerance up to the minimum", () => {
+    it("floors an unset schedule-event demand tolerance up to the minimum, leaving overshoot unset", () => {
       const result = resolveZoneTargets({
         ...base(),
         minimumComfortTolerance: asTempDelta(0.56),
@@ -185,13 +213,15 @@ describe("resolveZoneTargets", () => {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
           heatSetpoint: asAbsoluteTemp(19),
-          toleranceOverride: null,
+          demandToleranceOverride: null,
+          overshootToleranceOverride: null,
         },
       });
-      expect(result.tolerance).toBe(0.56);
+      expect(result.demandTolerance).toBe(0.56);
+      expect(result.overshootTolerance).toBeNull();
     });
 
-    it("floors a small explicit tolerance up to the minimum", () => {
+    it("floors a small explicit demand tolerance up to the minimum", () => {
       const result = resolveZoneTargets({
         ...base(),
         minimumComfortTolerance: asTempDelta(0.56),
@@ -199,13 +229,14 @@ describe("resolveZoneTargets", () => {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
           heatSetpoint: asAbsoluteTemp(19),
-          toleranceOverride: asTempDelta(0.1),
+          demandToleranceOverride: asTempDelta(0.1),
+          overshootToleranceOverride: null,
         },
       });
-      expect(result.tolerance).toBe(0.56);
+      expect(result.demandTolerance).toBe(0.56);
     });
 
-    it("leaves an already-wide tolerance untouched", () => {
+    it("leaves an already-wide demand tolerance untouched", () => {
       const result = resolveZoneTargets({
         ...base(),
         minimumComfortTolerance: asTempDelta(0.56),
@@ -213,10 +244,26 @@ describe("resolveZoneTargets", () => {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
           heatSetpoint: asAbsoluteTemp(19),
-          toleranceOverride: asTempDelta(1.5),
+          demandToleranceOverride: asTempDelta(1.5),
+          overshootToleranceOverride: null,
         },
       });
-      expect(result.tolerance).toBe(1.5);
+      expect(result.demandTolerance).toBe(1.5);
+    });
+
+    it("never floors the overshoot tolerance, even when explicitly zero", () => {
+      const result = resolveZoneTargets({
+        ...base(),
+        minimumComfortTolerance: asTempDelta(0.56),
+        governingEvent: {
+          mode: "active",
+          coolSetpoint: asAbsoluteTemp(21),
+          heatSetpoint: asAbsoluteTemp(19),
+          demandToleranceOverride: null,
+          overshootToleranceOverride: asTempDelta(0),
+        },
+      });
+      expect(result.overshootTolerance).toBe(0);
     });
 
     it("does not apply to an inactive resolution — no setpoint means no tolerance to floor", () => {
@@ -227,14 +274,16 @@ describe("resolveZoneTargets", () => {
           mode: "inactive",
           coolSetpoint: null,
           heatSetpoint: null,
-          toleranceOverride: null,
+          demandToleranceOverride: null,
+          overshootToleranceOverride: null,
         },
       });
       expect(result.setpoint).toBeNull();
-      expect(result.tolerance).toBeNull();
+      expect(result.demandTolerance).toBeNull();
+      expect(result.overshootTolerance).toBeNull();
     });
 
-    it("applies to a manual setpoint override's own tolerance too", () => {
+    it("applies to a manual setpoint override's own demand tolerance too", () => {
       const result = resolveZoneTargets({
         ...base(),
         minimumComfortTolerance: asTempDelta(0.56),
@@ -249,7 +298,7 @@ describe("resolveZoneTargets", () => {
           revokedAtMs: null,
         },
       });
-      expect(result.tolerance).toBe(0.56);
+      expect(result.demandTolerance).toBe(0.56);
     });
   });
 
@@ -272,11 +321,13 @@ describe("resolveZoneTargets", () => {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(22),
           heatSetpoint: asAbsoluteTemp(20),
-          toleranceOverride: null,
+          demandToleranceOverride: null,
+          overshootToleranceOverride: null,
         },
       });
       expect(result.setpoint).toBeNull();
-      expect(result.tolerance).toBeNull();
+      expect(result.demandTolerance).toBeNull();
+      expect(result.overshootTolerance).toBeNull();
       expect(result.source).toBe("observation_only");
       expect(result.manualPositionPct).toBeNull();
     });

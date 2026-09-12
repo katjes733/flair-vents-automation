@@ -10,13 +10,33 @@ import type { HvacCallState, ZoneClassification } from "~/server/domain/types";
  * distinct state from an explicit zero — collapsing them would silently
  * turn "no tolerance configured" into "zero tolerance," which is why this
  * doesn't default to 0 itself; classifyZone below is where "unset ⇒ tight
- * targeting" actually applies.
+ * targeting" actually applies. Demand and overshoot resolve independently
+ * — a schedule row can override just one side, falling back to the
+ * zone's own default for the other.
  */
 export function resolveComfortTolerance(
   zoneToleranceC: TempDelta | null,
   scheduleOverrideC: TempDelta | null,
 ): TempDelta | null {
   return scheduleOverrideC ?? zoneToleranceC ?? null;
+}
+
+export interface ComfortTolerances {
+  demand: TempDelta | null;
+  overshoot: TempDelta | null;
+}
+
+export function resolveComfortTolerances(
+  zone: { demand: TempDelta | null; overshoot: TempDelta | null },
+  scheduleOverride: { demand: TempDelta | null; overshoot: TempDelta | null },
+): ComfortTolerances {
+  return {
+    demand: resolveComfortTolerance(zone.demand, scheduleOverride.demand),
+    overshoot: resolveComfortTolerance(
+      zone.overshoot,
+      scheduleOverride.overshoot,
+    ),
+  };
 }
 
 export function computeDeviation(
@@ -39,29 +59,34 @@ export function computeDeviation(
  * order".
  *
  * Real thermostat cooling/heating differential, not a single static
- * boundary: `tolerance` is split into a symmetric band of ± tolerance/2
- * around the setpoint, and which edge governs depends on the *previous*
- * classification — a zone that's demanding keeps demanding until it
- * reaches the lower edge (deviation <= -tolerance/2), and a zone that's
- * satisfied doesn't demand again until it crosses the upper edge
- * (deviation > +tolerance/2). A single static boundary can't express this:
- * it would let a call terminate the instant a zone re-enters the band from
- * above, which is exactly what produced a room whose real average
- * temperature ran systematically warmer than its own setpoint — confirmed
- * live (a driving zone's own comfort band sat entirely above its
- * configured target, 72-73°F for a 72°F setpoint, never below it). A
- * `previousClassification` of `null` or `"unclassified_no_sensor"` gets
- * the same "no protected continuity to preserve yet" treatment
- * `stabilizeClassification` already gives these two cases — treated as
- * "was satisfied" (the upper edge), so a brand-new or just-recovered zone
- * doesn't demand until genuinely warm/cold enough to warrant it.
+ * boundary: an asymmetric deadband around setpoint (demandTolerance on the
+ * still-needs-conditioning side, overshootTolerance on the
+ * over-conditioned side — see zoneConfigSchema's own comment on
+ * comfort_demand_tolerance/comfort_overshoot_tolerance for why these are
+ * independent rather than one value split in half), and which edge
+ * governs depends on the *previous* classification — a zone that's
+ * demanding keeps demanding until it reaches the lower edge (deviation <=
+ * -overshootTolerance), and a zone that's satisfied doesn't demand again
+ * until it crosses the upper edge (deviation > +demandTolerance). A
+ * single static boundary can't express this: it would let a call
+ * terminate the instant a zone re-enters the band from above, which is
+ * exactly what produced a room whose real average temperature ran
+ * systematically warmer than its own setpoint — confirmed live (a driving
+ * zone's own comfort band sat entirely above its configured target,
+ * 72-73°F for a 72°F setpoint, never below it). A `previousClassification`
+ * of `null` or `"unclassified_no_sensor"` gets the same "no protected
+ * continuity to preserve yet" treatment `stabilizeClassification` already
+ * gives these two cases — treated as "was satisfied" (the upper edge), so
+ * a brand-new or just-recovered zone doesn't demand until genuinely
+ * warm/cold enough to warrant it.
  */
 export function classifyZone(params: {
   hasTemperatureSensor: boolean;
   state: HvacCallState;
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp;
-  tolerance: TempDelta | null;
+  demandTolerance: TempDelta | null;
+  overshootTolerance: TempDelta | null;
   previousClassification: ZoneClassification | null;
 }): ZoneClassification {
   if (!params.hasTemperatureSensor) return "unclassified_no_sensor";
@@ -70,9 +95,10 @@ export function classifyZone(params: {
     params.calibratedTemp,
     params.resolvedSetpoint,
   );
-  const halfToleranceC = (params.tolerance ?? 0) / 2;
+  const demandToleranceC = params.demandTolerance ?? 0;
+  const overshootToleranceC = params.overshootTolerance ?? 0;
   const wasDemanding = params.previousClassification === "demanding";
-  const edge = wasDemanding ? -halfToleranceC : halfToleranceC;
+  const edge = wasDemanding ? -overshootToleranceC : demandToleranceC;
   return deviation > edge ? "demanding" : "satisfied";
 }
 

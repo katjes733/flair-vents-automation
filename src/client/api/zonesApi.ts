@@ -55,7 +55,8 @@ export interface ZoneConfig {
   // capacity_sharing_enabled) — this zone is never pulled down to help a
   // struggling sibling, even while comfortable.
   capacity_sharing_exempt: boolean;
-  comfort_tolerance?: number;
+  comfort_demand_tolerance?: number;
+  comfort_overshoot_tolerance?: number;
   sensor_calibration_offset: number;
   min_vent_position: number;
   max_vent_position: number;

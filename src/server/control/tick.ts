@@ -1061,9 +1061,13 @@ export async function runTick(
           row?.heat_setpoint !== undefined
             ? asAbsoluteTemp(row.heat_setpoint)
             : null,
-        toleranceOverride:
-          row?.comfort_tolerance !== undefined
-            ? asTempDelta(row.comfort_tolerance)
+        demandToleranceOverride:
+          row?.comfort_demand_tolerance !== undefined
+            ? asTempDelta(row.comfort_demand_tolerance)
+            : null,
+        overshootToleranceOverride:
+          row?.comfort_overshoot_tolerance !== undefined
+            ? asTempDelta(row.comfort_overshoot_tolerance)
             : null,
       };
     }
@@ -1084,9 +1088,13 @@ export async function runTick(
       governingEvent,
       defaultInactive: defaultInactiveForZone(ctx.schedules, zone.id),
       fallback,
-      zoneTolerance:
-        zone.config.comfort_tolerance !== undefined
-          ? asTempDelta(zone.config.comfort_tolerance)
+      zoneDemandTolerance:
+        zone.config.comfort_demand_tolerance !== undefined
+          ? asTempDelta(zone.config.comfort_demand_tolerance)
+          : null,
+      zoneOvershootTolerance:
+        zone.config.comfort_overshoot_tolerance !== undefined
+          ? asTempDelta(zone.config.comfort_overshoot_tolerance)
           : null,
       // A real, confirmed bug found live via shadow-mode evaluation: this
       // used to be `hvac.state as "COOLING_CALL" | "HEATING_CALL"` — a cast
@@ -1244,7 +1252,8 @@ export async function runTick(
       })),
       calibratedTemp: reading.calibratedTemp ?? asAbsoluteTemp(0),
       resolvedSetpoint: target.setpoint,
-      tolerance: target.tolerance,
+      demandTolerance: target.demandTolerance,
+      overshootTolerance: target.overshootTolerance,
       occupied: trustedOccupiedByZone.get(zone.id) ?? false,
       staleOccupancy: false,
       staleReading: zoneStaleness.get(zone.id) ?? false,
@@ -1375,7 +1384,9 @@ export async function runTick(
         temp_raw: reading.diagnostics.rawTemp,
         temp_calibrated: reading.calibratedTemp,
         setpoint: targetsByZone.get(zone.id)?.setpoint ?? null,
-        tolerance: targetsByZone.get(zone.id)?.tolerance ?? null,
+        demand_tolerance: targetsByZone.get(zone.id)?.demandTolerance ?? null,
+        overshoot_tolerance:
+          targetsByZone.get(zone.id)?.overshootTolerance ?? null,
         deviation: null,
         desired_position_pct:
           pipelineResult.commandedPositions[zone.id] ?? null,

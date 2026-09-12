@@ -308,7 +308,8 @@ describe("EventEditorDialog", () => {
           zone_id: "z1",
           cool_setpoint: 21.11, // ~70°F
           heat_setpoint: 18.89, // ~66°F
-          comfort_tolerance: 0.56, // ~1°F
+          comfort_demand_tolerance: 0.56, // ~1°F
+          comfort_overshoot_tolerance: 1.11, // ~2°F
           assume_occupied: true,
         },
       ],
@@ -327,7 +328,8 @@ describe("EventEditorDialog", () => {
     );
     expect(screen.getByLabelText("Cool (°F)")).toHaveValue(70);
     expect(screen.getByLabelText("Heat (°F)")).toHaveValue(66);
-    expect(screen.getByLabelText("Tolerance, °F")).toHaveValue(1.01);
+    expect(screen.getByLabelText("Demand")).toHaveValue(1.01);
+    expect(screen.getByLabelText("Over")).toHaveValue(2);
     expect(screen.getByRole("checkbox", { name: "Sleep Mode" })).toBeChecked();
   });
 

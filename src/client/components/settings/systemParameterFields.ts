@@ -760,12 +760,12 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
       },
       {
         path: "minimum_comfort_tolerance_c",
-        baseLabel: "Minimum comfort tolerance",
+        baseLabel: "Minimum demand tolerance",
         kind: "tempDelta",
         min: 0,
         step: 0.1,
         description:
-          "A floor applied to every zone's resolved comfort tolerance, including an unset or explicit-zero schedule tolerance — so a room configured for tight targeting still gets at least this much deadband against ordinary sensor noise, instead of flapping between satisfied and demanding every tick.",
+          "A floor applied to every zone's resolved demand tolerance only, including an unset or explicit-zero schedule value — so a room configured for tight targeting still gets at least this much deadband against ordinary sensor noise, instead of flapping between satisfied and demanding every tick. Deliberately not applied to the overshoot side, so a room can still be configured to close aggressively as soon as it's satisfied.",
         tier: "advanced",
       },
       {

@@ -30,7 +30,8 @@ describe("classifyZone", () => {
         state: "COOLING_CALL",
         calibratedTemp: asAbsoluteTemp(30),
         resolvedSetpoint: setpoint,
-        tolerance: null,
+        demandTolerance: null,
+        overshootTolerance: null,
         previousClassification: null,
       }),
     ).toBe("unclassified_no_sensor");
@@ -43,30 +44,33 @@ describe("classifyZone", () => {
         state: "COOLING_CALL",
         calibratedTemp: asAbsoluteTemp(21.1),
         resolvedSetpoint: setpoint,
-        tolerance: null,
+        demandTolerance: null,
+        overshootTolerance: null,
         previousClassification: "satisfied",
       }),
     ).toBe("demanding");
   });
 
-  // Real thermostat cooling differential: tolerance=2 splits into a
-  // symmetric ±1 band around the 21° setpoint (20-22), and which edge
-  // governs depends on the *previous* classification, not a single static
-  // boundary — this is the actual mechanism a real production comfort
-  // complaint led to (a room's felt-average temperature running
+  // Real thermostat cooling differential: a ±1°C tolerance on each side
+  // splits into a symmetric band around the 21° setpoint (20-22), and which
+  // edge governs depends on the *previous* classification, not a single
+  // static boundary — this is the actual mechanism a real production
+  // comfort complaint led to (a room's felt-average temperature running
   // systematically warmer than its own setpoint, because the old design's
   // "satisfied" band sat entirely above setpoint with no floor at all).
-  describe("hysteresis — a symmetric band whose active edge depends on the previous state", () => {
-    const tolerance = asTempDelta(2); // ±1°C around the 21° setpoint
+  describe("hysteresis — a band whose active edge depends on the previous state", () => {
+    const demandTolerance = asTempDelta(1);
+    const overshootTolerance = asTempDelta(1);
 
-    it("a demanding zone stays demanding all the way down to the lower edge (setpoint - tolerance/2)", () => {
+    it("a demanding zone stays demanding all the way down to the lower edge (setpoint - overshootTolerance)", () => {
       expect(
         classifyZone({
           hasTemperatureSensor: true,
           state: "COOLING_CALL",
           calibratedTemp: asAbsoluteTemp(20.1), // still just above the 20° lower edge
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "demanding",
         }),
       ).toBe("demanding");
@@ -79,20 +83,22 @@ describe("classifyZone", () => {
           state: "COOLING_CALL",
           calibratedTemp: asAbsoluteTemp(20), // exactly at the lower edge
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "demanding",
         }),
       ).toBe("satisfied");
     });
 
-    it("a satisfied zone stays satisfied all the way up to the upper edge (setpoint + tolerance/2)", () => {
+    it("a satisfied zone stays satisfied all the way up to the upper edge (setpoint + demandTolerance)", () => {
       expect(
         classifyZone({
           hasTemperatureSensor: true,
           state: "COOLING_CALL",
           calibratedTemp: asAbsoluteTemp(22), // exactly at the upper edge
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "satisfied",
         }),
       ).toBe("satisfied");
@@ -105,7 +111,8 @@ describe("classifyZone", () => {
           state: "COOLING_CALL",
           calibratedTemp: asAbsoluteTemp(22.1),
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "satisfied",
         }),
       ).toBe("demanding");
@@ -122,7 +129,8 @@ describe("classifyZone", () => {
           state: "COOLING_CALL",
           calibratedTemp: midBand,
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "demanding",
         }),
       ).toBe("demanding");
@@ -132,7 +140,8 @@ describe("classifyZone", () => {
           state: "COOLING_CALL",
           calibratedTemp: midBand,
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "satisfied",
         }),
       ).toBe("satisfied");
@@ -150,7 +159,8 @@ describe("classifyZone", () => {
           state: "COOLING_CALL",
           calibratedTemp: asAbsoluteTemp(22),
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: null,
         }),
       ).toBe("satisfied");
@@ -163,10 +173,118 @@ describe("classifyZone", () => {
           state: "COOLING_CALL",
           calibratedTemp: asAbsoluteTemp(22),
           resolvedSetpoint: setpoint,
-          tolerance,
+          demandTolerance,
+          overshootTolerance,
           previousClassification: "unclassified_no_sensor",
         }),
       ).toBe("satisfied");
+    });
+  });
+
+  describe("asymmetric tolerance — the whole point of the feature", () => {
+    // A tight/zero overshoot tolerance combined with a looser demand
+    // tolerance: a bedroom shouldn't undercool below setpoint (overshoot=0)
+    // but can be allowed to drift up to 2° above it before re-engaging
+    // cooling (demand=2).
+    const demandTolerance = asTempDelta(2);
+    const overshootTolerance = asTempDelta(0);
+
+    it("a demanding zone stops (becomes satisfied) as soon as it reaches setpoint itself, never overshooting below", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: setpoint, // exactly at setpoint
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "demanding",
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("a demanding zone keeps demanding while still above setpoint", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(21.1),
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "demanding",
+        }),
+      ).toBe("demanding");
+    });
+
+    it("a satisfied zone stays satisfied until it drifts the full 2° above setpoint", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(22.9),
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("a satisfied zone becomes demanding once it drifts past the full demand tolerance", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "COOLING_CALL",
+          calibratedTemp: asAbsoluteTemp(23.1),
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("demanding");
+    });
+
+    it("auto-inverts for HEATING_CALL with no separate configuration: a demanding zone stops as soon as it reaches setpoint, never overshooting above", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "HEATING_CALL",
+          calibratedTemp: setpoint, // exactly at setpoint
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "demanding",
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("auto-inverts for HEATING_CALL: a satisfied zone stays satisfied until it drifts the full 2° below setpoint", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "HEATING_CALL",
+          calibratedTemp: asAbsoluteTemp(19.1),
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("satisfied");
+    });
+
+    it("auto-inverts for HEATING_CALL: a satisfied zone becomes demanding once it drifts past the full demand tolerance", () => {
+      expect(
+        classifyZone({
+          hasTemperatureSensor: true,
+          state: "HEATING_CALL",
+          calibratedTemp: asAbsoluteTemp(18.9),
+          resolvedSetpoint: setpoint,
+          demandTolerance,
+          overshootTolerance,
+          previousClassification: "satisfied",
+        }),
+      ).toBe("demanding");
     });
   });
 
@@ -177,7 +295,8 @@ describe("classifyZone", () => {
         state: "HEATING_CALL",
         calibratedTemp: asAbsoluteTemp(19),
         resolvedSetpoint: setpoint,
-        tolerance: null,
+        demandTolerance: null,
+        overshootTolerance: null,
         previousClassification: "satisfied",
       }),
     ).toBe("demanding");
@@ -187,7 +306,8 @@ describe("classifyZone", () => {
         state: "HEATING_CALL",
         calibratedTemp: asAbsoluteTemp(22),
         resolvedSetpoint: setpoint,
-        tolerance: null,
+        demandTolerance: null,
+        overshootTolerance: null,
         previousClassification: "demanding",
       }),
     ).toBe("satisfied");

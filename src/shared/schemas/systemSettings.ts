@@ -252,7 +252,7 @@ export const systemSettingsConfigSchema = z.object({
   // 2°F → 1.11°C (Config-time validation section).
   heat_cool_deadband_min_c: z.number().positive().default(1.11),
   // A real, confirmed gap found live via shadow-mode evaluation: a
-  // zone/schedule-event `comfort_tolerance` left unset (or set very tight)
+  // zone/schedule-event demand tolerance left unset (or set very tight)
   // means an effectively-zero deadband, which real sensor noise alone
   // (confirmed live: a bedroom's own reading wobbling ~0.5°C around its
   // setpoint with nothing actually wrong) is enough to flip
@@ -261,11 +261,16 @@ export const systemSettingsConfigSchema = z.object({
   // "demanding" tick — even a hairline one — snaps its target straight
   // back to fully open, undoing whatever proportional closing had already
   // happened. This floor guarantees every zone gets at least this much
-  // real deadband regardless of what's configured — "0.1" in a schedule
-  // still means "at least this," never truly zero. ~1°F default; the real
-  // noise observed live was closer to 0.5°C in amplitude, so this may need
-  // to go higher via System Parameters once you've watched a few real
-  // cycles.
+  // real deadband on the demand side regardless of what's configured —
+  // "0.1" in a schedule still means "at least this," never truly zero.
+  // Deliberately NOT applied to comfort_overshoot_tolerance — a tight or
+  // zero overshoot tolerance is the entire point of that field (e.g. "never
+  // let this room undercool below setpoint during the day"), and
+  // classifyWithStabilization's dwell-based debounce already protects
+  // against noise-driven flapping there without needing a magnitude
+  // floor too. ~1°F default; the real noise observed live was closer to
+  // 0.5°C in amplitude, so this may need to go higher via System
+  // Parameters once you've watched a few real cycles.
   minimum_comfort_tolerance_c: z.number().min(0).max(2.78).default(0.56),
   // The companion fix, layered on top of the floor above: even with a real
   // deadband, a zone whose actual temperature happens to sit close to its

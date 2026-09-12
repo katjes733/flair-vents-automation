@@ -23,7 +23,7 @@ describe("scheduleEventSchema", () => {
     expect(() => scheduleEventSchema.parse(baseEvent)).not.toThrow();
   });
 
-  it("accepts per-zone settings — different setpoint, tolerance, and sleep mode per room", () => {
+  it("accepts per-zone settings — different setpoint, tolerances, and sleep mode per room", () => {
     const parsed = scheduleEventSchema.parse({
       ...baseEvent,
       zone_settings: [
@@ -31,7 +31,8 @@ describe("scheduleEventSchema", () => {
           zone_id: ZONE_ID,
           cool_setpoint: 24,
           heat_setpoint: 18,
-          comfort_tolerance: 0.5,
+          comfort_demand_tolerance: 0.5,
+          comfort_overshoot_tolerance: 0.25,
           assume_occupied: true,
         },
       ],
@@ -40,25 +41,36 @@ describe("scheduleEventSchema", () => {
       zone_id: ZONE_ID,
       cool_setpoint: 24,
       heat_setpoint: 18,
-      comfort_tolerance: 0.5,
+      comfort_demand_tolerance: 0.5,
+      comfort_overshoot_tolerance: 0.25,
       assume_occupied: true,
     });
   });
 
-  it("defaults assume_occupied to false and leaves comfort_tolerance unset (tight)", () => {
+  it("defaults assume_occupied to false and leaves both tolerances unset (tight)", () => {
     const parsed = scheduleEventSchema.parse({
       ...baseEvent,
       zone_settings: [{ zone_id: ZONE_ID }],
     });
     expect(parsed.zone_settings[0].assume_occupied).toBe(false);
-    expect(parsed.zone_settings[0].comfort_tolerance).toBeUndefined();
+    expect(parsed.zone_settings[0].comfort_demand_tolerance).toBeUndefined();
+    expect(parsed.zone_settings[0].comfort_overshoot_tolerance).toBeUndefined();
   });
 
-  it("rejects a comfort_tolerance beyond the sanity bound", () => {
+  it("rejects a comfort_demand_tolerance beyond the sanity bound", () => {
     expect(() =>
       scheduleEventSchema.parse({
         ...baseEvent,
-        zone_settings: [{ zone_id: ZONE_ID, comfort_tolerance: 100 }],
+        zone_settings: [{ zone_id: ZONE_ID, comfort_demand_tolerance: 100 }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a comfort_overshoot_tolerance beyond the sanity bound", () => {
+    expect(() =>
+      scheduleEventSchema.parse({
+        ...baseEvent,
+        zone_settings: [{ zone_id: ZONE_ID, comfort_overshoot_tolerance: 100 }],
       }),
     ).toThrow();
   });

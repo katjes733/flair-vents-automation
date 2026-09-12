@@ -17,7 +17,8 @@ function base(
     state: "COOLING_CALL",
     calibratedTemp: asAbsoluteTemp(21),
     resolvedSetpoint: asAbsoluteTemp(21),
-    tolerance: null,
+    demandTolerance: null,
+    overshootTolerance: null,
     occupied: false,
     spiking: false,
     settings: {
@@ -177,7 +178,8 @@ describe("computeDesiredPosition", () => {
         idleBaselinePosition: 100,
         minVentPosition: 0,
         demanding: true,
-        tolerance: asTempDelta(1),
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
         calibratedTemp: asAbsoluteTemp(21), // deviation 0, well within tolerance -> raw would be "satisfied"
       }),
     );
@@ -193,7 +195,8 @@ describe("computeDesiredPosition", () => {
         idleBaselinePosition: 0,
         minVentPosition: 0,
         demanding: false,
-        tolerance: null,
+        demandTolerance: null,
+        overshootTolerance: null,
         calibratedTemp: asAbsoluteTemp(30), // way past setpoint -> raw would be "demanding"
       }),
     );
@@ -214,7 +217,8 @@ describe("computeDesiredPosition", () => {
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
-          tolerance: asTempDelta(1),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
           // deviation = 22-21 = 1, above the dead band's own upper edge
           // (setpoint + tolerance/2 = 21.5) — a real caller would already
           // be classified demanding here, but this function only cares
@@ -233,7 +237,8 @@ describe("computeDesiredPosition", () => {
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
-          tolerance: asTempDelta(1),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
           // The closing curve's own zero point is the *lower* edge of the
           // symmetric hysteresis band (setpoint - tolerance/2 = 20.5), not
           // the full tolerance above setpoint — see classifyZone's own
@@ -251,7 +256,8 @@ describe("computeDesiredPosition", () => {
         base({
           idleBaselinePosition: 100,
           minVentPosition: 5,
-          tolerance: asTempDelta(1),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
           // deviation = 15 - 21 = -6, overshoot = 0.5 - (-6) = 6.5, far past
           // a 1.67 effectiveBand -> saturates at the floor, not below it.
           calibratedTemp: asAbsoluteTemp(15),
@@ -265,7 +271,8 @@ describe("computeDesiredPosition", () => {
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
-          tolerance: asTempDelta(1),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
           calibratedTemp: asAbsoluteTemp(15),
           occupied: true,
         }),
@@ -280,7 +287,8 @@ describe("computeDesiredPosition", () => {
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
-          tolerance: asTempDelta(1),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
           calibratedTemp: asAbsoluteTemp(20),
         }),
       );
@@ -288,7 +296,8 @@ describe("computeDesiredPosition", () => {
         base({
           idleBaselinePosition: 100,
           minVentPosition: 0,
-          tolerance: asTempDelta(1),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
           calibratedTemp: asAbsoluteTemp(20),
           occupied: true, // narrows effectiveBand -> reaches the floor sooner
         }),

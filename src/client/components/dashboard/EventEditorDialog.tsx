@@ -69,7 +69,8 @@ interface ZoneSettingDraft {
   zoneId: string;
   coolSetpoint: string;
   heatSetpoint: string;
-  comfortTolerance: string;
+  comfortDemandTolerance: string;
+  comfortOvershootTolerance: string;
   assumeOccupied: boolean;
 }
 
@@ -108,12 +109,23 @@ function zoneSettingsFromEvent(
             ),
           )
         : "",
-    comfortTolerance:
-      row.comfort_tolerance !== undefined
+    comfortDemandTolerance:
+      row.comfort_demand_tolerance !== undefined
         ? String(
             round2(
               toDisplayDelta(
-                asTempDelta(row.comfort_tolerance),
+                asTempDelta(row.comfort_demand_tolerance),
+                temperatureUnit,
+              ),
+            ),
+          )
+        : "",
+    comfortOvershootTolerance:
+      row.comfort_overshoot_tolerance !== undefined
+        ? String(
+            round2(
+              toDisplayDelta(
+                asTempDelta(row.comfort_overshoot_tolerance),
                 temperatureUnit,
               ),
             ),
@@ -281,7 +293,8 @@ export default function EventEditorDialog({
                 ),
               ),
             ),
-            comfortTolerance: "",
+            comfortDemandTolerance: "",
+            comfortOvershootTolerance: "",
             assumeOccupied: false,
           };
       return [...rows, draft];
@@ -375,10 +388,18 @@ export default function EventEditorDialog({
               ),
             }
           : {}),
-        ...(row.comfortTolerance.trim()
+        ...(row.comfortDemandTolerance.trim()
           ? {
-              comfort_tolerance: fromDisplayDelta(
-                Number(row.comfortTolerance),
+              comfort_demand_tolerance: fromDisplayDelta(
+                Number(row.comfortDemandTolerance),
+                temperatureUnit,
+              ),
+            }
+          : {}),
+        ...(row.comfortOvershootTolerance.trim()
+          ? {
+              comfort_overshoot_tolerance: fromDisplayDelta(
+                Number(row.comfortOvershootTolerance),
                 temperatureUnit,
               ),
             }
@@ -402,13 +423,14 @@ export default function EventEditorDialog({
       onClose={onClose}
       maxWidth={false}
       sx={{
-        // A precise, measured width (the Rooms row's own real content need,
-        // 520px, plus DialogContent's 24px horizontal padding each side) —
-        // not a generic sm/md breakpoint — so there's no leftover
-        // whitespace beyond a small, deliberate safety margin. Capped to
-        // the viewport on narrow screens via maxWidth here rather than
-        // relying on the breakpoint system.
-        "& .MuiDialog-paper": { width: 576, maxWidth: "calc(100% - 64px)" },
+        // A precise, measured width (the Rooms row's own real content need
+        // — the reorder arrows plus four 90px fields — plus DialogContent's
+        // 24px horizontal padding each side) — not a generic sm/md
+        // breakpoint — so there's no leftover whitespace beyond a small,
+        // deliberate safety margin. Capped to the viewport on narrow
+        // screens via maxWidth here rather than relying on the breakpoint
+        // system.
+        "& .MuiDialog-paper": { width: 480, maxWidth: "calc(100% - 64px)" },
       }}
     >
       <DialogTitle
@@ -642,16 +664,32 @@ export default function EventEditorDialog({
                               />
                             </>
                           )}
-                          <Tooltip title="The thermostat will allow the temperature to drift this far above/below the setpoint before calling for heating/cooling. Leave blank to use the system default.">
+                          <Tooltip title="How far the room can still be from setpoint (in the direction that still needs heating/cooling) before the vent opens further. Leave blank to use the system default.">
                             <TextField
                               size="small"
                               type="number"
-                              label={`Tolerance, °${temperatureUnit}`}
-                              value={row.comfortTolerance}
-                              sx={{ width: 130, flexShrink: 0 }}
+                              label="Demand"
+                              value={row.comfortDemandTolerance}
+                              slotProps={{ inputLabel: { shrink: true } }}
+                              sx={{ width: 90, flexShrink: 0 }}
                               onChange={(e) =>
                                 updateRow(row.zoneId, {
-                                  comfortTolerance: e.target.value,
+                                  comfortDemandTolerance: e.target.value,
+                                })
+                              }
+                            />
+                          </Tooltip>
+                          <Tooltip title="How far past setpoint (in the already-comfortable direction) the room can drift before the vent closes further. Leave blank to use the system default — set to 0 to close aggressively as soon as the room is satisfied.">
+                            <TextField
+                              size="small"
+                              type="number"
+                              label="Over"
+                              value={row.comfortOvershootTolerance}
+                              slotProps={{ inputLabel: { shrink: true } }}
+                              sx={{ width: 90, flexShrink: 0 }}
+                              onChange={(e) =>
+                                updateRow(row.zoneId, {
+                                  comfortOvershootTolerance: e.target.value,
                                 })
                               }
                             />

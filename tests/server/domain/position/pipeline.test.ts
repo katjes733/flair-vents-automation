@@ -18,7 +18,8 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     manualVents: [],
     calibratedTemp: asAbsoluteTemp(25),
     resolvedSetpoint: asAbsoluteTemp(21),
-    tolerance: null,
+    demandTolerance: null,
+    overshootTolerance: null,
     occupied: false,
     staleOccupancy: false,
     staleReading: false,
@@ -161,7 +162,8 @@ describe("computeZoneCommands — the join between classification and contention
         zoneId: "satisfied",
         priorityRank: 0,
         calibratedTemp: asAbsoluteTemp(19.5),
-        tolerance: asTempDelta(1),
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
       }),
       zone({
         zoneId: "demanding",
@@ -181,10 +183,11 @@ describe("computeZoneCommands — the join between classification and contention
     // The satisfied zone closes proportionally toward its floor (see
     // step1DesiredPosition.ts's not-demanding branch) — it was never a
     // Step 3 candidate to reduce, regardless of what it closed to.
-    // deviation=19.5-21=-1.5, tolerance=1 -> the closing curve's own zero
-    // point is the lower edge (setpoint-tolerance/2=20.5), so overshoot=1
-    // against effectiveBand=1.67 (unboosted): 100 - 100*(1/1.67) ≈ 40.12,
-    // quantized to the nearest modulationStepPct (1%) by Step 2.
+    // deviation=19.5-21=-1.5, overshootTolerance=0.5 -> the closing curve's
+    // own zero point is the lower edge (setpoint-overshootTolerance=20.5),
+    // so overshoot=1 against effectiveBand=1.67 (unboosted):
+    // 100 - 100*(1/1.67) ≈ 40.12, quantized to the nearest modulationStepPct
+    // (1%) by Step 2.
     expect(result.commandedPositions["satisfied"]).toBe(40);
   });
 });
@@ -505,7 +508,8 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
         idleBaselinePosition: 100,
         minVentPosition: 0,
         calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
-        tolerance: asTempDelta(1),
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
       }),
     ];
     const result = computeZoneCommands({
@@ -526,7 +530,8 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
       idleBaselinePosition: 100,
       minVentPosition: 0,
       calibratedTemp: asAbsoluteTemp(18),
-      tolerance: asTempDelta(1),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
     };
     const duringCall = computeZoneCommands({
       state: "COOLING_CALL",
@@ -569,8 +574,9 @@ describe("computeZoneCommands — classification stabilization holds a noisy zon
     idleBaselinePosition: 100,
     minVentPosition: 0,
     maxVentPosition: 100,
-    tolerance: asTempDelta(0.1),
-    calibratedTemp: asAbsoluteTemp(21.15), // deviation 0.15 > tolerance 0.1 -> raw reads "demanding"
+    demandTolerance: asTempDelta(0.05),
+    overshootTolerance: asTempDelta(0.05),
+    calibratedTemp: asAbsoluteTemp(21.15), // deviation 0.15 > demandTolerance 0.05 -> raw reads "demanding"
     resolvedSetpoint: asAbsoluteTemp(21),
     flowRateLps: 47,
   };
@@ -636,7 +642,8 @@ describe("computeZoneCommands — pressure floor clamp", () => {
         // tolerance/2 = 18.5) so both zones fully saturate to their floor
         // — satisfied, closes to floor.
         calibratedTemp: asAbsoluteTemp(10),
-        tolerance: asTempDelta(5),
+        demandTolerance: asTempDelta(2.5),
+        overshootTolerance: asTempDelta(2.5),
         minVentPosition: 0,
         maxVentPosition: 100,
         flowRateLps: 100,
@@ -645,7 +652,8 @@ describe("computeZoneCommands — pressure floor clamp", () => {
         zoneId: "low",
         priorityRank: 1,
         calibratedTemp: asAbsoluteTemp(10),
-        tolerance: asTempDelta(5),
+        demandTolerance: asTempDelta(2.5),
+        overshootTolerance: asTempDelta(2.5),
         minVentPosition: 0,
         maxVentPosition: 100,
         flowRateLps: 100,
@@ -678,7 +686,8 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
   const satisfiedZone = (overrides: Partial<PipelineZoneInput> = {}) =>
     zone({
       calibratedTemp: asAbsoluteTemp(19.5),
-      tolerance: asTempDelta(1),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
       sleepModeActive: true,
       ...overrides,
     });
@@ -828,7 +837,8 @@ describe("computeZoneCommands — capacity sharing", () => {
   const satisfiedZone = (overrides: Partial<PipelineZoneInput> = {}) =>
     zone({
       calibratedTemp: asAbsoluteTemp(19.5),
-      tolerance: asTempDelta(1),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
       minVentPosition: 10,
       otherZoneStruggling: true,
       ...overrides,

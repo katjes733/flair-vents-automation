@@ -22,8 +22,23 @@ export const zoneScheduleSettingSchema = z.object({
   cool_setpoint: z.number().optional(),
   heat_setpoint: z.number().optional(),
   // Unset ⇒ tight targeting — the same "unset is not zero" semantics
-  // comfort_tolerance_overrides always had.
-  comfort_tolerance: z.number().min(0).max(COMFORT_TOLERANCE_MAX_C).optional(),
+  // comfort_tolerance_overrides always had. Split asymmetrically rather
+  // than one symmetric band split ±half around setpoint — see
+  // zoneConfigSchema's own comment on comfort_demand_tolerance/
+  // comfort_overshoot_tolerance for why (a real, confirmed live problem:
+  // a wide symmetric tolerance kept a daytime-empty bedroom pinned wide
+  // open all the way from setpoint to the far edge of the band before
+  // ever starting to close).
+  comfort_demand_tolerance: z
+    .number()
+    .min(0)
+    .max(COMFORT_TOLERANCE_MAX_C)
+    .optional(),
+  comfort_overshoot_tolerance: z
+    .number()
+    .min(0)
+    .max(COMFORT_TOLERANCE_MAX_C)
+    .optional(),
   // "Sleep Mode": forces occupied=true for this zone for as long as this
   // event is active, regardless of what the occupancy sensor reports.
   // PIR-based sensing cannot detect a motionless, sleeping person — see

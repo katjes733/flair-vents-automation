@@ -124,10 +124,37 @@ export const zoneConfigSchema = z.object({
   // sake. Irrelevant for manual_fixed_vent/no_vent zones, which have no
   // position math to override in the first place.
   capacity_sharing_exempt: z.boolean().default(false),
-  // Unset (undefined) means "tight targeting" — a real, distinct state from
-  // 0, which is why this has no `.default()`: defaulting it to 0 would
-  // silently collapse "unset" and "explicitly zero" into the same value.
-  comfort_tolerance: z.number().min(0).max(COMFORT_TOLERANCE_MAX_C).optional(),
+  // Asymmetric comfort deadband, replacing a single tolerance split
+  // ±half around setpoint (a real, confirmed live problem: a wide
+  // symmetric tolerance meant a "satisfied" zone stayed pinned at its
+  // idle baseline — wide open — anywhere in the whole band, only
+  // starting to close once it overshot *past the far edge*, e.g. a
+  // 4°F tolerance left a 72°F-setpoint bedroom sitting at 70°F, not
+  // gently drifting toward it). computeDeviation already normalizes
+  // cooling vs. heating into one sign convention (positive = still needs
+  // conditioning, negative = over-conditioned), so splitting the single
+  // value into these two — rather than keeping one value used on both
+  // sides — inverts correctly for HEATING_CALL with no extra mode
+  // handling: "comfort_demand_tolerance" is always the how-far-into
+  // -still-needs-conditioning edge, "comfort_overshoot_tolerance" is
+  // always the how-far-into-over-conditioned edge, regardless of call
+  // direction. Unset (undefined) means "tight targeting" on that side —
+  // a real, distinct state from 0, which is why neither has a
+  // `.default()`: defaulting to 0 would silently collapse "unset" and
+  // "explicitly zero" into the same value. See resolveTargets.ts's
+  // applyMinimumToleranceFloor for why only the demand side gets a
+  // system-wide minimum floor — the overshoot side is deliberately
+  // allowed to go tight/zero, since that's the whole point of this split.
+  comfort_demand_tolerance: z
+    .number()
+    .min(0)
+    .max(COMFORT_TOLERANCE_MAX_C)
+    .optional(),
+  comfort_overshoot_tolerance: z
+    .number()
+    .min(0)
+    .max(COMFORT_TOLERANCE_MAX_C)
+    .optional(),
   sensor_calibration_offset: z
     .number()
     .min(-SENSOR_CALIBRATION_OFFSET_MAX_C)

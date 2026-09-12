@@ -40,7 +40,10 @@ export interface PipelineZoneInput {
   manualVents: Array<{ position: number; flowRateLps: number }>;
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp | null; // null = "inactive" — no target this tick
-  tolerance: TempDelta | null;
+  // Asymmetric — see zoneConfigSchema's own comment on
+  // comfort_demand_tolerance/comfort_overshoot_tolerance.
+  demandTolerance: TempDelta | null;
+  overshootTolerance: TempDelta | null;
   occupied: boolean;
   staleOccupancy: boolean;
   staleReading: boolean;
@@ -244,7 +247,8 @@ export function computeZoneCommands(params: {
         : "COOLING_CALL", // arbitrary while idle; classification is diagnostic only
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
-      tolerance: zone.tolerance,
+      demandTolerance: zone.demandTolerance,
+      overshootTolerance: zone.overshootTolerance,
       previousClassification: zone.previousClassification,
     });
     return classifyWithStabilization(zone, raw);
@@ -315,7 +319,8 @@ export function computeZoneCommands(params: {
         state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only during FAN_ONLY
         calibratedTemp: zone.calibratedTemp,
         resolvedSetpoint: zone.resolvedSetpoint,
-        tolerance: zone.tolerance,
+        demandTolerance: zone.demandTolerance,
+        overshootTolerance: zone.overshootTolerance,
         previousClassification: zone.previousClassification,
       });
       classifications[zone.zoneId] = classifyWithStabilization(
@@ -355,7 +360,8 @@ export function computeZoneCommands(params: {
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
-      tolerance: zone.tolerance,
+      demandTolerance: zone.demandTolerance,
+      overshootTolerance: zone.overshootTolerance,
       previousClassification: zone.previousClassification,
     });
     const classification = classifyWithStabilization(zone, rawClassification);
@@ -389,7 +395,8 @@ export function computeZoneCommands(params: {
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
-      tolerance: zone.tolerance,
+      demandTolerance: zone.demandTolerance,
+      overshootTolerance: zone.overshootTolerance,
       occupied: zone.occupied,
       spiking: zone.spiking,
       settings: {

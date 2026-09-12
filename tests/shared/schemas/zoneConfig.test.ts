@@ -20,18 +20,29 @@ describe("resolveZoneConfig", () => {
     expect(config.flair_vents).toEqual([]);
   });
 
-  it("leaves comfort_tolerance unset rather than defaulting it to 0", () => {
+  it("leaves comfort_demand_tolerance and comfort_overshoot_tolerance unset rather than defaulting them to 0", () => {
     const config = resolveZoneConfig({});
-    expect(config.comfort_tolerance).toBeUndefined();
+    expect(config.comfort_demand_tolerance).toBeUndefined();
+    expect(config.comfort_overshoot_tolerance).toBeUndefined();
   });
 
   it("resolves against null the same as against an empty object", () => {
     expect(resolveZoneConfig(null)).toEqual(resolveZoneConfig({}));
   });
 
-  it("rejects a comfort_tolerance above the 10°F sanity bound", () => {
+  it("rejects a comfort_demand_tolerance above the 10°F sanity bound", () => {
     expect(() =>
-      resolveZoneConfig({ comfort_tolerance: COMFORT_TOLERANCE_MAX_C + 0.01 }),
+      resolveZoneConfig({
+        comfort_demand_tolerance: COMFORT_TOLERANCE_MAX_C + 0.01,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a comfort_overshoot_tolerance above the 10°F sanity bound", () => {
+    expect(() =>
+      resolveZoneConfig({
+        comfort_overshoot_tolerance: COMFORT_TOLERANCE_MAX_C + 0.01,
+      }),
     ).toThrow();
   });
 
@@ -145,7 +156,7 @@ describe("zoneConfigPartialSchema", () => {
   it("still rejects an out-of-bounds value for a field that is present", () => {
     expect(() =>
       zoneConfigPartialSchema.parse({
-        comfort_tolerance: COMFORT_TOLERANCE_MAX_C + 0.01,
+        comfort_demand_tolerance: COMFORT_TOLERANCE_MAX_C + 0.01,
       }),
     ).toThrow();
   });
