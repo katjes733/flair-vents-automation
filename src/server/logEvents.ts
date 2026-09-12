@@ -195,6 +195,39 @@ export function logVentDegraded(log: Logger, fields: VentDegradedFields): void {
   log.warn(fields, "Vent degraded");
 }
 
+export interface VentMisalignmentSuspectedFields {
+  air_handler_id: string;
+  zone_id: string;
+  vent_id: string;
+  hvac_state: string;
+  window_start_temp_c: number;
+  current_temp_c: number;
+  temp_delta_c: number;
+  threshold_c: number;
+}
+export function logVentMisalignmentSuspected(
+  log: Logger,
+  fields: VentMisalignmentSuspectedFields,
+): void {
+  log.warn(
+    fields,
+    "Vent misalignment suspected — reported closed but zone tracking the active call",
+  );
+}
+
+export interface VentMisalignmentRecalibrationFields {
+  air_handler_id: string;
+  zone_id: string;
+  outcome: "opened" | "timed_out";
+  waited_ms: number;
+}
+export function logVentMisalignmentRecalibration(
+  log: Logger,
+  fields: VentMisalignmentRecalibrationFields,
+): void {
+  log.info(fields, "Vent misalignment recalibration cycle finished");
+}
+
 export interface ThermalSpikeFields {
   air_handler_id: string;
   zone_id: string;

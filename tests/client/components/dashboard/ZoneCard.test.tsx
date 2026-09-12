@@ -57,6 +57,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       last_classification: null,
       occupied: false,
       occupancy_pending_flip_since: null,
+      vent_misalignment_recalibration_history: [],
     },
     ...overrides,
   };
@@ -192,6 +193,40 @@ describe("ZoneCard", () => {
       }),
     });
     expect(screen.getByText("Degraded vent")).toBeInTheDocument();
+  });
+
+  it("shows a rolling recalibration count chip when the vent has recalibrated within the last 24h", () => {
+    renderCard({
+      zone: makeZone({
+        state: {
+          ...makeZone().state,
+          vent_misalignment_recalibration_history: [
+            new Date(Date.now() - 3600000).toISOString(),
+            new Date(Date.now() - 7200000).toISOString(),
+          ],
+        },
+      }),
+    });
+    expect(screen.getByText("Vent recalibrated 2x (24h)")).toBeInTheDocument();
+  });
+
+  it("does not show the recalibration chip once every entry has aged past 24h", () => {
+    renderCard({
+      zone: makeZone({
+        state: {
+          ...makeZone().state,
+          vent_misalignment_recalibration_history: [
+            new Date(Date.now() - 25 * 3600000).toISOString(),
+          ],
+        },
+      }),
+    });
+    expect(screen.queryByText(/Vent recalibrated/)).not.toBeInTheDocument();
+  });
+
+  it("does not show the recalibration chip when the zone has never recalibrated", () => {
+    renderCard();
+    expect(screen.queryByText(/Vent recalibrated/)).not.toBeInTheDocument();
   });
 
   it("offers 'Set manual override' for a controllable zone with no active override", () => {

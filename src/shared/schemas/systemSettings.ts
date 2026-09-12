@@ -65,6 +65,59 @@ export const systemSettingsConfigSchema = z.object({
   // anchor is genuinely static for most of the night, short enough to
   // track real drift (compressor performance, outdoor temp) across it.
   sleep_quiet_reanchor_interval_minutes: z.number().positive().default(60),
+  // Vent misalignment auto-recalibration: a real, confirmed live problem —
+  // a flair_smart_vent zone reporting 0% (believed fully closed, and
+  // classified "satisfied" — a genuinely demanding zone's own dispatch
+  // gap is a separate, already-fixed problem) kept measurably cooling
+  // during COOLING_CALL/warming during HEATING_CALL anyway, in lockstep
+  // with the call's own on/off cycling — a sealed vent shouldn't care
+  // whether the compressor is running. `percent-open` is an accumulated
+  // motor estimate with known directional hysteresis (see
+  // docs/flair-api-schema.md), not a true position sensor, so the vent's
+  // real physical position had drifted open from its reported 0% with no
+  // way to self-correct. Detection tracks per-zone temp response across a
+  // single continuous COOLING_CALL/HEATING_CALL stretch while reported
+  // position stays at 0% and the zone stays satisfied (see
+  // ZoneRuntimeState.vent_misalignment_window_since/_start_temp) — reset
+  // the instant any of those conditions breaks, since only response
+  // *within one uninterrupted call segment* is diagnostic (an idle-segment
+  // rebound is normal for every zone, sealed or not). Once flagged, the
+  // corrective action is a full home cycle (command 100%, wait for it to
+  // actually report there, then let the normal pipeline output — a huge
+  // delta either way — carry it back down) rather than a diagnosis-only
+  // alert: an occasional deliberate open/close cycle is a smaller cost
+  // than a vent silently stuck open all night. Defaults to off — this
+  // drives real vent hardware and overrides Sleep Mode's own quiet hours
+  // when it fires, so it ships opt-in like every other feature that
+  // changes real overnight behavior.
+  vent_misalignment_auto_recalibration_enabled: z.boolean().default(false),
+  // PLACEHOLDER pending real-world tuning — grounded in live tick history
+  // for a real stuck vent: its zone measurably tracked each COOLING_CALL/
+  // IDLE transition by ~1-1.5°C within a single 20-50 minute call segment,
+  // well past ordinary sensor noise (~0.3-0.5°C observed elsewhere in this
+  // codebase).
+  vent_misalignment_temp_threshold_c: z.number().positive().default(0.56),
+  // How long a zone must stay clear of a completed (or abandoned, see
+  // vent_misalignment_max_open_wait_minutes) recalibration before
+  // detection can flag it again — a vent with a genuine, persistent
+  // hardware fault shouldn't get cycled open and shut every time its
+  // temp window re-triggers. PLACEHOLDER pending real-world tuning.
+  vent_misalignment_recalibration_cooldown_hours: z
+    .number()
+    .positive()
+    .default(24),
+  // Safety timeout on the "opening" half of the home cycle — if the vent
+  // never reports itself open (a genuinely stuck/disconnected motor, not
+  // just a misreporting one), this stops the cycle from holding the zone
+  // fully open indefinitely; the cooldown above still applies afterward,
+  // so a truly broken vent isn't retried every tick either.
+  vent_misalignment_max_open_wait_minutes: z.number().positive().default(10),
+  // Independent of the main feature flag — this is a common, expected,
+  // self-correcting situation (see the feature's own comment above), so it
+  // reports into the tick decision/telemetry like any other zone-level
+  // flag but does not also warrant an email by default; flip this on only
+  // if you want that email too.
+  vent_misalignment_alert_enabled: z.boolean().default(false),
   // Backstop drift check, compares reported vs. last_target_position every
   // Nth tick (Resolved Design Decisions).
   drift_check_interval_ticks: z.number().int().positive().default(10),

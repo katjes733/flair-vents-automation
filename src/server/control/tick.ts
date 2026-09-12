@@ -42,6 +42,11 @@ import {
 } from "~/server/domain/state/emergency";
 import { classifyStaleness } from "~/server/domain/sensors/staleness";
 import {
+  evaluateVentMisalignment,
+  updateRecalibrationHistory,
+  type VentMisalignmentState,
+} from "~/server/domain/sensors/ventMisalignment";
+import {
   evaluateSpike,
   type SpikeHysteresisState,
 } from "~/server/domain/sensors/spikeDetection";
@@ -114,6 +119,8 @@ import {
   logDuctAirflowAnomalyCleared,
   logVentReconciled,
   logVentDegraded,
+  logVentMisalignmentSuspected,
+  logVentMisalignmentRecalibration,
   logControlTickCompleted,
   logControlTickDecision,
   logDriftCheckCompleted,
@@ -155,6 +162,10 @@ function toIso(ms: number): string {
 
 function parseIsoOrNull(iso: string | null): number | null {
   return iso ? new Date(iso).getTime() : null;
+}
+
+function toIsoOrNull(ms: number | null): string | null {
+  return ms === null ? null : toIso(ms);
 }
 
 // A real, confirmed bug found live via telemetry review: both
@@ -1909,6 +1920,129 @@ export async function runTick(
     );
   }
 
+  // --- Step 11a: vent misalignment detection & auto-recalibration --------
+  // See vent_misalignment_auto_recalibration_enabled's own comment
+  // (systemSettings.ts) and evaluateVentMisalignment's own comment for the
+  // real, confirmed live problem this fixes: percent-open is an
+  // accumulated motor estimate (see docs/flair-api-schema.md), not a true
+  // position sensor, so a vent reported at 0% can genuinely sit open with
+  // no way to notice except the room it serves still tracking the active
+  // call's own on/off cycling. Skipped entirely while disarmed — nothing
+  // is being controlled to correct. NOT also gated on callActive here —
+  // evaluateVentMisalignment itself needs to run every tick regardless
+  // (idle included) so a window resets the instant the call goes
+  // inactive, and an in-progress home cycle keeps running to completion
+  // even if the call ends mid-cycle. See its own callActive comment.
+  const ventMisalignmentNextStateByZoneId = new Map<
+    string,
+    VentMisalignmentState
+  >();
+  const ventMisalignmentSuspectedByZoneId = new Map<string, boolean>();
+  // "Quick view" rolling 24h count (see updateRecalibrationHistory's own
+  // comment) — a fixed window, deliberately independent of whatever
+  // vent_misalignment_recalibration_cooldown_hours happens to be
+  // configured to; this answers "is this actively happening to this zone
+  // right now," not "has the cooldown reset yet."
+  const VENT_MISALIGNMENT_HISTORY_WINDOW_MS = 24 * 3600000;
+  const ventMisalignmentHistoryByZoneId = new Map<string, number[]>();
+  if (
+    ctx.settings.vent_misalignment_auto_recalibration_enabled &&
+    !controlDisarmed
+  ) {
+    for (const zone of zones) {
+      if (!isControllable(zone.ventHardwareType)) continue;
+      const ventReadings = readings.get(zone.id)?.vents ?? [];
+      if (ventReadings.length === 0) continue;
+      const prior: VentMisalignmentState = {
+        windowSinceMs: parseIsoOrNull(
+          zone.state.vent_misalignment_window_since,
+        ),
+        windowStartTempC: zone.state.vent_misalignment_window_start_temp,
+        recalibratingSinceMs: parseIsoOrNull(
+          zone.state.vent_misalignment_recalibrating_since,
+        ),
+        lastRecalibratedAtMs: parseIsoOrNull(
+          zone.state.vent_misalignment_last_recalibrated_at,
+        ),
+      };
+      const evaluation = evaluateVentMisalignment({
+        nowMs: startedAtMs,
+        hvacState: effectiveCallState,
+        callActive,
+        classification: pipelineResult.classifications[zone.id] ?? "inactive",
+        allVentsReportedClosed: ventReadings.every(
+          (v) => v.reportedPositionPct === 0,
+        ),
+        allVentsReportedOpenEnough: ventReadings.every(
+          (v) => (v.reportedPositionPct ?? 0) >= 90,
+        ),
+        calibratedTempC: readings.get(zone.id)!.room.calibratedTemp,
+        prior,
+        tempThresholdC: ctx.settings.vent_misalignment_temp_threshold_c,
+        cooldownMs:
+          ctx.settings.vent_misalignment_recalibration_cooldown_hours * 3600000,
+        maxOpenWaitMs:
+          ctx.settings.vent_misalignment_max_open_wait_minutes * 60000,
+      });
+      ventMisalignmentNextStateByZoneId.set(zone.id, evaluation.next);
+      ventMisalignmentSuspectedByZoneId.set(zone.id, evaluation.suspected);
+      ventMisalignmentHistoryByZoneId.set(
+        zone.id,
+        updateRecalibrationHistory({
+          priorHistoryMs: (
+            zone.state.vent_misalignment_recalibration_history ?? []
+          ).map((iso) => new Date(iso).getTime()),
+          nowMs: startedAtMs,
+          windowMs: VENT_MISALIGNMENT_HISTORY_WINDOW_MS,
+          justCompletedMs:
+            evaluation.action.kind === "recalibration_finished"
+              ? startedAtMs
+              : null,
+        }),
+      );
+
+      if (evaluation.action.kind === "force_open") {
+        finalPositions[zone.id] = 100;
+        // Only log once, on the tick detection actually fires — every
+        // subsequent tick of the same wait carries the same
+        // recalibratingSinceMs forward unchanged (evaluation.next ===
+        // prior in that case), so this distinguishes "just triggered"
+        // from "still waiting."
+        if (prior.recalibratingSinceMs === null) {
+          const ventId = ventReadings[0]?.flairVentId ?? "";
+          logVentMisalignmentSuspected(log, {
+            air_handler_id: airHandler.id,
+            zone_id: zone.id,
+            vent_id: ventId,
+            hvac_state: hvac.state,
+            window_start_temp_c: prior.windowStartTempC ?? 0,
+            current_temp_c: readings.get(zone.id)!.room.calibratedTemp ?? 0,
+            temp_delta_c:
+              (readings.get(zone.id)!.room.calibratedTemp ?? 0) -
+              (prior.windowStartTempC ?? 0),
+            threshold_c: ctx.settings.vent_misalignment_temp_threshold_c,
+          });
+          if (ctx.settings.vent_misalignment_alert_enabled) {
+            await deps.alerting.alertOnce({
+              key: `alert:ventMisalignment:${zone.id}`,
+              subject: `${zone.name}'s vent may be misaligned`,
+              text: `${zone.name} reported its vent fully closed, but the room kept tracking the active ${hvac.state} call anyway — the vent is being fully opened and re-closed to recalibrate its position.`,
+              rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+              nowMs: startedAtMs,
+            });
+          }
+        }
+      } else if (evaluation.action.kind === "recalibration_finished") {
+        logVentMisalignmentRecalibration(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zone.id,
+          outcome: evaluation.action.outcome,
+          waited_ms: startedAtMs - (prior.recalibratingSinceMs ?? startedAtMs),
+        });
+      }
+    }
+  }
+
   // --- Steps 12-13: dispatch ------------------------------------------
   // Per vent, not per zone — every vent in a zone is ganged to the same
   // target, but dispatches/reconciles/persists independently, since one
@@ -2117,6 +2251,40 @@ export async function runTick(
         ?.sinceMs
         ? toIso(pipelineResult.sleepQuietAnchors[zone.id]!.sinceMs!)
         : null,
+      // Falls back to the zone's own already-persisted value — absent
+      // from ventMisalignmentNextStateByZoneId means the feature is off,
+      // disarmed, or this zone was skipped this tick (not controllable /
+      // no live vent reading), none of which should silently wipe
+      // whatever state a previous, enabled tick already captured.
+      ...(ventMisalignmentNextStateByZoneId.has(zone.id)
+        ? (() => {
+            const next = ventMisalignmentNextStateByZoneId.get(zone.id)!;
+            return {
+              vent_misalignment_window_since: toIsoOrNull(next.windowSinceMs),
+              vent_misalignment_window_start_temp: next.windowStartTempC,
+              vent_misalignment_recalibrating_since: toIsoOrNull(
+                next.recalibratingSinceMs,
+              ),
+              vent_misalignment_last_recalibrated_at: toIsoOrNull(
+                next.lastRecalibratedAtMs,
+              ),
+              vent_misalignment_recalibration_history: (
+                ventMisalignmentHistoryByZoneId.get(zone.id) ?? []
+              ).map((ms) => toIso(ms)),
+            };
+          })()
+        : {
+            vent_misalignment_window_since:
+              zone.state.vent_misalignment_window_since,
+            vent_misalignment_window_start_temp:
+              zone.state.vent_misalignment_window_start_temp,
+            vent_misalignment_recalibrating_since:
+              zone.state.vent_misalignment_recalibrating_since,
+            vent_misalignment_last_recalibrated_at:
+              zone.state.vent_misalignment_last_recalibrated_at,
+            vent_misalignment_recalibration_history:
+              zone.state.vent_misalignment_recalibration_history,
+          }),
     });
   }
 
@@ -2189,6 +2357,8 @@ export async function runTick(
           }),
         ),
         reason: "",
+        vent_misalignment_suspected:
+          ventMisalignmentSuspectedByZoneId.get(zone.id) ?? false,
       };
     }),
     contention: pipelineResult.contention,
@@ -2375,6 +2545,7 @@ function buildFaultDecision(
         : [],
       reason:
         "Emergency fail-safe active — forced open, bypassing all other logic.",
+      vent_misalignment_suspected: false,
     })),
     contention: null,
     pressure: null,

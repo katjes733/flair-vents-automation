@@ -62,6 +62,12 @@ export interface ZoneTickDecision {
   // Empty for manual_fixed_vent/no_vent zones (nothing to dispatch).
   vents: VentTickDecision[];
   reason: string;
+  // See vent_misalignment_auto_recalibration_enabled's own comment
+  // (systemSettings.ts) — true from the tick a suspected misalignment is
+  // first detected through the tick its home-cycle recalibration
+  // finishes, false whenever the feature is off/disarmed or this zone
+  // isn't being tracked this tick.
+  vent_misalignment_suspected: boolean;
 }
 
 export interface AirHandlerTickDecision {

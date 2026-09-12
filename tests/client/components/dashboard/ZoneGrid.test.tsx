@@ -60,6 +60,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       last_classification: null,
       occupied: false,
       occupancy_pending_flip_since: null,
+      vent_misalignment_recalibration_history: [],
     },
     ...overrides,
   };

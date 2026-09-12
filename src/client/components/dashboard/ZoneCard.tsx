@@ -79,6 +79,18 @@ export default function ZoneCard({
           ? theme.palette.status.staleReading
           : undefined;
 
+  // "Quick view" rolling count for the vent-misalignment auto-
+  // recalibration feature (see vent_misalignment_auto_recalibration_enabled's
+  // own comment, systemSettings.ts) — recomputed from the raw timestamp
+  // list on every render (not a value the server precomputes) so it keeps
+  // decreasing as entries age past 24h between polls, not just on the
+  // next tick. Deeper history (which zone, what time, how long each open
+  // took) is a Loki query away, not this badge's job.
+  const recalibrationsLast24h =
+    zone.state.vent_misalignment_recalibration_history.filter(
+      (iso) => Date.now() - new Date(iso).getTime() < 24 * 3600000,
+    ).length;
+
   const handleRevoke = async () => {
     if (!activeOverride) return;
     try {
@@ -160,6 +172,16 @@ export default function ZoneCard({
                 label="Spiking"
                 size="small"
                 sx={{ bgcolor: theme.palette.status.spiking, color: "#fff" }}
+              />
+            )}
+            {recalibrationsLast24h > 0 && (
+              <Chip
+                label={`Vent recalibrated ${recalibrationsLast24h}x (24h)`}
+                size="small"
+                sx={{
+                  bgcolor: theme.palette.status.degradedVent,
+                  color: "#fff",
+                }}
               />
             )}
             {activeOverride && (
