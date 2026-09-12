@@ -3152,30 +3152,34 @@ describe("runTick — schedule-driven per-room settings", () => {
 });
 
 describe("runTick — quiet actuation during Sleep Mode", () => {
-  it("suppresses a dispatch a non-sleep zone would send, for an identical deviation", async () => {
+  it("suppresses a dispatch a non-sleep zone would send, for an identical deviation, while satisfied", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
-      // Large deviation (30 vs a 21 setpoint) so Step 1's desired position
-      // clamps to 100% regardless of any modifier boost — isolating the
-      // dispatch-threshold behavior under test from Step 1's own math.
+      // Well below the 21 setpoint (satisfied — closing branch) so Step
+      // 1's desired position clamps to 0% regardless of any modifier
+      // boost — isolating the dispatch-threshold behavior under test from
+      // Step 1's own math. The widened Sleep Mode threshold only applies
+      // to a *satisfied* zone (see the "demanding is exempt" test below),
+      // so this fixture deliberately keeps both zones satisfied rather
+      // than demanding.
       {
         roomId: "room-1",
         ventId: "vent-1",
-        tempC: 30,
+        tempC: 10,
         ductC: 14,
         percentOpen: 40,
       },
       {
         roomId: "room-2",
         ventId: "vent-2",
-        tempC: 30,
+        tempC: 10,
         ductC: 14,
         percentOpen: 40,
       },
     ]);
     // Ramp origin 50 + a single 10%-max step (default modulation settings)
-    // ramps deterministically to 60 this tick, regardless of Step 1/3
-    // internals — then last_reported_position 40 gives an identical 20%
+    // ramps deterministically down to 40 this tick, regardless of Step 1/3
+    // internals — then last_reported_position 20 gives an identical 20%
     // delta for both zones: below the sleep-mode threshold (30), at/above
     // the normal one (15).
     const zones = [
@@ -3184,7 +3188,7 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
         flairRoomId: "room-1",
         state: {
           last_target_position: 50,
-          vents: [makeVentState("vent-1", { last_reported_position: 40 })],
+          vents: [makeVentState("vent-1", { last_reported_position: 20 })],
         },
       }),
       makeZone({
@@ -3192,7 +3196,7 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
         flairRoomId: "room-2",
         state: {
           last_target_position: 50,
-          vents: [makeVentState("vent-2", { last_reported_position: 40 })],
+          vents: [makeVentState("vent-2", { last_reported_position: 20 })],
         },
       }),
     ];
@@ -3242,6 +3246,9 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
       makeDeps(client, persisted, NOW),
     );
 
+    expect(decision.zones.find((z) => z.zone_id === "z1")?.classification).toBe(
+      "satisfied",
+    );
     const dispatchedVentIds = client
       .getVentCommandHistory()
       .map((c) => c.ventId);
@@ -3261,6 +3268,95 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
     expect(z2Vent?.dispatch_decision).toBe("dispatched");
     expect(z2Vent?.step_delta_pct).toBe(20);
     expect(z2Vent?.min_step_delta_pct).toBe(15);
+  });
+
+  // Regression coverage for a real, confirmed live gap: a bedroom in an
+  // active Sleep Mode window crossed into "demanding" (warming toward its
+  // cool setpoint) but its own correction — a 10-20 point move — never
+  // cleared the widened 30-point Sleep Mode threshold, leaving the vent
+  // stuck at its last dispatched position with no way to actually correct.
+  // sleep_quiet_anchor_enabled's own comment already promises "a demanding
+  // zone still runs the full ramp" for the position math; this proves that
+  // promise now reaches the actual dispatch decision too, not just the
+  // computed target — a demanding zone always dispatches against the
+  // normal threshold, Sleep Mode or not.
+  it("does not apply the widened Sleep Mode threshold to a demanding zone", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // Large deviation (30 vs a 21 setpoint) so Step 1's desired position
+      // clamps to 100% regardless of any modifier boost.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 40,
+      },
+    ]);
+    // Ramp origin 50 + a single 10%-max step (default modulation settings)
+    // ramps deterministically up to 60 this tick — then last_reported_position
+    // 40 gives a 20% delta: below the wider Sleep Mode threshold (30), but
+    // still at/above the normal one (15) — the case that used to get stuck.
+    const zones = [
+      makeZone({
+        id: "z1",
+        flairRoomId: "room-1",
+        state: {
+          last_target_position: 50,
+          vents: [makeVentState("vent-1", { last_reported_position: 40 })],
+        },
+      }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      min_step_delta_pct: 15,
+      sleep_mode_min_step_delta_pct: 30,
+    });
+    ctx.schedules = [
+      {
+        id: "sched-1",
+        installationId: "inst-1",
+        name: "Night",
+        config: { enabled: true, default_inactive: false },
+        events: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            created_at: "2024-01-01T00:00:00.000Z",
+            modified_at: "2024-01-01T00:00:00.000Z",
+            mode: "active",
+            start_time: "00:00",
+            end_time: "23:59",
+            days_of_week: 0b1111111,
+            zone_settings: [
+              {
+                zone_id: "z1",
+                cool_setpoint: 21,
+                heat_setpoint: 19,
+                assume_occupied: true,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const decision = await runTick(
+      makeAirHandler(),
+      zones,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    expect(decision.zones.find((z) => z.zone_id === "z1")?.classification).toBe(
+      "demanding",
+    );
+    const z1Vent = decision.zones.find((z) => z.zone_id === "z1")?.vents[0];
+    expect(z1Vent?.min_step_delta_pct).toBe(15);
+    expect(z1Vent?.step_delta_pct).toBe(20);
+    expect(z1Vent?.dispatch_decision).toBe("dispatched");
+    expect(client.getVentCommandHistory().map((c) => c.ventId)).toContain(
+      "vent-1",
+    );
   });
 });
 
