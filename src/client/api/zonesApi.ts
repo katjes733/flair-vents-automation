@@ -51,6 +51,10 @@ export interface ZoneConfig {
   // Telemetry-only — excluded from schedule-driven comfort tracking
   // entirely. See zoneConfigSchema's own comment.
   observation_only: boolean;
+  // Opt-out of capacity sharing (see systemSettings.ts's
+  // capacity_sharing_enabled) — this zone is never pulled down to help a
+  // struggling sibling, even while comfortable.
+  capacity_sharing_exempt: boolean;
   comfort_tolerance?: number;
   sensor_calibration_offset: number;
   min_vent_position: number;

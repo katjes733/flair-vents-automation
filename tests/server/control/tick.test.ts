@@ -3454,6 +3454,145 @@ describe("runTick — sleep-mode quiet anchor", () => {
   });
 });
 
+describe("runTick — capacity sharing", () => {
+  const CAPACITY_SHARING_SCHEDULE = [
+    {
+      id: "sched-1",
+      installationId: "inst-1",
+      name: "Day",
+      config: { enabled: true, default_inactive: false },
+      events: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          created_at: "2024-01-01T00:00:00.000Z",
+          modified_at: "2024-01-01T00:00:00.000Z",
+          mode: "active" as const,
+          start_time: "00:00",
+          end_time: "23:59",
+          days_of_week: 0b1111111,
+          zone_settings: [
+            {
+              zone_id: "z1",
+              cool_setpoint: 21,
+              heat_setpoint: 19,
+              assume_occupied: false,
+            },
+            {
+              zone_id: "z2",
+              cool_setpoint: 21,
+              heat_setpoint: 19,
+              comfort_tolerance: 1,
+              assume_occupied: false,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("pulls a comfortable, eligible zone down to its own min_vent_position to help a struggling sibling", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      // z1: clearly demanding — the struggling zone.
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 50,
+      },
+      // z2: satisfied against its 21°C/1° tolerance schedule row — same
+      // known fixture as the pipeline-level capacity-sharing tests
+      // (deviation=-1.5, overshoot=1 -> its own ramp alone would land
+      // well above 0).
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 19.5,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({ id: "z1", flairRoomId: "room-1" }),
+      makeZone({ id: "z2", flairRoomId: "room-2" }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      capacity_sharing_enabled: true,
+      zone_no_improvement_alert_minutes: 45,
+    });
+    ctx.schedules = CAPACITY_SHARING_SCHEDULE;
+    const deps = makeDeps(client, persisted, NOW);
+    // z1 has already been commanded near its ceiling with no measurable
+    // improvement for longer than the alert threshold, as of last tick —
+    // exactly the persisted signal capacity sharing keys off.
+    await deps.zoneDemandTrackingStore.set("z1", {
+      demandStartedAtMs: NOW - 50 * 60000,
+      worstDeviationAtDemandStart: 3,
+      ductAnomalySinceMs: null,
+    });
+
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      zones,
+      ctx,
+      deps,
+    );
+
+    const z2Position = decision.zones.find((z) => z.zone_id === "z2")?.vents[0]
+      ?.commanded_position_pct;
+    expect(z2Position).toBe(0); // pulled to its own min_vent_position (default 0)
+  });
+
+  it("leaves comfortable zones on their normal ramp when capacity sharing is disabled", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 50,
+      },
+      {
+        roomId: "room-2",
+        ventId: "vent-2",
+        tempC: 19.5,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zones = [
+      makeZone({ id: "z1", flairRoomId: "room-1" }),
+      makeZone({ id: "z2", flairRoomId: "room-2" }),
+    ];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      capacity_sharing_enabled: false,
+      zone_no_improvement_alert_minutes: 45,
+    });
+    ctx.schedules = CAPACITY_SHARING_SCHEDULE;
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.zoneDemandTrackingStore.set("z1", {
+      demandStartedAtMs: NOW - 50 * 60000,
+      worstDeviationAtDemandStart: 3,
+      ductAnomalySinceMs: null,
+    });
+
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      zones,
+      ctx,
+      deps,
+    );
+
+    const z2Position = decision.zones.find((z) => z.zone_id === "z2")?.vents[0]
+      ?.commanded_position_pct;
+    expect(z2Position).toBeGreaterThan(0);
+  });
+});
+
 describe("runTick — live occupancy sensing", () => {
   it("reflects a room's Ecobee SmartSensor occupied reading with no schedule/Sleep Mode override involved", async () => {
     const client = new FakeFlairClient();

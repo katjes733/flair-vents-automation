@@ -116,6 +116,14 @@ export const zoneConfigSchema = z.object({
   // orphaning a schedule row is the kind of change nobody notices until a
   // room is uncomfortable.
   observation_only: z.boolean().default(false),
+  // See capacity_sharing_enabled's own comment in systemSettings.ts. Opt-OUT
+  // model: every flair_smart_vent zone participates in capacity sharing by
+  // default (as the zone being pulled toward min_vent_position to help a
+  // struggling sibling) unless explicitly exempted here — e.g. a home
+  // office in active use that shouldn't lose comfort for another room's
+  // sake. Irrelevant for manual_fixed_vent/no_vent zones, which have no
+  // position math to override in the first place.
+  capacity_sharing_exempt: z.boolean().default(false),
   // Unset (undefined) means "tight targeting" — a real, distinct state from
   // 0, which is why this has no `.default()`: defaulting it to 0 would
   // silently collapse "unset" and "explicitly zero" into the same value.

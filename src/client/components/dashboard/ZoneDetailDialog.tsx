@@ -99,6 +99,7 @@ export default function ZoneDetailDialog({
   const [hasTemperatureSensor, setHasTemperatureSensor] = useState(true);
   const [hasOccupancySensor, setHasOccupancySensor] = useState(false);
   const [observationOnly, setObservationOnly] = useState(false);
+  const [capacitySharingExempt, setCapacitySharingExempt] = useState(false);
   const [thermalLoadFlags, setThermalLoadFlags] = useState<ThermalLoadFlag[]>(
     [],
   );
@@ -144,6 +145,7 @@ export default function ZoneDetailDialog({
     setHasTemperatureSensor(zone.config.has_temperature_sensor);
     setHasOccupancySensor(zone.config.has_occupancy_sensor);
     setObservationOnly(zone.config.observation_only);
+    setCapacitySharingExempt(zone.config.capacity_sharing_exempt);
     setThermalLoadFlags(zone.config.thermal_load_flags);
     setFlairVents(
       zone.config.flair_vents.length > 0
@@ -187,6 +189,7 @@ export default function ZoneDetailDialog({
           has_temperature_sensor: hasTemperatureSensor,
           has_occupancy_sensor: hasOccupancySensor,
           observation_only: observationOnly,
+          capacity_sharing_exempt: capacitySharingExempt,
           flair_vents:
             ventHardwareType === "flair_smart_vent"
               ? nonBlankFlairVents.map((v) => ({
@@ -243,6 +246,7 @@ export default function ZoneDetailDialog({
   }, [
     airflowUnit,
     calibrationOffset,
+    capacitySharingExempt,
     comfortTolerance,
     hasOccupancySensor,
     hasTemperatureSensor,
@@ -372,6 +376,17 @@ export default function ZoneDetailDialog({
                     onChange={(e) => setMaxPosition(e.target.value)}
                   />
                 </Stack>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={capacitySharingExempt}
+                      onChange={(e) =>
+                        setCapacitySharingExempt(e.target.checked)
+                      }
+                    />
+                  }
+                  label="Capacity sharing exempt"
+                />
                 <Typography variant="subtitle2" color="text.secondary">
                   Thermal load
                 </Typography>

@@ -82,7 +82,10 @@ import {
 import type { ReconciliationQueue } from "~/server/control/reconciliationQueue";
 import type { SpikeBufferStore } from "~/server/control/spikeBuffer";
 import type { AirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
-import type { ZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
+import type {
+  ZoneDemandTrackingStore,
+  ZoneDemandTrackingState,
+} from "~/server/control/zoneDemandTrackingStore";
 import type { AlertingClient } from "~/server/util/alerting";
 import { detectNoImprovement } from "~/server/domain/state/noImprovement";
 import { dispatchZoneCommand } from "~/server/control/dispatcher";
@@ -1176,6 +1179,35 @@ export async function runTick(
     topologyLimits.blowerRatedFlowRateLps;
   const floorLps = topologyLimits.minimumAggregateFlowLps;
 
+  // Capacity sharing's own trigger — see capacity_sharing_enabled's own
+  // comment in systemSettings.ts. Fetched here (before this tick's pipeline
+  // run even starts) and reused by the zone-level no-improvement loop
+  // below, rather than each computing/fetching this independently: "is
+  // zone X struggling" can only honestly reflect *last* tick's outcome
+  // (this tick's own classification/positions don't exist yet), the exact
+  // same prior-persisted-state pattern the sleep-quiet-anchor inputs
+  // already use.
+  const demandTrackingByZoneId = new Map<string, ZoneDemandTrackingState>();
+  for (const zone of zones) {
+    demandTrackingByZoneId.set(
+      zone.id,
+      await deps.zoneDemandTrackingStore.get(zone.id),
+    );
+  }
+  const strugglingZoneIds = new Set(
+    zones
+      .filter((zone) => {
+        const demandStartedAtMs =
+          demandTrackingByZoneId.get(zone.id)?.demandStartedAtMs ?? null;
+        if (demandStartedAtMs === null) return false;
+        return (
+          (startedAtMs - demandStartedAtMs) / 60000 >=
+          ctx.settings.zone_no_improvement_alert_minutes
+        );
+      })
+      .map((zone) => zone.id),
+  );
+
   const pipelineInputs: PipelineZoneInput[] = zones.map((zone) => {
     const reading = readings.get(zone.id)!.room;
     const target = targetsByZone.get(zone.id)!;
@@ -1229,6 +1261,8 @@ export async function runTick(
       sleepModeActive: sleepModeActiveByZone.get(zone.id) ?? false,
       priorAnchorPositionPct: zone.state.sleep_quiet_anchor_position,
       priorAnchorSinceMs: parseIsoOrNull(zone.state.sleep_quiet_anchor_since),
+      otherZoneStruggling: [...strugglingZoneIds].some((id) => id !== zone.id),
+      capacitySharingExempt: zone.config.capacity_sharing_exempt,
     };
   });
 
@@ -1256,6 +1290,7 @@ export async function runTick(
       sleepQuietAnchorEnabled: ctx.settings.sleep_quiet_anchor_enabled,
       reanchorIntervalMinutes:
         ctx.settings.sleep_quiet_reanchor_interval_minutes,
+      capacitySharingEnabled: ctx.settings.capacity_sharing_enabled,
     },
     capLps,
     floorLps,
@@ -1524,7 +1559,10 @@ export async function runTick(
     const commandedPct = pipelineResult.commandedPositions[zone.id] ?? 0;
     const nearCeiling =
       commandedPct >= zone.config.max_vent_position - ZONE_CEILING_MARGIN_PCT;
-    const demandTracking = await deps.zoneDemandTrackingStore.get(zone.id);
+    // Pre-fetched above (before Step 9) — capacity sharing's own trigger
+    // needs this same read to happen before this tick's pipeline run, so
+    // it's fetched once and reused here rather than read twice.
+    const demandTracking = demandTrackingByZoneId.get(zone.id)!;
     const zoneAlertKey = `alert:zoneNoImprovement:${zone.id}`;
 
     if (stillCountsTowardNoImprovement(candidate) && nearCeiling) {

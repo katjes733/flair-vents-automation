@@ -719,7 +719,19 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         kind: "minutes",
         min: 0,
         description:
-          "The same idea as the whole-system alert above, scoped to one specific zone commanded near its own ceiling with a deviation that genuinely isn't shrinking. Alert-only, per zone.",
+          "The same idea as the whole-system alert above, scoped to one specific zone commanded near its own ceiling with a deviation that genuinely isn't shrinking. Alert-only, per zone. Also the trigger threshold for capacity sharing below, when enabled.",
+        tier: "advanced",
+      },
+      {
+        path: "capacity_sharing_enabled",
+        baseLabel: "Capacity sharing",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          'When a zone has been commanded near its ceiling with no measurable improvement (the alert above), pull every other comfortable, eligible flair_smart_vent zone on the same air handler down to its own min_vent_position, freeing real duct capacity for the struggling zone. A zone can opt out per-zone (its own "Capacity sharing exempt" checkbox); an active Sleep Mode window is always exempt regardless. Disable to revert immediately — every zone goes back to tracking only its own deviation.',
         tier: "advanced",
       },
       {

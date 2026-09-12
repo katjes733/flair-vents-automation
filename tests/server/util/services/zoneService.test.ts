@@ -46,6 +46,7 @@ const BASE_CONFIG = {
   thermal_load_flags: [],
   idle_baseline_position: 100,
   observation_only: false,
+  capacity_sharing_exempt: false,
   sensor_calibration_offset: 0,
   min_vent_position: 0,
   max_vent_position: 100,

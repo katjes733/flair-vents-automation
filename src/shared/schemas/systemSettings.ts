@@ -219,6 +219,28 @@ export const systemSettingsConfigSchema = z.object({
   // threshold since a single stuck zone is a narrower, easier-to-confirm
   // signal than a whole handler's call length. PLACEHOLDER.
   zone_no_improvement_alert_minutes: z.number().positive().default(45),
+  // Capacity sharing: a real, confirmed gap found live — the aggregate open
+  // area on "Upstairs" sat above 190% of rated capacity all day, every
+  // sample, with three demanding zones sharing the same fixed blower
+  // output as several manual_fixed_vent zones and a smart-vent zone that
+  // stays pinned at its 100% idle baseline nearly permanently (see
+  // step1DesiredPosition.ts's own comment — a "satisfied" zone only closes
+  // once it overshoots *past* its tolerance band, never merely for being
+  // right at target). Nothing today lets a comfortable zone sacrifice
+  // margin for a struggling sibling; every zone's position is driven
+  // purely by its own deviation. When enabled, reuses
+  // zone_no_improvement_alert_minutes's own trigger (a zone commanded near
+  // its ceiling with no measurable improvement, from the zone-scoped
+  // no-improvement check just above) as the signal to pull every eligible
+  // (not capacity_sharing_exempt), currently-satisfied flair_smart_vent
+  // zone on the same air handler down to its own min_vent_position — full
+  // authority, not a capped fraction, since a merely-satisfied zone isn't
+  // giving up genuine comfort, just unclaimed headroom. Never overrides a
+  // zone with an active Sleep Mode window — see pipeline.ts's own ordering.
+  // Defaults to off: this changes real HVAC behavior for zones other than
+  // the struggling one, so it ships opt-in rather than silently changing
+  // what every existing installation does.
+  capacity_sharing_enabled: z.boolean().default(false),
   // Isolated per-zone duct-airflow anomaly (this vent fails the duct-temp
   // differential while a sibling passes) — reuses
   // equipment_fault_duct_delta_threshold_c for the threshold itself, but

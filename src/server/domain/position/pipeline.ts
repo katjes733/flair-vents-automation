@@ -64,6 +64,12 @@ export interface PipelineZoneInput {
   sleepModeActive: boolean;
   priorAnchorPositionPct: number | null;
   priorAnchorSinceMs: number | null;
+  // Capacity sharing inputs — see capacity_sharing_enabled's own comment in
+  // systemSettings.ts. otherZoneStruggling is computed by the caller from
+  // *other* zones' persisted demand-tracking state (never this zone's
+  // own — a struggling zone isn't asked to sacrifice itself for itself).
+  otherZoneStruggling: boolean;
+  capacitySharingExempt: boolean;
 }
 
 export interface PipelineResult {
@@ -157,6 +163,7 @@ export function computeZoneCommands(params: {
     classificationStabilizationMinutes: number;
     sleepQuietAnchorEnabled: boolean;
     reanchorIntervalMinutes: number;
+    capacitySharingEnabled: boolean;
   };
   capLps: number;
   floorLps: number;
@@ -429,6 +436,28 @@ export function computeZoneCommands(params: {
     } else {
       anchorPositionPct = null;
       anchorSinceMs = null;
+
+      // Capacity sharing: a comfortable zone gives up its own unclaimed
+      // headroom — down to its own configured floor, full authority, not
+      // a capped fraction — to help a sibling that's been commanded near
+      // its ceiling with no measurable improvement. See
+      // capacity_sharing_enabled's own comment in systemSettings.ts for
+      // the real, confirmed 190%+-all-day oversubscription this responds
+      // to. sleepModeActive is checked here directly, not just inferred
+      // from this `else` branch — an active Sleep Mode window is exempt
+      // unconditionally, even if sleep_quiet_anchor_enabled itself is off
+      // (which would otherwise fall through to here): quiet hours for a
+      // sleeping room aren't up for negotiation just because a daytime
+      // zone elsewhere is struggling.
+      if (
+        params.settings.capacitySharingEnabled &&
+        !isDemanding &&
+        !zone.sleepModeActive &&
+        zone.otherZoneStruggling &&
+        !zone.capacitySharingExempt
+      ) {
+        effectiveDesiredPosition = zone.minVentPosition;
+      }
     }
     sleepQuietAnchors[zone.zoneId] = {
       positionPct: anchorPositionPct,
