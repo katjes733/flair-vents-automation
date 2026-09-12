@@ -1226,6 +1226,9 @@ export async function runTick(
       previousPendingSinceMs: parseIsoOrNull(
         zone.state.classification_pending_since,
       ),
+      sleepModeActive: sleepModeActiveByZone.get(zone.id) ?? false,
+      priorAnchorPositionPct: zone.state.sleep_quiet_anchor_position,
+      priorAnchorSinceMs: parseIsoOrNull(zone.state.sleep_quiet_anchor_since),
     };
   });
 
@@ -1250,6 +1253,9 @@ export async function runTick(
       maxStepsPerTick: ctx.settings.max_steps_per_tick,
       classificationStabilizationMinutes:
         ctx.settings.classification_stabilization_minutes,
+      sleepQuietAnchorEnabled: ctx.settings.sleep_quiet_anchor_enabled,
+      reanchorIntervalMinutes:
+        ctx.settings.sleep_quiet_reanchor_interval_minutes,
     },
     capLps,
     floorLps,
@@ -2012,6 +2018,12 @@ export async function runTick(
         : null,
       occupied_since: occupiedSinceByZone.get(zone.id)
         ? toIso(occupiedSinceByZone.get(zone.id)!)
+        : null,
+      sleep_quiet_anchor_position:
+        pipelineResult.sleepQuietAnchors[zone.id]?.positionPct ?? null,
+      sleep_quiet_anchor_since: pipelineResult.sleepQuietAnchors[zone.id]
+        ?.sinceMs
+        ? toIso(pipelineResult.sleepQuietAnchors[zone.id]!.sinceMs!)
         : null,
     });
   }

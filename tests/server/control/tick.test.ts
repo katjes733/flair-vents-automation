@@ -3263,6 +3263,197 @@ describe("runTick — quiet actuation during Sleep Mode", () => {
   });
 });
 
+describe("runTick — sleep-mode quiet anchor", () => {
+  const SLEEP_SCHEDULE = [
+    {
+      id: "sched-1",
+      installationId: "inst-1",
+      name: "Night",
+      config: { enabled: true, default_inactive: false },
+      events: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          created_at: "2024-01-01T00:00:00.000Z",
+          modified_at: "2024-01-01T00:00:00.000Z",
+          mode: "active" as const,
+          start_time: "00:00",
+          end_time: "23:59",
+          days_of_week: 0b1111111,
+          zone_settings: [
+            {
+              zone_id: "z1",
+              cool_setpoint: 21,
+              heat_setpoint: 19,
+              comfort_tolerance: 1,
+              assume_occupied: true,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("freezes a satisfied zone's position across ticks instead of tracking sub-degree sensor noise, and persists the anchor", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      sleep_quiet_anchor_enabled: true,
+      sleep_quiet_reanchor_interval_minutes: 60,
+      // Neutralizes Step 2's own ramp limiting so a single tick reaches
+      // its full target — isolating the anchor's own behavior from an
+      // unrelated confound (a multi-tick ramp-in-progress).
+      modulation_step_pct: 1,
+      max_steps_per_tick: 1000,
+    });
+    ctx.schedules = SLEEP_SCHEDULE;
+
+    // Tick 1: satisfied (19.5°C vs 21°C/tolerance 1 — the same known-
+    // satisfied fixture used at the pipeline level) — captures an anchor.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19.5,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zonesTick1 = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      zonesTick1,
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    const afterTick1 = persisted.get("z1");
+    expect(afterTick1?.sleep_quiet_anchor_position).not.toBeNull();
+    expect(afterTick1?.sleep_quiet_anchor_since).not.toBeNull();
+    const tick1Position = afterTick1?.vents[0]?.last_reported_position;
+
+    // Tick 2, 5 minutes later — a colder reading (still satisfied) that
+    // would compute a materially different position if the ramp re-ran,
+    // per the pipeline-level test of the same fixture pair. The anchor
+    // should hold the vent exactly where tick 1 left it.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const zonesTick2 = [
+      makeZone({ id: "z1", flairRoomId: "room-1", state: persisted.get("z1") }),
+    ];
+    const decision2 = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      zonesTick2,
+      ctx,
+      makeDeps(client, persisted, NOW + 5 * 60000),
+    );
+
+    const z1Vent2 = decision2.zones.find((z) => z.zone_id === "z1")?.vents[0];
+    expect(z1Vent2?.commanded_position_pct).toBe(tick1Position);
+    const afterTick2 = persisted.get("z1");
+    expect(afterTick2?.sleep_quiet_anchor_position).toBe(
+      afterTick1?.sleep_quiet_anchor_position,
+    );
+    expect(afterTick2?.sleep_quiet_anchor_since).toBe(
+      afterTick1?.sleep_quiet_anchor_since,
+    );
+  });
+
+  it("re-anchors once the refresh interval elapses, even while continuously satisfied", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      sleep_quiet_anchor_enabled: true,
+      sleep_quiet_reanchor_interval_minutes: 60,
+      modulation_step_pct: 1,
+      max_steps_per_tick: 1000,
+    });
+    ctx.schedules = SLEEP_SCHEDULE;
+
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19.5,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const decision1 = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1" })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    const anchorSinceAfterTick1 = persisted.get("z1")?.sleep_quiet_anchor_since;
+    const tick1Position = decision1.zones.find((z) => z.zone_id === "z1")
+      ?.vents[0]?.commanded_position_pct;
+
+    // 65 minutes later, past the 60-minute refresh interval, and colder
+    // (more overshoot -> more closing) — the anchor should refresh to
+    // this fresh, lower value rather than continue holding tick 1's frozen
+    // position.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19.3,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const decision2 = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          state: persisted.get("z1"),
+        }),
+      ],
+      ctx,
+      makeDeps(client, persisted, NOW + 65 * 60000),
+    );
+
+    const tick2Position = decision2.zones.find((z) => z.zone_id === "z1")
+      ?.vents[0]?.commanded_position_pct;
+    expect(tick2Position).toBeLessThan(tick1Position!);
+    expect(persisted.get("z1")?.sleep_quiet_anchor_since).not.toBe(
+      anchorSinceAfterTick1,
+    );
+  });
+
+  it("never anchors when the feature is disabled — the kill switch reverts to today's continuous ramp", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ sleep_quiet_anchor_enabled: false });
+    ctx.schedules = SLEEP_SCHEDULE;
+
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19.5,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1" })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    expect(persisted.get("z1")?.sleep_quiet_anchor_position).toBeNull();
+    expect(persisted.get("z1")?.sleep_quiet_anchor_since).toBeNull();
+  });
+});
+
 describe("runTick — live occupancy sensing", () => {
   it("reflects a room's Ecobee SmartSensor occupied reading with no schedule/Sleep Mode override involved", async () => {
     const client = new FakeFlairClient();

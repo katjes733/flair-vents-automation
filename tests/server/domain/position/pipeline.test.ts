@@ -30,6 +30,9 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     previousClassification: null,
     previousPendingClassification: null,
     previousPendingSinceMs: null,
+    sleepModeActive: false,
+    priorAnchorPositionPct: null,
+    priorAnchorSinceMs: null,
     ...overrides,
   };
 }
@@ -55,6 +58,8 @@ const settings = {
   // so these tests exercise Steps 1-3 without any hysteresis lag; the
   // hysteresis behavior itself gets its own dedicated describe block below.
   classificationStabilizationMinutes: 0,
+  sleepQuietAnchorEnabled: false,
+  reanchorIntervalMinutes: 60,
 };
 
 describe("computeZoneCommands — no contention", () => {
@@ -654,5 +659,152 @@ describe("computeZoneCommands — pressure floor clamp", () => {
     expect(result.pressureFloorClamped).toBe(true);
     expect(result.commandedPositions["high"]).toBeGreaterThan(0);
     expect(result.commandedPositions["low"]).toBe(0);
+  });
+});
+
+// Real, confirmed overnight noise problem this fixes: a "satisfied" zone's
+// continuous overshoot ramp still swings its position nearly end-to-end
+// every ~15 minutes from sub-degree sensor noise alone, even though the
+// room never stopped being comfortable — see sleep_quiet_anchor_enabled's
+// own comment in systemSettings.ts. calibratedTemp=19.5/tolerance=1 is the
+// same known-quantity satisfied fixture as the "join between classification
+// and contention" describe block above (deviation=-1.5, overshoot=1,
+// closeRatio≈0.599 against effectiveBand=1.67 unboosted) — desiredPosition
+// ≈ 40.12, quantized by Step 2 (modulationStepPct=1) to 40.
+describe("computeZoneCommands — sleep-mode quiet anchor", () => {
+  const satisfiedZone = (overrides: Partial<PipelineZoneInput> = {}) =>
+    zone({
+      calibratedTemp: asAbsoluteTemp(19.5),
+      tolerance: asTempDelta(1),
+      sleepModeActive: true,
+      ...overrides,
+    });
+
+  it("captures an anchor the first time a satisfied zone computes a position, with sleep mode active", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone()],
+      nowMs: 1000,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    // The anchor stores step1's raw (pre-Step-2-rounding) ramp output, not
+    // the quantized commandedPositions value — Step 2 re-quantizes it the
+    // same way on every subsequent tick regardless.
+    expect(result.sleepQuietAnchors["z"]?.sinceMs).toBe(1000);
+    expect(result.sleepQuietAnchors["z"]?.positionPct).toBeCloseTo(40.12, 1);
+  });
+
+  it("holds the anchored position flat on a later satisfied tick, even though the live ramp would compute something else", () => {
+    // A colder reading than the anchor tick's — the unanchored ramp would
+    // compute ~10 here (deviation=-2, overshoot=1.5, closeRatio≈0.898,
+    // desiredPosition≈10.2 quantized to 10), a clearly different value
+    // from the frozen 40 if the anchor weren't holding.
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        satisfiedZone({
+          calibratedTemp: asAbsoluteTemp(19),
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs: 1000 + 5 * 60000, // 5 min later — well inside the 60-min interval
+      settings: {
+        ...settings,
+        sleepQuietAnchorEnabled: true,
+        reanchorIntervalMinutes: 60,
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: 40,
+      sinceMs: 1000,
+    });
+  });
+
+  it("re-anchors once the refresh interval has elapsed, even while continuously satisfied", () => {
+    const nowMs = 1000 + 61 * 60000; // 61 min later — past the 60-min interval
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        satisfiedZone({
+          calibratedTemp: asAbsoluteTemp(19),
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs,
+      settings: {
+        ...settings,
+        sleepQuietAnchorEnabled: true,
+        reanchorIntervalMinutes: 60,
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(10);
+    expect(result.sleepQuietAnchors["z"]?.sinceMs).toBe(nowMs);
+    expect(result.sleepQuietAnchors["z"]?.positionPct).toBeCloseTo(10.18, 1);
+  });
+
+  it("clears the anchor and runs the full ramp when demanding, regardless of sleep mode", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          calibratedTemp: asAbsoluteTemp(30), // demanding — default fixture temp
+          sleepModeActive: true,
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs: 1000 + 5 * 60000,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z"]).toBe("demanding");
+    expect(result.commandedPositions["z"]).toBe(100);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+    });
+  });
+
+  it("never anchors when sleep mode is inactive — daytime behavior is unchanged", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone({ sleepModeActive: false })],
+      nowMs: 1000,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+    });
+  });
+
+  it("never anchors when the feature is disabled — the kill switch fully reverts to the continuous ramp", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone()],
+      nowMs: 1000,
+      settings: { ...settings, sleepQuietAnchorEnabled: false },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+    });
   });
 });

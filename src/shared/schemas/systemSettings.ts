@@ -45,6 +45,26 @@ export const systemSettingsConfigSchema = z.object({
   // correctness-focused regardless of the hour. PLACEHOLDER pending
   // real-world tuning; must stay >= min_step_delta_pct to have any effect.
   sleep_mode_min_step_delta_pct: z.number().positive().max(100).default(30),
+  // Quiet anchor: a real, confirmed noise problem found live — even with
+  // sleep_mode_min_step_delta_pct widened, a "satisfied" bedroom zone's
+  // continuous overshoot ramp (step1DesiredPosition.ts) still walked
+  // nearly its full position range every ~15 minutes all night, since sub-
+  // degree sensor noise is enough to swing the ramp's output even though
+  // the room never stopped being comfortable. While Sleep Mode is active
+  // and a zone is satisfied, this freezes its position at whatever last
+  // achieved comfort (captured on the demanding->satisfied transition, or
+  // periodically per sleep_quiet_reanchor_interval_minutes) instead of
+  // re-running the ramp every tick — a demanding zone is completely
+  // unaffected, so a genuinely hot night still gets the full, immediate
+  // ramp as a safety net. Defaults to off: this changes real overnight HVAC
+  // behavior, so it ships opt-in rather than silently changing what every
+  // existing installation does.
+  sleep_quiet_anchor_enabled: z.boolean().default(false),
+  // Only consulted while sleep_quiet_anchor_enabled is true. PLACEHOLDER
+  // pending real-world tuning — long enough that a comfortable zone's
+  // anchor is genuinely static for most of the night, short enough to
+  // track real drift (compressor performance, outdoor temp) across it.
+  sleep_quiet_reanchor_interval_minutes: z.number().positive().default(60),
   // Backstop drift check, compares reported vs. last_target_position every
   // Nth tick (Resolved Design Decisions).
   drift_check_interval_ticks: z.number().int().positive().default(10),
