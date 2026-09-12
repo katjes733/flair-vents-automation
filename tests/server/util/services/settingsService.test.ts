@@ -52,23 +52,32 @@ describe("updateSettingsForInstallation", () => {
     expect(updateSystemSettings).toHaveBeenCalledOnce();
   });
 
-  it("rejects a duplicate zone id in zone_priority_order outright", async () => {
-    getZonesForInstallation.mockResolvedValue([{ id: "z1" }]);
-    await expect(
-      updateSettingsForInstallation("inst-1", {
-        zone_priority_order: ["z1", "z1"],
-      }),
-    ).rejects.toThrow(/appears more than once/);
-    expect(updateSystemSettings).not.toHaveBeenCalled();
+  // Self-heals rather than rejecting: the priority-order UI only supports
+  // reordering, not removing a single stale entry, so a hard validation
+  // error here would leave an admin with no way to ever save settings
+  // again once a zone is deleted-and-recreated with a new id. See
+  // reconcileZonePriorityOrder's own comment.
+  it("silently dedupes a duplicate zone id in zone_priority_order, warning rather than rejecting", async () => {
+    getZonesForInstallation.mockResolvedValue([{ id: "z1", name: "Zone 1" }]);
+    const result = await updateSettingsForInstallation("inst-1", {
+      zone_priority_order: ["z1", "z1"],
+    });
+    expect(result.config.zone_priority_order).toEqual(["z1"]);
+    expect(result.warnings.some((w) => w.includes("auto-reconciled"))).toBe(
+      true,
+    );
+    expect(updateSystemSettings).toHaveBeenCalledOnce();
   });
 
-  it("rejects an unknown zone id in zone_priority_order", async () => {
-    getZonesForInstallation.mockResolvedValue([{ id: "z1" }]);
-    await expect(
-      updateSettingsForInstallation("inst-1", {
-        zone_priority_order: ["unknown-zone"],
-      }),
-    ).rejects.toThrow(/does not exist/);
+  it("drops an unknown zone id from zone_priority_order, warning rather than rejecting", async () => {
+    getZonesForInstallation.mockResolvedValue([{ id: "z1", name: "Zone 1" }]);
+    const result = await updateSettingsForInstallation("inst-1", {
+      zone_priority_order: ["unknown-zone"],
+    });
+    expect(result.config.zone_priority_order).toEqual(["z1"]);
+    expect(result.warnings.some((w) => w.includes("auto-reconciled"))).toBe(
+      true,
+    );
   });
 
   it("accepts a valid zone_priority_order without adding its own warning", async () => {

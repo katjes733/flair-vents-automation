@@ -5,6 +5,7 @@ import {
   validateStepDeltaRelationship,
   validateSleepModeStepDelta,
   validatePriorityOrder,
+  reconcileZonePriorityOrder,
 } from "~/server/domain/config/validateConfig";
 
 function zoneConfig(overrides = {}) {
@@ -243,5 +244,57 @@ describe("validatePriorityOrder", () => {
 
   it("passes a valid, unique list", () => {
     expect(validatePriorityOrder(["a", "b"], new Set(["a", "b"]))).toEqual([]);
+  });
+});
+
+describe("reconcileZonePriorityOrder", () => {
+  it("is a no-op when every id is known, unique, and already present", () => {
+    const zones = [
+      { id: "a", name: "Zone A" },
+      { id: "b", name: "Zone B" },
+    ];
+    expect(reconcileZonePriorityOrder(["a", "b"], zones)).toEqual(["a", "b"]);
+  });
+
+  it("drops an id for a zone that no longer exists — e.g. deleted and recreated with a new id", () => {
+    const zones = [{ id: "a", name: "Zone A" }];
+    expect(reconcileZonePriorityOrder(["a", "stale"], zones)).toEqual(["a"]);
+  });
+
+  it("drops a duplicate, keeping only the first occurrence", () => {
+    const zones = [
+      { id: "a", name: "Zone A" },
+      { id: "b", name: "Zone B" },
+    ];
+    expect(reconcileZonePriorityOrder(["a", "b", "a"], zones)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("appends a known zone missing from the list, sorted by name", () => {
+    const zones = [
+      { id: "a", name: "Zone A" },
+      { id: "c", name: "Zone C" },
+      { id: "b", name: "Zone B" },
+    ];
+    expect(reconcileZonePriorityOrder(["a"], zones)).toEqual(["a", "b", "c"]);
+  });
+
+  it("preserves the existing custom order for known zones while pruning stale ids and appending missing ones", () => {
+    const zones = [
+      { id: "a", name: "Zone A" },
+      { id: "b", name: "Zone B" },
+      { id: "c", name: "Zone C" },
+    ];
+    expect(reconcileZonePriorityOrder(["b", "stale", "a"], zones)).toEqual([
+      "b",
+      "a",
+      "c",
+    ]);
+  });
+
+  it("returns an empty list when there are no known zones", () => {
+    expect(reconcileZonePriorityOrder(["stale"], [])).toEqual([]);
   });
 });

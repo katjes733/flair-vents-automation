@@ -1,9 +1,8 @@
 import {
   validateStepDeltaRelationship,
   validateSleepModeStepDelta,
-  validatePriorityOrder,
+  reconcileZonePriorityOrder,
 } from "~/server/domain/config/validateConfig";
-import { HttpError } from "~/server/util/httpError";
 import {
   getSystemSettings,
   updateSystemSettings,
@@ -46,18 +45,26 @@ export async function updateSettingsForInstallation(
       sleepModeMinStepDeltaPct: merged.sleep_mode_min_step_delta_pct,
     }).map((i) => i.message),
   );
-  if (merged.zone_priority_order.length > 0) {
-    const zones = await getZonesForInstallation(installationId);
-    const priorityIssues = validatePriorityOrder(
-      merged.zone_priority_order,
-      new Set(zones.map((z) => z.id)),
+  // Self-heals rather than rejecting the save: zone deletion is refused
+  // when a *schedule* still references the zone, but this list has no
+  // equivalent guard and the priority-order UI only supports reordering,
+  // not removing a single stale entry — so a hard validation error here
+  // would leave an admin with no way to ever save settings again. See
+  // reconcileZonePriorityOrder's own comment.
+  const zones = await getZonesForInstallation(installationId);
+  const reconciledOrder = reconcileZonePriorityOrder(
+    merged.zone_priority_order,
+    zones,
+  );
+  const orderChanged =
+    reconciledOrder.length !== merged.zone_priority_order.length ||
+    reconciledOrder.some((id, i) => id !== merged.zone_priority_order[i]);
+  if (orderChanged) {
+    warnings.push(
+      "zone_priority_order was auto-reconciled against current zones (stale zones removed and/or new zones appended).",
     );
-    const priorityErrors = priorityIssues.filter((i) => i.severity === "error");
-    if (priorityErrors.length > 0) {
-      throw new HttpError(priorityErrors.map((i) => i.message).join(" "), 400);
-    }
-    warnings.push(...priorityIssues.map((i) => i.message));
   }
+  merged.zone_priority_order = reconciledOrder;
 
   await updateSystemSettings(installationId, merged);
 
