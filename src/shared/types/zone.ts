@@ -77,6 +77,31 @@ export interface ZoneRuntimeState {
   // demanding, Sleep Mode isn't active, or the feature is disabled.
   sleep_quiet_anchor_position: number | null;
   sleep_quiet_anchor_since: string | null;
+  // Vent misalignment auto-recalibration (see
+  // vent_misalignment_auto_recalibration_enabled) — the window fields
+  // anchor a *single continuous* stretch of "reported 0%, satisfied,
+  // COOLING_CALL/HEATING_CALL active"; reset to null the instant any of
+  // those breaks (an idle-segment rebound is normal and not diagnostic —
+  // see the setting's own comment). recalibrating_since is non-null only
+  // while a triggered home cycle is actively holding the zone open,
+  // waiting for it to actually report there. last_recalibrated_at gates
+  // vent_misalignment_recalibration_cooldown_hours, set on both a
+  // completed cycle and one abandoned via
+  // vent_misalignment_max_open_wait_minutes — a vent that never actually
+  // opens shouldn't be retried every tick either.
+  vent_misalignment_window_since: string | null;
+  vent_misalignment_window_start_temp: number | null;
+  vent_misalignment_recalibrating_since: string | null;
+  vent_misalignment_last_recalibrated_at: string | null;
+  // A rolling "quick view" audit trail, not a lifetime total — one ISO
+  // timestamp per completed recalibration cycle (either outcome), pruned
+  // to the trailing 24h on every tick the feature runs. Deeper analysis
+  // (which zone, what time of day, how long each cycle's own open took)
+  // is expected to come from the structured Loki events instead of this
+  // list, which exists only to answer "is this actively happening to
+  // this zone right now" at a glance. See updateRecalibrationHistory's
+  // own comment.
+  vent_misalignment_recalibration_history: string[];
 }
 
 export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
@@ -97,6 +122,11 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   occupied_since: null,
   sleep_quiet_anchor_position: null,
   sleep_quiet_anchor_since: null,
+  vent_misalignment_window_since: null,
+  vent_misalignment_window_start_temp: null,
+  vent_misalignment_recalibrating_since: null,
+  vent_misalignment_last_recalibrated_at: null,
+  vent_misalignment_recalibration_history: [],
 };
 
 /** A zone is degraded if any of its vents are — see "Multi-Vent Zones". */

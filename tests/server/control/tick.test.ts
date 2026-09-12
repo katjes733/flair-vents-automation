@@ -3552,6 +3552,238 @@ describe("runTick — sleep-mode quiet anchor", () => {
   });
 });
 
+describe("runTick — vent misalignment auto-recalibration", () => {
+  const ALWAYS_ON_SCHEDULE = [
+    {
+      id: "sched-1",
+      installationId: "inst-1",
+      name: "Always on",
+      config: { enabled: true, default_inactive: false },
+      events: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          created_at: "2024-01-01T00:00:00.000Z",
+          modified_at: "2024-01-01T00:00:00.000Z",
+          mode: "active" as const,
+          start_time: "00:00",
+          end_time: "23:59",
+          days_of_week: 0b1111111,
+          zone_settings: [
+            {
+              zone_id: "z1",
+              cool_setpoint: 21,
+              heat_setpoint: 19,
+              assume_occupied: false,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("forces the vent fully open once a satisfied, reported-closed zone drifts past the threshold within one call segment", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_temp_threshold_c: 0.56,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    // Tick 1: satisfied (20°C vs 21°C setpoint), vent reports fully
+    // closed — starts the detection window.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 20,
+        ductC: 14,
+        percentOpen: 0,
+      },
+    ]);
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1" })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    const afterTick1 = persisted.get("z1")!;
+    expect(afterTick1.vent_misalignment_window_since).not.toBeNull();
+    expect(afterTick1.vent_misalignment_window_start_temp).toBeCloseTo(20, 5);
+    expect(afterTick1.vent_misalignment_recalibrating_since).toBeNull();
+
+    // Tick 2, 20 minutes later: still reports fully closed, but the room
+    // kept cooling well past the threshold — exactly the "closed vent,
+    // room still tracking the call" signature.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 20 - 0.56 - 0.1,
+        ductC: 14,
+        percentOpen: 0,
+      },
+    ]);
+    const decision2 = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1", state: afterTick1 })],
+      ctx,
+      makeDeps(client, persisted, NOW + 20 * 60000),
+    );
+
+    const z1 = decision2.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.vent_misalignment_suspected).toBe(true);
+    expect(z1.vents[0]?.commanded_position_pct).toBe(100);
+    expect(
+      client.getVentCommandHistory().some((c) => c.ventId === "vent-1"),
+    ).toBe(true);
+
+    const afterTick2 = persisted.get("z1")!;
+    expect(afterTick2.vent_misalignment_recalibrating_since).not.toBeNull();
+    // The original window anchor is preserved, not reset by the flag.
+    expect(afterTick2.vent_misalignment_window_since).toBe(
+      afterTick1.vent_misalignment_window_since,
+    );
+  });
+
+  it("finishes the cycle and starts the cooldown once the vent actually reports itself open", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_temp_threshold_c: 0.56,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const recalibratingState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_misalignment_window_since: new Date(NOW - 1_800_000).toISOString(),
+      vent_misalignment_window_start_temp: 20,
+      vent_misalignment_recalibrating_since: new Date(
+        NOW - 120_000,
+      ).toISOString(),
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19,
+        ductC: 14,
+        percentOpen: 95, // the vent has now actually reported opening
+      },
+    ]);
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          state: recalibratingState,
+        }),
+      ],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.vent_misalignment_suspected).toBe(false);
+    const after = persisted.get("z1")!;
+    expect(after.vent_misalignment_recalibrating_since).toBeNull();
+    expect(after.vent_misalignment_window_since).toBeNull();
+    expect(after.vent_misalignment_last_recalibrated_at).not.toBeNull();
+    // The "quick view" rolling count picks up the just-finished cycle.
+    expect(after.vent_misalignment_recalibration_history).toEqual([
+      new Date(NOW).toISOString(),
+    ]);
+  });
+
+  it("prunes recalibration history entries older than 24h while appending a newly-finished one", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_temp_threshold_c: 0.56,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const DAY_MS = 24 * 3600000;
+    const staleEntry = new Date(NOW - DAY_MS - 1000).toISOString();
+    const recentEntry = new Date(NOW - 3600000).toISOString();
+    const recalibratingState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_misalignment_recalibrating_since: new Date(
+        NOW - 120_000,
+      ).toISOString(),
+      vent_misalignment_recalibration_history: [staleEntry, recentEntry],
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19,
+        ductC: 14,
+        percentOpen: 95,
+      },
+    ]);
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          state: recalibratingState,
+        }),
+      ],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const after = persisted.get("z1")!;
+    expect(after.vent_misalignment_recalibration_history).toEqual([
+      recentEntry,
+      new Date(NOW).toISOString(),
+    ]);
+  });
+
+  it("is a no-op when the feature is disabled, even with an otherwise-triggering scenario", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: false,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const priorWindow: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_misalignment_window_since: new Date(NOW - 1_800_000).toISOString(),
+      vent_misalignment_window_start_temp: 20,
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19,
+        ductC: 14,
+        percentOpen: 0,
+      },
+    ]);
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1", state: priorWindow })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.vent_misalignment_suspected).toBe(false);
+    expect(z1.vents[0]?.commanded_position_pct).not.toBe(100);
+    // Untouched — falls back to whatever was already persisted.
+    expect(persisted.get("z1")?.vent_misalignment_window_since).toBe(
+      priorWindow.vent_misalignment_window_since,
+    );
+  });
+});
+
 describe("runTick — capacity sharing", () => {
   const CAPACITY_SHARING_SCHEDULE = [
     {

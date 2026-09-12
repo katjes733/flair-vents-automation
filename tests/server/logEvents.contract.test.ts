@@ -107,6 +107,22 @@ function buildRealCatalogue(): Map<string, Set<string>> {
     reconcile_attempts: 3,
     last_reported_pct: 40,
   });
+  logEvents.logVentMisalignmentSuspected(log, {
+    air_handler_id: "ah-1",
+    zone_id: "z-1",
+    vent_id: "v-1",
+    hvac_state: "COOLING_CALL",
+    window_start_temp_c: 21,
+    current_temp_c: 20,
+    temp_delta_c: -1,
+    threshold_c: 0.56,
+  });
+  logEvents.logVentMisalignmentRecalibration(log, {
+    air_handler_id: "ah-1",
+    zone_id: "z-1",
+    outcome: "opened",
+    waited_ms: 120000,
+  });
   logEvents.logThermalSpikeDetected(log, {
     air_handler_id: "ah-1",
     zone_id: "z-1",

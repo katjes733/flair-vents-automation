@@ -123,6 +123,11 @@ export interface ZoneTickDecisionRecord {
   post_contention_position_pct: number | null;
   vents: VentTickDecisionRecord[];
   reason: string;
+  // See vent_misalignment_auto_recalibration_enabled's own comment
+  // (systemSettings.ts) — true from the tick a suspected misalignment is
+  // first detected through the tick its home-cycle recalibration
+  // finishes.
+  vent_misalignment_suspected: boolean;
 }
 
 export interface AirHandlerTickDecision {

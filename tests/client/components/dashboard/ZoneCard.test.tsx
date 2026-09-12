@@ -57,6 +57,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       last_classification: null,
       occupied: false,
       occupancy_pending_flip_since: null,
+      vent_misalignment_recalibration_history: [],
     },
     ...overrides,
   };
@@ -310,6 +311,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 100,
         post_contention_position_pct: 100,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-a",
@@ -371,6 +373,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 100,
         post_contention_position_pct: 100,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-a",
@@ -425,6 +428,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 42,
         post_contention_position_pct: 42,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-1",
@@ -460,6 +464,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 60,
         post_contention_position_pct: 60,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-1",
@@ -499,6 +504,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 0,
         post_contention_position_pct: 0,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-1",

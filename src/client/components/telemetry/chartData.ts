@@ -188,6 +188,22 @@ export function computeDegradedPeriodsForVent(
   );
 }
 
+/** The historical half of VentMisalignmentHistory — see that component. */
+export function computeVentMisalignmentPeriodsForZone(
+  points: TickHistoryPoint[],
+  zoneId: string,
+  domainEndMs: number,
+): BooleanPeriod[] {
+  const samples = points.map((p) => {
+    const zone = p.decision.zones.find((z) => z.zone_id === zoneId);
+    return {
+      timeMs: p.loggedAtMs,
+      value: zone?.vent_misalignment_suspected ?? false,
+    };
+  });
+  return computeTruePeriods(samples, domainEndMs);
+}
+
 /** The historical half of EquipmentFaultLog — see that component. */
 export function computeFaultPeriodsForAirHandler(
   points: TickHistoryPoint[],

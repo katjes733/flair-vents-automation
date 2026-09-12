@@ -95,6 +95,15 @@ export interface ZoneRuntimeState {
   last_classification: string | null;
   occupied: boolean;
   occupancy_pending_flip_since: string | null;
+  // Rolling audit trail for the vent-misalignment auto-recalibration
+  // feature — one ISO timestamp per completed cycle, pruned server-side
+  // to the trailing 24h every tick. See
+  // vent_misalignment_auto_recalibration_enabled's own comment
+  // (systemSettings.ts). Empty for a zone that's never recalibrated (or
+  // on any installation with the feature off) — always present, never
+  // undefined, since the server backfills every zone's state against
+  // EMPTY_ZONE_RUNTIME_STATE before responding.
+  vent_misalignment_recalibration_history: string[];
 }
 
 /** A zone is degraded if any of its vents are — see "Multi-Vent Zones". */
