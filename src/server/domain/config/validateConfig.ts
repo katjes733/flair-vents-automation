@@ -212,3 +212,38 @@ export function validatePriorityOrder(
   }
   return issues;
 }
+
+/**
+ * Self-heals `zone_priority_order` against the zones that actually exist —
+ * called wherever the list is read or saved, rather than requiring an admin
+ * to hand-edit stale ids out of a UI that only supports reordering, not
+ * removing a single entry. Drops duplicates and ids for zones that no
+ * longer exist (a zone deleted-and-recreated gets a fresh id — see "Zone
+ * priority order" — zone deletion is refused, not silently pruned, when a
+ * *schedule* still references it, but this list is a separate, system-wide
+ * one with no equivalent guard, so a stale id here has no in-UI way to
+ * clear), then appends any known zone not already present (newest zones
+ * first created still need a priority slot), sorted by name for a
+ * deterministic, readable append order. A no-op — same ids, same order —
+ * when nothing has drifted.
+ */
+export function reconcileZonePriorityOrder(
+  zonePriorityOrder: readonly string[],
+  knownZones: ReadonlyArray<{ id: string; name: string }>,
+): string[] {
+  const knownZoneIds = new Set(knownZones.map((z) => z.id));
+  const seen = new Set<string>();
+  const reconciled: string[] = [];
+  for (const zoneId of zonePriorityOrder) {
+    if (seen.has(zoneId) || !knownZoneIds.has(zoneId)) continue;
+    seen.add(zoneId);
+    reconciled.push(zoneId);
+  }
+  const missing = knownZones
+    .filter((z) => !seen.has(z.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const zone of missing) {
+    reconciled.push(zone.id);
+  }
+  return reconciled;
+}
