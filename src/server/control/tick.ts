@@ -1977,7 +1977,8 @@ export async function runTick(
       pipelineResult.sleepQuietAnchors[zone.id]?.sinceMs ?? null;
     const anchorFreshlyCaptured =
       currentAnchorSinceMs !== null &&
-      currentAnchorSinceMs !== parseIsoOrNull(zone.state.sleep_quiet_anchor_since);
+      currentAnchorSinceMs !==
+        parseIsoOrNull(zone.state.sleep_quiet_anchor_since);
     const effectiveMinStepDeltaPct =
       sleepModeActiveByZone.get(zone.id) &&
       pipelineResult.classifications[zone.id] !== "demanding" &&
