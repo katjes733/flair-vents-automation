@@ -40,7 +40,10 @@ export interface PipelineZoneInput {
   manualVents: Array<{ position: number; flowRateLps: number }>;
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp | null; // null = "inactive" — no target this tick
-  tolerance: TempDelta | null;
+  // Asymmetric — see zoneConfigSchema's own comment on
+  // comfort_demand_tolerance/comfort_overshoot_tolerance.
+  demandTolerance: TempDelta | null;
+  overshootTolerance: TempDelta | null;
   occupied: boolean;
   staleOccupancy: boolean;
   staleReading: boolean;
@@ -57,6 +60,19 @@ export interface PipelineZoneInput {
   previousClassification: ZoneClassification | null;
   previousPendingClassification: ZoneClassification | null;
   previousPendingSinceMs: number | null;
+  // Sleep-mode quiet anchor inputs — see sleep_quiet_anchor_enabled's own
+  // comment in systemSettings.ts. sleepModeActive mirrors the zone's
+  // currently-active schedule event's assume_occupied flag (control/tick.ts's
+  // sleepModeActiveByZone), not the live occupancy signal.
+  sleepModeActive: boolean;
+  priorAnchorPositionPct: number | null;
+  priorAnchorSinceMs: number | null;
+  // Capacity sharing inputs — see capacity_sharing_enabled's own comment in
+  // systemSettings.ts. otherZoneStruggling is computed by the caller from
+  // *other* zones' persisted demand-tracking state (never this zone's
+  // own — a struggling zone isn't asked to sacrifice itself for itself).
+  otherZoneStruggling: boolean;
+  capacitySharingExempt: boolean;
 }
 
 export interface PipelineResult {
@@ -70,6 +86,15 @@ export interface PipelineResult {
   classificationPending: Record<
     string,
     { value: ZoneClassification | null; sinceMs: number | null }
+  >;
+  // The updated sleep-quiet-anchor state per zone, for the caller to
+  // persist back to zone.state.sleep_quiet_anchor_position/_since — mirrors
+  // classificationPending's shape/contract. Both fields null for any zone
+  // that isn't currently holding an anchor (demanding, sleep mode inactive,
+  // or the feature disabled).
+  sleepQuietAnchors: Record<
+    string,
+    { positionPct: number | null; sinceMs: number | null }
   >;
   contention: ContentionResult | null;
   pressureFloorClamped: boolean;
@@ -139,6 +164,9 @@ export function computeZoneCommands(params: {
     modulationStepPct: number;
     maxStepsPerTick: number;
     classificationStabilizationMinutes: number;
+    sleepQuietAnchorEnabled: boolean;
+    reanchorIntervalMinutes: number;
+    capacitySharingEnabled: boolean;
   };
   capLps: number;
   floorLps: number;
@@ -148,6 +176,7 @@ export function computeZoneCommands(params: {
   const commandedPositions: Record<string, number> = {};
   const classifications: Record<string, ZoneClassification | "inactive"> = {};
   const classificationPending: PipelineResult["classificationPending"] = {};
+  const sleepQuietAnchors: PipelineResult["sleepQuietAnchors"] = {};
 
   // Debounces a zone's raw classifyZone() output against its own prior
   // tick's stabilized result — see stabilizeClassification's own doc
@@ -218,7 +247,8 @@ export function computeZoneCommands(params: {
         : "COOLING_CALL", // arbitrary while idle; classification is diagnostic only
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
-      tolerance: zone.tolerance,
+      demandTolerance: zone.demandTolerance,
+      overshootTolerance: zone.overshootTolerance,
       previousClassification: zone.previousClassification,
     });
     return classifyWithStabilization(zone, raw);
@@ -289,7 +319,8 @@ export function computeZoneCommands(params: {
         state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only during FAN_ONLY
         calibratedTemp: zone.calibratedTemp,
         resolvedSetpoint: zone.resolvedSetpoint,
-        tolerance: zone.tolerance,
+        demandTolerance: zone.demandTolerance,
+        overshootTolerance: zone.overshootTolerance,
         previousClassification: zone.previousClassification,
       });
       classifications[zone.zoneId] = classifyWithStabilization(
@@ -329,7 +360,8 @@ export function computeZoneCommands(params: {
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
-      tolerance: zone.tolerance,
+      demandTolerance: zone.demandTolerance,
+      overshootTolerance: zone.overshootTolerance,
       previousClassification: zone.previousClassification,
     });
     const classification = classifyWithStabilization(zone, rawClassification);
@@ -363,7 +395,8 @@ export function computeZoneCommands(params: {
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
-      tolerance: zone.tolerance,
+      demandTolerance: zone.demandTolerance,
+      overshootTolerance: zone.overshootTolerance,
       occupied: zone.occupied,
       spiking: zone.spiking,
       settings: {
@@ -374,6 +407,70 @@ export function computeZoneCommands(params: {
       },
     });
 
+    // Sleep-mode quiet anchor: a satisfied zone in an active Sleep Mode
+    // window holds flat at the position that last actually achieved
+    // comfort instead of re-running the overshoot ramp above every tick —
+    // see sleep_quiet_anchor_enabled's own comment (systemSettings.ts) for
+    // the real, confirmed overnight noise problem this fixes. Re-anchors
+    // on a demanding->satisfied transition, or once
+    // reanchorIntervalMinutes has elapsed since the current anchor was
+    // captured — either way, always from *this tick's own* step1 output,
+    // never a stale carried-forward ramp calculation. Demanding is
+    // completely unaffected regardless of sleep mode, by design: it's the
+    // safety net for a night the AC genuinely can't keep up.
+    let effectiveDesiredPosition = step1.desiredPosition;
+    let anchorPositionPct = zone.priorAnchorPositionPct;
+    let anchorSinceMs = zone.priorAnchorSinceMs;
+    if (
+      params.settings.sleepQuietAnchorEnabled &&
+      !isDemanding &&
+      zone.sleepModeActive
+    ) {
+      const reanchorDue =
+        anchorPositionPct === null ||
+        anchorSinceMs === null ||
+        params.nowMs - anchorSinceMs >=
+          params.settings.reanchorIntervalMinutes * 60000;
+      if (reanchorDue) {
+        anchorPositionPct = step1.desiredPosition;
+        anchorSinceMs = params.nowMs;
+      }
+      // reanchorDue's own condition guarantees anchorPositionPct is
+      // non-null by this point (either it already was, or the block above
+      // just set it) — the `?? step1.desiredPosition` is a type-safe
+      // fallback that should never actually trigger.
+      effectiveDesiredPosition = anchorPositionPct ?? step1.desiredPosition;
+    } else {
+      anchorPositionPct = null;
+      anchorSinceMs = null;
+
+      // Capacity sharing: a comfortable zone gives up its own unclaimed
+      // headroom — down to its own configured floor, full authority, not
+      // a capped fraction — to help a sibling that's been commanded near
+      // its ceiling with no measurable improvement. See
+      // capacity_sharing_enabled's own comment in systemSettings.ts for
+      // the real, confirmed 190%+-all-day oversubscription this responds
+      // to. sleepModeActive is checked here directly, not just inferred
+      // from this `else` branch — an active Sleep Mode window is exempt
+      // unconditionally, even if sleep_quiet_anchor_enabled itself is off
+      // (which would otherwise fall through to here): quiet hours for a
+      // sleeping room aren't up for negotiation just because a daytime
+      // zone elsewhere is struggling.
+      if (
+        params.settings.capacitySharingEnabled &&
+        !isDemanding &&
+        !zone.sleepModeActive &&
+        zone.otherZoneStruggling &&
+        !zone.capacitySharingExempt
+      ) {
+        effectiveDesiredPosition = zone.minVentPosition;
+      }
+    }
+    sleepQuietAnchors[zone.zoneId] = {
+      positionPct: anchorPositionPct,
+      sinceMs: anchorSinceMs,
+    };
+
     // A satisfied zone closes proportionally toward its floor (see
     // computeDesiredPosition's own comment) but isn't competing for scarce
     // airflow — it bypasses Step 3 contention entirely, same as every
@@ -383,13 +480,13 @@ export function computeZoneCommands(params: {
     // running — so it bypasses contention too, going straight to its own
     // computed position rather than joining the Step 3 pool.
     if (!isDemanding || !callActive) {
-      nonDemandingSmartVent[zone.zoneId] = step1.desiredPosition;
+      nonDemandingSmartVent[zone.zoneId] = effectiveDesiredPosition;
       continue;
     }
 
     demanding.push({
       zoneId: zone.zoneId,
-      desiredPosition: step1.desiredPosition,
+      desiredPosition: effectiveDesiredPosition,
       floorPosition: Math.max(zone.idleBaselinePosition, zone.minVentPosition),
       flowRateLps: zone.flowRateLps,
       priorityRank: zone.priorityRank,
@@ -477,6 +574,7 @@ export function computeZoneCommands(params: {
     commandedPositions,
     classifications,
     classificationPending,
+    sleepQuietAnchors,
     contention,
     pressureFloorClamped: floorResult.clamped,
     insufficientFloor: floorResult.insufficient,

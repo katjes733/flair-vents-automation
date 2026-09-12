@@ -70,6 +70,13 @@ export interface ZoneRuntimeState {
   // occupancy.ts's resolveTrustedOccupancy() and
   // system_settings.occupancy_trust_window_minutes.
   occupied_since: string | null;
+  // Sleep-mode quiet anchor (see sleep_quiet_anchor_enabled) — the position
+  // last captured on a demanding->satisfied transition (or periodic
+  // re-anchor) while satisfied and Sleep Mode is active, held flat instead
+  // of re-running the overshoot ramp every tick. null whenever the zone is
+  // demanding, Sleep Mode isn't active, or the feature is disabled.
+  sleep_quiet_anchor_position: number | null;
+  sleep_quiet_anchor_since: string | null;
 }
 
 export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
@@ -88,6 +95,8 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   occupied: false,
   occupancy_pending_flip_since: null,
   occupied_since: null,
+  sleep_quiet_anchor_position: null,
+  sleep_quiet_anchor_since: null,
 };
 
 /** A zone is degraded if any of its vents are — see "Multi-Vent Zones". */

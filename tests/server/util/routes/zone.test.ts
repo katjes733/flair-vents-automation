@@ -76,6 +76,8 @@ describe("updateZoneState", () => {
       occupied: false,
       occupancy_pending_flip_since: null,
       occupied_since: null,
+      sleep_quiet_anchor_position: null,
+      sleep_quiet_anchor_since: null,
     });
     expect(update).toHaveBeenCalledWith(
       "z1",

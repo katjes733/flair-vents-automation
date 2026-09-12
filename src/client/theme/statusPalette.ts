@@ -7,6 +7,7 @@ export interface StatusPalette {
   manualOverride: string;
   away: string;
   emergency: string;
+  occupied: string;
 }
 
 // One fixed status vocabulary, defined once here rather than each
@@ -23,6 +24,13 @@ export const lightStatusPalette: StatusPalette = {
   manualOverride: "#0288d1",
   away: "#5c6bc0",
   emergency: "#c62828",
+  // Validated against this theme's default MUI primary (#1976d2, the
+  // temperature-chart line it's always plotted alongside) via
+  // dataviz's validate_palette.js — teal 600 clears CVD separation and
+  // the normal-vision floor cleanly. See ZoneTemperatureChart's own
+  // comment for why a lighter/more pastel teal fails against dark mode's
+  // primary (#90caf9) and was rejected in favor of this more saturated one.
+  occupied: "#00897b",
 };
 
 export const darkStatusPalette: StatusPalette = {
@@ -34,4 +42,5 @@ export const darkStatusPalette: StatusPalette = {
   manualOverride: "#4fc3f7",
   away: "#7986cb",
   emergency: "#ff5252",
+  occupied: "#26a69a",
 };

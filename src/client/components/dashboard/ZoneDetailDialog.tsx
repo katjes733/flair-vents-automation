@@ -65,10 +65,10 @@ interface ZoneDetailDialogProps {
   onDeleted: () => void;
 }
 
-// undefined/"" means "unset" for comfort_tolerance — a real, distinct
-// state from 0 (see zoneConfigSchema's own comment: unset means tight
-// targeting). The form preserves that distinction rather than defaulting
-// a blank field to 0.
+// undefined/"" means "unset" for comfort_demand_tolerance/
+// comfort_overshoot_tolerance — a real, distinct state from 0 (see
+// zoneConfigSchema's own comment: unset means tight targeting). The form
+// preserves that distinction rather than defaulting a blank field to 0.
 export default function ZoneDetailDialog({
   open,
   zone,
@@ -89,7 +89,9 @@ export default function ZoneDetailDialog({
   const [ventHardwareType, setVentHardwareType] =
     useState<VentHardwareType>("flair_smart_vent");
   const [idleBaseline, setIdleBaseline] = useState("100");
-  const [comfortTolerance, setComfortTolerance] = useState("");
+  const [comfortDemandTolerance, setComfortDemandTolerance] = useState("");
+  const [comfortOvershootTolerance, setComfortOvershootTolerance] =
+    useState("");
   const [calibrationOffset, setCalibrationOffset] = useState("0");
   const [minPosition, setMinPosition] = useState("0");
   const [maxPosition, setMaxPosition] = useState("100");
@@ -99,6 +101,7 @@ export default function ZoneDetailDialog({
   const [hasTemperatureSensor, setHasTemperatureSensor] = useState(true);
   const [hasOccupancySensor, setHasOccupancySensor] = useState(false);
   const [observationOnly, setObservationOnly] = useState(false);
+  const [capacitySharingExempt, setCapacitySharingExempt] = useState(false);
   const [thermalLoadFlags, setThermalLoadFlags] = useState<ThermalLoadFlag[]>(
     [],
   );
@@ -112,10 +115,18 @@ export default function ZoneDetailDialog({
     setSeededZoneId(zone.id);
     setVentHardwareType(zone.ventHardwareType);
     setIdleBaseline(String(zone.config.idle_baseline_position));
-    setComfortTolerance(
-      zone.config.comfort_tolerance !== undefined
+    setComfortDemandTolerance(
+      zone.config.comfort_demand_tolerance !== undefined
         ? toDisplayDelta(
-            asTempDelta(zone.config.comfort_tolerance),
+            asTempDelta(zone.config.comfort_demand_tolerance),
+            temperatureUnit,
+          ).toFixed(1)
+        : "",
+    );
+    setComfortOvershootTolerance(
+      zone.config.comfort_overshoot_tolerance !== undefined
+        ? toDisplayDelta(
+            asTempDelta(zone.config.comfort_overshoot_tolerance),
             temperatureUnit,
           ).toFixed(1)
         : "",
@@ -144,6 +155,7 @@ export default function ZoneDetailDialog({
     setHasTemperatureSensor(zone.config.has_temperature_sensor);
     setHasOccupancySensor(zone.config.has_occupancy_sensor);
     setObservationOnly(zone.config.observation_only);
+    setCapacitySharingExempt(zone.config.capacity_sharing_exempt);
     setThermalLoadFlags(zone.config.thermal_load_flags);
     setFlairVents(
       zone.config.flair_vents.length > 0
@@ -187,6 +199,7 @@ export default function ZoneDetailDialog({
           has_temperature_sensor: hasTemperatureSensor,
           has_occupancy_sensor: hasOccupancySensor,
           observation_only: observationOnly,
+          capacity_sharing_exempt: capacitySharingExempt,
           flair_vents:
             ventHardwareType === "flair_smart_vent"
               ? nonBlankFlairVents.map((v) => ({
@@ -209,10 +222,20 @@ export default function ZoneDetailDialog({
             Number(calibrationOffset),
             temperatureUnit,
           ),
-          comfort_tolerance:
-            comfortTolerance.trim() === ""
+          comfort_demand_tolerance:
+            comfortDemandTolerance.trim() === ""
               ? undefined
-              : fromDisplayDelta(Number(comfortTolerance), temperatureUnit),
+              : fromDisplayDelta(
+                  Number(comfortDemandTolerance),
+                  temperatureUnit,
+                ),
+          comfort_overshoot_tolerance:
+            comfortOvershootTolerance.trim() === ""
+              ? undefined
+              : fromDisplayDelta(
+                  Number(comfortOvershootTolerance),
+                  temperatureUnit,
+                ),
           manual_vents:
             ventHardwareType === "manual_fixed_vent"
               ? manualVents.map((v) => ({
@@ -243,7 +266,9 @@ export default function ZoneDetailDialog({
   }, [
     airflowUnit,
     calibrationOffset,
-    comfortTolerance,
+    capacitySharingExempt,
+    comfortDemandTolerance,
+    comfortOvershootTolerance,
     hasOccupancySensor,
     hasTemperatureSensor,
     idleBaseline,
@@ -372,6 +397,17 @@ export default function ZoneDetailDialog({
                     onChange={(e) => setMaxPosition(e.target.value)}
                   />
                 </Stack>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={capacitySharingExempt}
+                      onChange={(e) =>
+                        setCapacitySharingExempt(e.target.checked)
+                      }
+                    />
+                  }
+                  label="Capacity sharing exempt"
+                />
                 <Typography variant="subtitle2" color="text.secondary">
                   Thermal load
                 </Typography>
@@ -411,10 +447,20 @@ export default function ZoneDetailDialog({
                   Comfort
                 </Typography>
                 <TextField
-                  label={`Comfort tolerance, °${temperatureUnit} (blank = tight)`}
+                  label={`Demand tolerance, °${temperatureUnit} (blank = tight)`}
                   type="number"
-                  value={comfortTolerance}
-                  onChange={(e) => setComfortTolerance(e.target.value)}
+                  value={comfortDemandTolerance}
+                  onChange={(e) => setComfortDemandTolerance(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="How far the room can drift toward needing heating/cooling before the vent opens further."
+                />
+                <TextField
+                  label={`Overshoot tolerance, °${temperatureUnit} (blank = tight)`}
+                  type="number"
+                  value={comfortOvershootTolerance}
+                  onChange={(e) => setComfortOvershootTolerance(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="How far the room can drift past setpoint, already comfortable, before the vent closes further."
                 />
                 <TextField
                   label={`Sensor calibration offset, °${temperatureUnit}`}

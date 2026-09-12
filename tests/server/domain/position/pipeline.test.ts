@@ -18,7 +18,8 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     manualVents: [],
     calibratedTemp: asAbsoluteTemp(25),
     resolvedSetpoint: asAbsoluteTemp(21),
-    tolerance: null,
+    demandTolerance: null,
+    overshootTolerance: null,
     occupied: false,
     staleOccupancy: false,
     staleReading: false,
@@ -30,6 +31,11 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     previousClassification: null,
     previousPendingClassification: null,
     previousPendingSinceMs: null,
+    sleepModeActive: false,
+    priorAnchorPositionPct: null,
+    priorAnchorSinceMs: null,
+    otherZoneStruggling: false,
+    capacitySharingExempt: false,
     ...overrides,
   };
 }
@@ -55,6 +61,9 @@ const settings = {
   // so these tests exercise Steps 1-3 without any hysteresis lag; the
   // hysteresis behavior itself gets its own dedicated describe block below.
   classificationStabilizationMinutes: 0,
+  sleepQuietAnchorEnabled: false,
+  reanchorIntervalMinutes: 60,
+  capacitySharingEnabled: false,
 };
 
 describe("computeZoneCommands — no contention", () => {
@@ -153,7 +162,8 @@ describe("computeZoneCommands — the join between classification and contention
         zoneId: "satisfied",
         priorityRank: 0,
         calibratedTemp: asAbsoluteTemp(19.5),
-        tolerance: asTempDelta(1),
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
       }),
       zone({
         zoneId: "demanding",
@@ -173,10 +183,11 @@ describe("computeZoneCommands — the join between classification and contention
     // The satisfied zone closes proportionally toward its floor (see
     // step1DesiredPosition.ts's not-demanding branch) — it was never a
     // Step 3 candidate to reduce, regardless of what it closed to.
-    // deviation=19.5-21=-1.5, tolerance=1 -> the closing curve's own zero
-    // point is the lower edge (setpoint-tolerance/2=20.5), so overshoot=1
-    // against effectiveBand=1.67 (unboosted): 100 - 100*(1/1.67) ≈ 40.12,
-    // quantized to the nearest modulationStepPct (1%) by Step 2.
+    // deviation=19.5-21=-1.5, overshootTolerance=0.5 -> the closing curve's
+    // own zero point is the lower edge (setpoint-overshootTolerance=20.5),
+    // so overshoot=1 against effectiveBand=1.67 (unboosted):
+    // 100 - 100*(1/1.67) ≈ 40.12, quantized to the nearest modulationStepPct
+    // (1%) by Step 2.
     expect(result.commandedPositions["satisfied"]).toBe(40);
   });
 });
@@ -497,7 +508,8 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
         idleBaselinePosition: 100,
         minVentPosition: 0,
         calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
-        tolerance: asTempDelta(1),
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
       }),
     ];
     const result = computeZoneCommands({
@@ -518,7 +530,8 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
       idleBaselinePosition: 100,
       minVentPosition: 0,
       calibratedTemp: asAbsoluteTemp(18),
-      tolerance: asTempDelta(1),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
     };
     const duringCall = computeZoneCommands({
       state: "COOLING_CALL",
@@ -561,8 +574,9 @@ describe("computeZoneCommands — classification stabilization holds a noisy zon
     idleBaselinePosition: 100,
     minVentPosition: 0,
     maxVentPosition: 100,
-    tolerance: asTempDelta(0.1),
-    calibratedTemp: asAbsoluteTemp(21.15), // deviation 0.15 > tolerance 0.1 -> raw reads "demanding"
+    demandTolerance: asTempDelta(0.05),
+    overshootTolerance: asTempDelta(0.05),
+    calibratedTemp: asAbsoluteTemp(21.15), // deviation 0.15 > demandTolerance 0.05 -> raw reads "demanding"
     resolvedSetpoint: asAbsoluteTemp(21),
     flowRateLps: 47,
   };
@@ -628,7 +642,8 @@ describe("computeZoneCommands — pressure floor clamp", () => {
         // tolerance/2 = 18.5) so both zones fully saturate to their floor
         // — satisfied, closes to floor.
         calibratedTemp: asAbsoluteTemp(10),
-        tolerance: asTempDelta(5),
+        demandTolerance: asTempDelta(2.5),
+        overshootTolerance: asTempDelta(2.5),
         minVentPosition: 0,
         maxVentPosition: 100,
         flowRateLps: 100,
@@ -637,7 +652,8 @@ describe("computeZoneCommands — pressure floor clamp", () => {
         zoneId: "low",
         priorityRank: 1,
         calibratedTemp: asAbsoluteTemp(10),
-        tolerance: asTempDelta(5),
+        demandTolerance: asTempDelta(2.5),
+        overshootTolerance: asTempDelta(2.5),
         minVentPosition: 0,
         maxVentPosition: 100,
         flowRateLps: 100,
@@ -654,5 +670,260 @@ describe("computeZoneCommands — pressure floor clamp", () => {
     expect(result.pressureFloorClamped).toBe(true);
     expect(result.commandedPositions["high"]).toBeGreaterThan(0);
     expect(result.commandedPositions["low"]).toBe(0);
+  });
+});
+
+// Real, confirmed overnight noise problem this fixes: a "satisfied" zone's
+// continuous overshoot ramp still swings its position nearly end-to-end
+// every ~15 minutes from sub-degree sensor noise alone, even though the
+// room never stopped being comfortable — see sleep_quiet_anchor_enabled's
+// own comment in systemSettings.ts. calibratedTemp=19.5/tolerance=1 is the
+// same known-quantity satisfied fixture as the "join between classification
+// and contention" describe block above (deviation=-1.5, overshoot=1,
+// closeRatio≈0.599 against effectiveBand=1.67 unboosted) — desiredPosition
+// ≈ 40.12, quantized by Step 2 (modulationStepPct=1) to 40.
+describe("computeZoneCommands — sleep-mode quiet anchor", () => {
+  const satisfiedZone = (overrides: Partial<PipelineZoneInput> = {}) =>
+    zone({
+      calibratedTemp: asAbsoluteTemp(19.5),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
+      sleepModeActive: true,
+      ...overrides,
+    });
+
+  it("captures an anchor the first time a satisfied zone computes a position, with sleep mode active", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone()],
+      nowMs: 1000,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    // The anchor stores step1's raw (pre-Step-2-rounding) ramp output, not
+    // the quantized commandedPositions value — Step 2 re-quantizes it the
+    // same way on every subsequent tick regardless.
+    expect(result.sleepQuietAnchors["z"]?.sinceMs).toBe(1000);
+    expect(result.sleepQuietAnchors["z"]?.positionPct).toBeCloseTo(40.12, 1);
+  });
+
+  it("holds the anchored position flat on a later satisfied tick, even though the live ramp would compute something else", () => {
+    // A colder reading than the anchor tick's — the unanchored ramp would
+    // compute ~10 here (deviation=-2, overshoot=1.5, closeRatio≈0.898,
+    // desiredPosition≈10.2 quantized to 10), a clearly different value
+    // from the frozen 40 if the anchor weren't holding.
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        satisfiedZone({
+          calibratedTemp: asAbsoluteTemp(19),
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs: 1000 + 5 * 60000, // 5 min later — well inside the 60-min interval
+      settings: {
+        ...settings,
+        sleepQuietAnchorEnabled: true,
+        reanchorIntervalMinutes: 60,
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: 40,
+      sinceMs: 1000,
+    });
+  });
+
+  it("re-anchors once the refresh interval has elapsed, even while continuously satisfied", () => {
+    const nowMs = 1000 + 61 * 60000; // 61 min later — past the 60-min interval
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        satisfiedZone({
+          calibratedTemp: asAbsoluteTemp(19),
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs,
+      settings: {
+        ...settings,
+        sleepQuietAnchorEnabled: true,
+        reanchorIntervalMinutes: 60,
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(10);
+    expect(result.sleepQuietAnchors["z"]?.sinceMs).toBe(nowMs);
+    expect(result.sleepQuietAnchors["z"]?.positionPct).toBeCloseTo(10.18, 1);
+  });
+
+  it("clears the anchor and runs the full ramp when demanding, regardless of sleep mode", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          calibratedTemp: asAbsoluteTemp(30), // demanding — default fixture temp
+          sleepModeActive: true,
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs: 1000 + 5 * 60000,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z"]).toBe("demanding");
+    expect(result.commandedPositions["z"]).toBe(100);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+    });
+  });
+
+  it("never anchors when sleep mode is inactive — daytime behavior is unchanged", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone({ sleepModeActive: false })],
+      nowMs: 1000,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+    });
+  });
+
+  it("never anchors when the feature is disabled — the kill switch fully reverts to the continuous ramp", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone()],
+      nowMs: 1000,
+      settings: { ...settings, sleepQuietAnchorEnabled: false },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+    });
+  });
+});
+
+// Real, confirmed gap found live: "Upstairs" ran at 190%+ of rated
+// capacity all day, every sample — three demanding zones sharing the same
+// fixed blower output as several manual_fixed_vent zones and a
+// flair_smart_vent zone (Den Front) that sits pinned at its 100% idle
+// baseline nearly permanently, since the closing ramp only engages once a
+// zone overshoots *past* its tolerance band, never merely for being right
+// at target (see step1DesiredPosition.ts). Nothing made a comfortable
+// zone give up unclaimed headroom for a struggling sibling — this closes
+// that gap.
+describe("computeZoneCommands — capacity sharing", () => {
+  // deviation=19.5-21=-1.5, tolerance=1 -> overshoot=1, closeRatio≈0.599,
+  // desiredPosition≈40.12 -> quantized to 40 (same known fixture as the
+  // "join between classification and contention" describe block above).
+  const satisfiedZone = (overrides: Partial<PipelineZoneInput> = {}) =>
+    zone({
+      calibratedTemp: asAbsoluteTemp(19.5),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
+      minVentPosition: 10,
+      otherZoneStruggling: true,
+      ...overrides,
+    });
+
+  it("pulls a satisfied, eligible zone down to its own min_vent_position when another zone is struggling", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone()],
+      nowMs: 0,
+      settings: { ...settings, capacitySharingEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(10);
+  });
+
+  it("leaves an exempt zone on its own normal ramp even when another zone is struggling", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone({ capacitySharingExempt: true })],
+      nowMs: 0,
+      settings: { ...settings, capacitySharingEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(46);
+  });
+
+  it("leaves a zone on its normal ramp when no other zone is struggling", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone({ otherZoneStruggling: false })],
+      nowMs: 0,
+      settings: { ...settings, capacitySharingEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(46);
+  });
+
+  it("never applies to a demanding zone, regardless of another zone struggling", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          calibratedTemp: asAbsoluteTemp(30), // demanding — default fixture temp
+          minVentPosition: 10,
+          otherZoneStruggling: true,
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...settings, capacitySharingEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z"]).toBe("demanding");
+    expect(result.commandedPositions["z"]).toBe(100);
+  });
+
+  it("never pulls down a zone with an active Sleep Mode window, even with sleep_quiet_anchor_enabled off — quiet hours are unconditional", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone({ sleepModeActive: true })],
+      nowMs: 0,
+      settings: {
+        ...settings,
+        capacitySharingEnabled: true,
+        sleepQuietAnchorEnabled: false, // deliberately off — the regression this test guards
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(46);
+  });
+
+  it("is a no-op when the feature is disabled, even with an eligible struggling scenario", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [satisfiedZone()],
+      nowMs: 0,
+      settings: { ...settings, capacitySharingEnabled: false },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(46);
   });
 });

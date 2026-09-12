@@ -34,6 +34,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       homekit_sensor_serial: null,
       thermal_load_flags: [],
       observation_only: false,
+      capacity_sharing_exempt: false,
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
@@ -307,7 +308,8 @@ describe("EventEditorDialog", () => {
           zone_id: "z1",
           cool_setpoint: 21.11, // ~70°F
           heat_setpoint: 18.89, // ~66°F
-          comfort_tolerance: 0.56, // ~1°F
+          comfort_demand_tolerance: 0.56, // ~1°F
+          comfort_overshoot_tolerance: 1.11, // ~2°F
           assume_occupied: true,
         },
       ],
@@ -326,8 +328,11 @@ describe("EventEditorDialog", () => {
     );
     expect(screen.getByLabelText("Cool (°F)")).toHaveValue(70);
     expect(screen.getByLabelText("Heat (°F)")).toHaveValue(66);
-    expect(screen.getByLabelText("Tolerance, °F")).toHaveValue(1.01);
-    expect(screen.getByRole("checkbox", { name: "Sleep Mode" })).toBeChecked();
+    expect(screen.getByLabelText("Demand")).toHaveValue(1.01);
+    expect(screen.getByLabelText("Over")).toHaveValue(2);
+    expect(
+      screen.getByRole("button", { name: "Disable Sleep Mode for Den Front" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("the Advanced section is collapsed by default and reveals only the driving-zone picker", () => {

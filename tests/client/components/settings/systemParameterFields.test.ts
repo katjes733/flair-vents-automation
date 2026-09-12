@@ -117,6 +117,18 @@ describe("toDisplayString / fromDisplayString", () => {
   it("fromDisplayString surfaces NaN for invalid numeric input, not a silent 0", () => {
     expect(fromDisplayString("percent", "not-a-number", F)).toBeNaN();
   });
+
+  // Regression coverage for the "boolean" kind added for
+  // sleep_quiet_anchor_enabled: unlike "enum"/"text", fromDisplayString
+  // must convert the option string back into a real boolean — the schema
+  // field is z.boolean(), not a string enum, so the raw display string
+  // would fail server-side validation if passed through unconverted.
+  it("round-trips a boolean kind through its 'true'/'false' option strings as real booleans", () => {
+    expect(toDisplayString("boolean", true, F)).toBe("true");
+    expect(toDisplayString("boolean", false, F)).toBe("false");
+    expect(fromDisplayString("boolean", "true", F)).toBe(true);
+    expect(fromDisplayString("boolean", "false", F)).toBe(false);
+  });
 });
 
 describe("sameDisplayValue", () => {
@@ -145,6 +157,11 @@ describe("sameDisplayValue", () => {
     expect(sameDisplayValue("enum", "bucket_major", "priority_only")).toBe(
       false,
     );
+  });
+
+  it("compares boolean by exact string equality, same as enum/text", () => {
+    expect(sameDisplayValue("boolean", "true", "true")).toBe(true);
+    expect(sameDisplayValue("boolean", "true", "false")).toBe(false);
   });
 
   it("is false when either side is non-numeric for a numeric kind", () => {

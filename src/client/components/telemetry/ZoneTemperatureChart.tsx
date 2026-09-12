@@ -72,22 +72,60 @@ export default function ZoneTemperatureChart({
     return [data[0].time, data[data.length - 1].time];
   }, [zoomDomain, data]);
 
-  const { yTicks, yTickDecimals } = useMemo(() => {
-    const values = data.flatMap((d) =>
-      [d.temp, d.setpoint].filter((v): v is number => v !== null),
-    );
-    if (values.length === 0) return { yTicks: undefined, yTickDecimals: 0 };
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const interval = niceTickInterval(min, max);
-    const domainMin = Math.floor(min / interval) * interval;
-    const domainMax = Math.ceil(max / interval) * interval;
-    const ticks: number[] = [];
-    for (let v = domainMin; v <= domainMax + 1e-9; v += interval) {
-      ticks.push(Math.round(v / interval) * interval);
-    }
-    return { yTicks: ticks, yTickDecimals: tickDecimalsForInterval(interval) };
-  }, [data]);
+  // occupiedHigh/Low reserve a thin, unlabeled strip *below* the real
+  // temperature ticks for the occupancy indicator line — sized as a
+  // fraction of the same nice-round interval the real ticks use, so it
+  // stays proportional across both °C and °F and across zoomed-in
+  // windows. Deliberately not a second Y-axis (never dual-axis — see
+  // "One axis" in the dataviz method): occupancy is drawn on the *same*
+  // scale, just confined to a band the real data never enters, so a
+  // single shared axis stays honest.
+  const { yTicks, yTickDecimals, yDomain, occupiedHigh, occupiedLow } =
+    useMemo(() => {
+      const values = data.flatMap((d) =>
+        [d.temp, d.setpoint].filter((v): v is number => v !== null),
+      );
+      if (values.length === 0) {
+        return {
+          yTicks: undefined,
+          yTickDecimals: 0,
+          yDomain: undefined,
+          occupiedHigh: 0,
+          occupiedLow: 0,
+        };
+      }
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const interval = niceTickInterval(min, max);
+      const domainMin = Math.floor(min / interval) * interval;
+      const domainMax = Math.ceil(max / interval) * interval;
+      const ticks: number[] = [];
+      for (let v = domainMin; v <= domainMax + 1e-9; v += interval) {
+        ticks.push(Math.round(v / interval) * interval);
+      }
+      const laneHeight = interval * 0.35;
+      return {
+        yTicks: ticks,
+        yTickDecimals: tickDecimalsForInterval(interval),
+        yDomain: [domainMin - laneHeight, domainMax] as [number, number],
+        occupiedHigh: domainMin - laneHeight * 0.15,
+        occupiedLow: domainMin - laneHeight * 0.85,
+      };
+    }, [data]);
+
+  const plottableData = useMemo(
+    () =>
+      displayData.map((d) => ({
+        ...d,
+        occupiedPlot:
+          d.occupied === true
+            ? occupiedHigh
+            : d.occupied === false
+              ? occupiedLow
+              : null,
+      })),
+    [displayData, occupiedHigh, occupiedLow],
+  );
 
   const renderTooltip = useCallback(
     (props: {
@@ -100,10 +138,16 @@ export default function ZoneTemperatureChart({
       const payload = props.payload as {
         dataKey?: string;
         value?: number | null;
+        // Recharts carries the whole originating data row alongside each
+        // series' own plotted value — reading occupied from here (rather
+        // than reverse-mapping occupiedPlot's lane position) keeps the
+        // tooltip honest regardless of where the lane happens to sit.
+        payload?: { occupied?: boolean | null };
       }[];
       const rows: ChartTooltipRow[] = [];
       const tempEntry = payload.find((p) => p.dataKey === "temp");
       const setpointEntry = payload.find((p) => p.dataKey === "setpoint");
+      const occupied = payload[0]?.payload?.occupied;
       if (tempEntry?.value != null) {
         rows.push({
           label: "Temperature",
@@ -116,6 +160,13 @@ export default function ZoneTemperatureChart({
           label: "Setpoint",
           value: `${setpointEntry.value.toFixed(1)}°${temperatureUnit}`,
           color: theme.palette.text.secondary,
+        });
+      }
+      if (occupied != null) {
+        rows.push({
+          label: "Occupied",
+          value: occupied ? "Yes" : "No",
+          color: theme.palette.status.occupied,
         });
       }
       return <ChartTooltip timeMs={Number(props.label)} rows={rows} />;
@@ -136,7 +187,7 @@ export default function ZoneTemperatureChart({
       {zoomDomain && <ZoomResetButton onClick={resetZoom} />}
       <TouchSafeChartFrame height={height} onDoubleClick={resetZoom}>
         <ComposedChart
-          data={displayData}
+          data={plottableData}
           margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -160,7 +211,7 @@ export default function ZoneTemperatureChart({
           />
           <YAxis
             ticks={yTicks}
-            domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : undefined}
+            domain={yDomain}
             tickFormatter={(v: number) =>
               `${v.toFixed(yTickDecimals)}°${temperatureUnit}`
             }
@@ -198,6 +249,22 @@ export default function ZoneTemperatureChart({
             name="Setpoint"
             stroke={theme.palette.text.secondary}
             strokeDasharray="4 4"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+            connectNulls={false}
+          />
+          {/* Occupancy indicator — a dotted step line confined to the
+              reserved lane below the real temperature ticks (see
+              occupiedHigh/occupiedLow's own comment). A tighter dash
+              pattern than Setpoint's "4 4" so the two read as distinct
+              series even before checking the tooltip/color. */}
+          <Line
+            type="stepAfter"
+            dataKey="occupiedPlot"
+            name="Occupied"
+            stroke={theme.palette.status.occupied}
+            strokeDasharray="1 3"
             strokeWidth={1.5}
             dot={false}
             isAnimationActive={false}

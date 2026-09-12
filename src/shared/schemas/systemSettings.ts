@@ -45,6 +45,26 @@ export const systemSettingsConfigSchema = z.object({
   // correctness-focused regardless of the hour. PLACEHOLDER pending
   // real-world tuning; must stay >= min_step_delta_pct to have any effect.
   sleep_mode_min_step_delta_pct: z.number().positive().max(100).default(30),
+  // Quiet anchor: a real, confirmed noise problem found live — even with
+  // sleep_mode_min_step_delta_pct widened, a "satisfied" bedroom zone's
+  // continuous overshoot ramp (step1DesiredPosition.ts) still walked
+  // nearly its full position range every ~15 minutes all night, since sub-
+  // degree sensor noise is enough to swing the ramp's output even though
+  // the room never stopped being comfortable. While Sleep Mode is active
+  // and a zone is satisfied, this freezes its position at whatever last
+  // achieved comfort (captured on the demanding->satisfied transition, or
+  // periodically per sleep_quiet_reanchor_interval_minutes) instead of
+  // re-running the ramp every tick — a demanding zone is completely
+  // unaffected, so a genuinely hot night still gets the full, immediate
+  // ramp as a safety net. Defaults to off: this changes real overnight HVAC
+  // behavior, so it ships opt-in rather than silently changing what every
+  // existing installation does.
+  sleep_quiet_anchor_enabled: z.boolean().default(false),
+  // Only consulted while sleep_quiet_anchor_enabled is true. PLACEHOLDER
+  // pending real-world tuning — long enough that a comfortable zone's
+  // anchor is genuinely static for most of the night, short enough to
+  // track real drift (compressor performance, outdoor temp) across it.
+  sleep_quiet_reanchor_interval_minutes: z.number().positive().default(60),
   // Backstop drift check, compares reported vs. last_target_position every
   // Nth tick (Resolved Design Decisions).
   drift_check_interval_ticks: z.number().int().positive().default(10),
@@ -199,6 +219,28 @@ export const systemSettingsConfigSchema = z.object({
   // threshold since a single stuck zone is a narrower, easier-to-confirm
   // signal than a whole handler's call length. PLACEHOLDER.
   zone_no_improvement_alert_minutes: z.number().positive().default(45),
+  // Capacity sharing: a real, confirmed gap found live — the aggregate open
+  // area on "Upstairs" sat above 190% of rated capacity all day, every
+  // sample, with three demanding zones sharing the same fixed blower
+  // output as several manual_fixed_vent zones and a smart-vent zone that
+  // stays pinned at its 100% idle baseline nearly permanently (see
+  // step1DesiredPosition.ts's own comment — a "satisfied" zone only closes
+  // once it overshoots *past* its tolerance band, never merely for being
+  // right at target). Nothing today lets a comfortable zone sacrifice
+  // margin for a struggling sibling; every zone's position is driven
+  // purely by its own deviation. When enabled, reuses
+  // zone_no_improvement_alert_minutes's own trigger (a zone commanded near
+  // its ceiling with no measurable improvement, from the zone-scoped
+  // no-improvement check just above) as the signal to pull every eligible
+  // (not capacity_sharing_exempt), currently-satisfied flair_smart_vent
+  // zone on the same air handler down to its own min_vent_position — full
+  // authority, not a capped fraction, since a merely-satisfied zone isn't
+  // giving up genuine comfort, just unclaimed headroom. Never overrides a
+  // zone with an active Sleep Mode window — see pipeline.ts's own ordering.
+  // Defaults to off: this changes real HVAC behavior for zones other than
+  // the struggling one, so it ships opt-in rather than silently changing
+  // what every existing installation does.
+  capacity_sharing_enabled: z.boolean().default(false),
   // Isolated per-zone duct-airflow anomaly (this vent fails the duct-temp
   // differential while a sibling passes) — reuses
   // equipment_fault_duct_delta_threshold_c for the threshold itself, but
@@ -210,7 +252,7 @@ export const systemSettingsConfigSchema = z.object({
   // 2°F → 1.11°C (Config-time validation section).
   heat_cool_deadband_min_c: z.number().positive().default(1.11),
   // A real, confirmed gap found live via shadow-mode evaluation: a
-  // zone/schedule-event `comfort_tolerance` left unset (or set very tight)
+  // zone/schedule-event demand tolerance left unset (or set very tight)
   // means an effectively-zero deadband, which real sensor noise alone
   // (confirmed live: a bedroom's own reading wobbling ~0.5°C around its
   // setpoint with nothing actually wrong) is enough to flip
@@ -219,11 +261,16 @@ export const systemSettingsConfigSchema = z.object({
   // "demanding" tick — even a hairline one — snaps its target straight
   // back to fully open, undoing whatever proportional closing had already
   // happened. This floor guarantees every zone gets at least this much
-  // real deadband regardless of what's configured — "0.1" in a schedule
-  // still means "at least this," never truly zero. ~1°F default; the real
-  // noise observed live was closer to 0.5°C in amplitude, so this may need
-  // to go higher via System Parameters once you've watched a few real
-  // cycles.
+  // real deadband on the demand side regardless of what's configured —
+  // "0.1" in a schedule still means "at least this," never truly zero.
+  // Deliberately NOT applied to comfort_overshoot_tolerance — a tight or
+  // zero overshoot tolerance is the entire point of that field (e.g. "never
+  // let this room undercool below setpoint during the day"), and
+  // classifyWithStabilization's dwell-based debounce already protects
+  // against noise-driven flapping there without needing a magnitude
+  // floor too. ~1°F default; the real noise observed live was closer to
+  // 0.5°C in amplitude, so this may need to go higher via System
+  // Parameters once you've watched a few real cycles.
   minimum_comfort_tolerance_c: z.number().min(0).max(2.78).default(0.56),
   // The companion fix, layered on top of the floor above: even with a real
   // deadband, a zone whose actual temperature happens to sit close to its

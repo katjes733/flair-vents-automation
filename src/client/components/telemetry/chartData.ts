@@ -28,6 +28,11 @@ export interface TemperatureChartRow {
   time: number;
   temp: number | null;
   setpoint: number | null;
+  // null (not false) when the zone doesn't appear in this tick at all —
+  // distinct from a confirmed-unoccupied reading, since the chart draws a
+  // gap for the former and a real "unoccupied" indicator position for the
+  // latter. See ZoneTemperatureChart's occupancy overlay.
+  occupied: boolean | null;
 }
 
 export function buildZoneTemperatureData(
@@ -47,6 +52,7 @@ export function buildZoneTemperatureData(
         zone?.resolved_setpoint != null
           ? toDisplayAbsolute(asAbsoluteTemp(zone.resolved_setpoint), unit)
           : null,
+      occupied: zone?.occupied ?? null,
     };
   });
 }

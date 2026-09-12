@@ -40,6 +40,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       homekit_sensor_serial: null,
       thermal_load_flags: [],
       observation_only: false,
+      capacity_sharing_exempt: false,
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
@@ -116,8 +117,10 @@ describe("ZoneDetailDialog", () => {
           homekit_sensor_serial: null,
           thermal_load_flags: [],
           observation_only: false,
+          capacity_sharing_exempt: false,
           idle_baseline_position: 80,
-          comfort_tolerance: 1.5,
+          comfort_demand_tolerance: 1.5,
+          comfort_overshoot_tolerance: 0.75,
           sensor_calibration_offset: 0.5,
           min_vent_position: 10,
           max_vent_position: 90,
@@ -128,7 +131,8 @@ describe("ZoneDetailDialog", () => {
       }),
     );
     expect(screen.getByLabelText("Idle baseline (0–100%)")).toHaveValue(80);
-    expect(screen.getByLabelText(/Comfort tolerance/)).toHaveValue(1.5);
+    expect(screen.getByLabelText(/Demand tolerance/)).toHaveValue(1.5);
+    expect(screen.getByLabelText(/Overshoot tolerance/)).toHaveValue(0.8);
     expect(screen.getByLabelText(/Sensor calibration offset/)).toHaveValue(0.5);
   });
 
@@ -139,6 +143,7 @@ describe("ZoneDetailDialog", () => {
           ...makeZone().config,
           thermal_load_flags: ["distant_high_duct_loss"],
           observation_only: false,
+          capacity_sharing_exempt: false,
         },
       }),
     );
@@ -158,12 +163,16 @@ describe("ZoneDetailDialog", () => {
           ...makeZone().config,
           thermal_load_flags: ["distant_high_duct_loss"],
           observation_only: false,
+          capacity_sharing_exempt: false,
           manual_vents: [{ position: 75 }],
         },
       }),
     );
     expect(
       screen.queryByRole("checkbox", { name: "Distant / high duct loss" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Capacity sharing exempt" }),
     ).not.toBeInTheDocument();
   });
 
@@ -180,6 +189,7 @@ describe("ZoneDetailDialog", () => {
           config: expect.objectContaining({
             thermal_load_flags: ["high_internal_heat_load"],
             observation_only: false,
+            capacity_sharing_exempt: false,
           }),
         }),
       );
@@ -239,6 +249,33 @@ describe("ZoneDetailDialog", () => {
     await screen.findByText(/referenced by schedule/);
   });
 
+  it("seeds the capacity sharing exempt checkbox from the zone's config", () => {
+    renderDialog(
+      makeZone({
+        config: { ...makeZone().config, capacity_sharing_exempt: true },
+      }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Capacity sharing exempt" }),
+    ).toBeChecked();
+  });
+
+  it("toggling capacity sharing exempt and saving includes it in the submitted config", async () => {
+    renderDialog(makeZone());
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Capacity sharing exempt" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateZone).toHaveBeenCalledWith(
+        "z1",
+        expect.objectContaining({
+          config: expect.objectContaining({ capacity_sharing_exempt: true }),
+        }),
+      );
+    });
+  });
+
   it("hides position fields for a no_vent zone", () => {
     renderDialog(
       makeZone({
@@ -249,6 +286,7 @@ describe("ZoneDetailDialog", () => {
           homekit_sensor_serial: null,
           thermal_load_flags: [],
           observation_only: false,
+          capacity_sharing_exempt: false,
           idle_baseline_position: 100,
           sensor_calibration_offset: 0,
           min_vent_position: 0,
@@ -284,11 +322,20 @@ describe("ZoneDetailDialog", () => {
     });
   });
 
-  it("treats a blank comfort tolerance as unset, not zero", async () => {
+  it("treats a blank demand/overshoot tolerance as unset, not zero", async () => {
     renderDialog(
-      makeZone({ config: { ...makeZone().config, comfort_tolerance: 2 } }),
+      makeZone({
+        config: {
+          ...makeZone().config,
+          comfort_demand_tolerance: 2,
+          comfort_overshoot_tolerance: 1,
+        },
+      }),
     );
-    fireEvent.change(screen.getByLabelText(/Comfort tolerance/), {
+    fireEvent.change(screen.getByLabelText(/Demand tolerance/), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText(/Overshoot tolerance/), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -296,7 +343,10 @@ describe("ZoneDetailDialog", () => {
       expect(updateZone).toHaveBeenCalledWith(
         "z1",
         expect.objectContaining({
-          config: expect.objectContaining({ comfort_tolerance: undefined }),
+          config: expect.objectContaining({
+            comfort_demand_tolerance: undefined,
+            comfort_overshoot_tolerance: undefined,
+          }),
         }),
       );
     });

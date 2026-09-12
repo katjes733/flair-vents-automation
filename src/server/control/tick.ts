@@ -82,7 +82,10 @@ import {
 import type { ReconciliationQueue } from "~/server/control/reconciliationQueue";
 import type { SpikeBufferStore } from "~/server/control/spikeBuffer";
 import type { AirHandlerRuntimeStore } from "~/server/control/airHandlerRuntimeStore";
-import type { ZoneDemandTrackingStore } from "~/server/control/zoneDemandTrackingStore";
+import type {
+  ZoneDemandTrackingStore,
+  ZoneDemandTrackingState,
+} from "~/server/control/zoneDemandTrackingStore";
 import type { AlertingClient } from "~/server/util/alerting";
 import { detectNoImprovement } from "~/server/domain/state/noImprovement";
 import { dispatchZoneCommand } from "~/server/control/dispatcher";
@@ -885,11 +888,18 @@ export async function runTick(
     // matters regardless of tracking mode — deliberately NOT gated on
     // observation_only, since a dead sensor is exactly what that zone's
     // owner still wants to know about.
+    //
+    // It IS gated on has_temperature_sensor, though — a zone with no
+    // sensor at all has calibratedTemp null on every tick forever, by
+    // design; that's not a fault to alert on, it's the zone's permanent,
+    // expected state. A real, confirmed false positive found live: every
+    // sensorless zone in the house fired this alert simultaneously ~60
+    // minutes after this feature first deployed.
     const priorSensorOfflineSinceMs = parseIsoOrNull(
       zone.state.sensor_offline_since,
     );
     const sensorOfflineSinceMs =
-      reading.calibratedTemp === null
+      zone.config.has_temperature_sensor && reading.calibratedTemp === null
         ? (priorSensorOfflineSinceMs ?? startedAtMs)
         : null;
     zoneSensorOfflineSinceMs.set(zone.id, sensorOfflineSinceMs);
@@ -1051,9 +1061,13 @@ export async function runTick(
           row?.heat_setpoint !== undefined
             ? asAbsoluteTemp(row.heat_setpoint)
             : null,
-        toleranceOverride:
-          row?.comfort_tolerance !== undefined
-            ? asTempDelta(row.comfort_tolerance)
+        demandToleranceOverride:
+          row?.comfort_demand_tolerance !== undefined
+            ? asTempDelta(row.comfort_demand_tolerance)
+            : null,
+        overshootToleranceOverride:
+          row?.comfort_overshoot_tolerance !== undefined
+            ? asTempDelta(row.comfort_overshoot_tolerance)
             : null,
       };
     }
@@ -1074,9 +1088,13 @@ export async function runTick(
       governingEvent,
       defaultInactive: defaultInactiveForZone(ctx.schedules, zone.id),
       fallback,
-      zoneTolerance:
-        zone.config.comfort_tolerance !== undefined
-          ? asTempDelta(zone.config.comfort_tolerance)
+      zoneDemandTolerance:
+        zone.config.comfort_demand_tolerance !== undefined
+          ? asTempDelta(zone.config.comfort_demand_tolerance)
+          : null,
+      zoneOvershootTolerance:
+        zone.config.comfort_overshoot_tolerance !== undefined
+          ? asTempDelta(zone.config.comfort_overshoot_tolerance)
           : null,
       // A real, confirmed bug found live via shadow-mode evaluation: this
       // used to be `hvac.state as "COOLING_CALL" | "HEATING_CALL"` — a cast
@@ -1169,6 +1187,35 @@ export async function runTick(
     topologyLimits.blowerRatedFlowRateLps;
   const floorLps = topologyLimits.minimumAggregateFlowLps;
 
+  // Capacity sharing's own trigger — see capacity_sharing_enabled's own
+  // comment in systemSettings.ts. Fetched here (before this tick's pipeline
+  // run even starts) and reused by the zone-level no-improvement loop
+  // below, rather than each computing/fetching this independently: "is
+  // zone X struggling" can only honestly reflect *last* tick's outcome
+  // (this tick's own classification/positions don't exist yet), the exact
+  // same prior-persisted-state pattern the sleep-quiet-anchor inputs
+  // already use.
+  const demandTrackingByZoneId = new Map<string, ZoneDemandTrackingState>();
+  for (const zone of zones) {
+    demandTrackingByZoneId.set(
+      zone.id,
+      await deps.zoneDemandTrackingStore.get(zone.id),
+    );
+  }
+  const strugglingZoneIds = new Set(
+    zones
+      .filter((zone) => {
+        const demandStartedAtMs =
+          demandTrackingByZoneId.get(zone.id)?.demandStartedAtMs ?? null;
+        if (demandStartedAtMs === null) return false;
+        return (
+          (startedAtMs - demandStartedAtMs) / 60000 >=
+          ctx.settings.zone_no_improvement_alert_minutes
+        );
+      })
+      .map((zone) => zone.id),
+  );
+
   const pipelineInputs: PipelineZoneInput[] = zones.map((zone) => {
     const reading = readings.get(zone.id)!.room;
     const target = targetsByZone.get(zone.id)!;
@@ -1205,7 +1252,8 @@ export async function runTick(
       })),
       calibratedTemp: reading.calibratedTemp ?? asAbsoluteTemp(0),
       resolvedSetpoint: target.setpoint,
-      tolerance: target.tolerance,
+      demandTolerance: target.demandTolerance,
+      overshootTolerance: target.overshootTolerance,
       occupied: trustedOccupiedByZone.get(zone.id) ?? false,
       staleOccupancy: false,
       staleReading: zoneStaleness.get(zone.id) ?? false,
@@ -1219,6 +1267,11 @@ export async function runTick(
       previousPendingSinceMs: parseIsoOrNull(
         zone.state.classification_pending_since,
       ),
+      sleepModeActive: sleepModeActiveByZone.get(zone.id) ?? false,
+      priorAnchorPositionPct: zone.state.sleep_quiet_anchor_position,
+      priorAnchorSinceMs: parseIsoOrNull(zone.state.sleep_quiet_anchor_since),
+      otherZoneStruggling: [...strugglingZoneIds].some((id) => id !== zone.id),
+      capacitySharingExempt: zone.config.capacity_sharing_exempt,
     };
   });
 
@@ -1243,6 +1296,10 @@ export async function runTick(
       maxStepsPerTick: ctx.settings.max_steps_per_tick,
       classificationStabilizationMinutes:
         ctx.settings.classification_stabilization_minutes,
+      sleepQuietAnchorEnabled: ctx.settings.sleep_quiet_anchor_enabled,
+      reanchorIntervalMinutes:
+        ctx.settings.sleep_quiet_reanchor_interval_minutes,
+      capacitySharingEnabled: ctx.settings.capacity_sharing_enabled,
     },
     capLps,
     floorLps,
@@ -1327,7 +1384,9 @@ export async function runTick(
         temp_raw: reading.diagnostics.rawTemp,
         temp_calibrated: reading.calibratedTemp,
         setpoint: targetsByZone.get(zone.id)?.setpoint ?? null,
-        tolerance: targetsByZone.get(zone.id)?.tolerance ?? null,
+        demand_tolerance: targetsByZone.get(zone.id)?.demandTolerance ?? null,
+        overshoot_tolerance:
+          targetsByZone.get(zone.id)?.overshootTolerance ?? null,
         deviation: null,
         desired_position_pct:
           pipelineResult.commandedPositions[zone.id] ?? null,
@@ -1511,7 +1570,10 @@ export async function runTick(
     const commandedPct = pipelineResult.commandedPositions[zone.id] ?? 0;
     const nearCeiling =
       commandedPct >= zone.config.max_vent_position - ZONE_CEILING_MARGIN_PCT;
-    const demandTracking = await deps.zoneDemandTrackingStore.get(zone.id);
+    // Pre-fetched above (before Step 9) — capacity sharing's own trigger
+    // needs this same read to happen before this tick's pipeline run, so
+    // it's fetched once and reused here rather than read twice.
+    const demandTracking = demandTrackingByZoneId.get(zone.id)!;
     const zoneAlertKey = `alert:zoneNoImprovement:${zone.id}`;
 
     if (stillCountsTowardNoImprovement(candidate) && nearCeiling) {
@@ -2005,6 +2067,12 @@ export async function runTick(
         : null,
       occupied_since: occupiedSinceByZone.get(zone.id)
         ? toIso(occupiedSinceByZone.get(zone.id)!)
+        : null,
+      sleep_quiet_anchor_position:
+        pipelineResult.sleepQuietAnchors[zone.id]?.positionPct ?? null,
+      sleep_quiet_anchor_since: pipelineResult.sleepQuietAnchors[zone.id]
+        ?.sinceMs
+        ? toIso(pipelineResult.sleepQuietAnchors[zone.id]!.sinceMs!)
         : null,
     });
   }

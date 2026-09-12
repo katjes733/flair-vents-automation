@@ -33,6 +33,7 @@ export type ParamKind =
   | "seconds"
   | "hours"
   | "enum"
+  | "boolean"
   | "text";
 
 export interface ParamFieldOption {
@@ -151,7 +152,8 @@ export function toDisplayString(
   storedValue: unknown,
   units: DisplayUnits,
 ): string {
-  if (kind === "text" || kind === "enum") return String(storedValue ?? "");
+  if (kind === "text" || kind === "enum" || kind === "boolean")
+    return String(storedValue ?? "");
   const raw = Number(storedValue);
   if (!Number.isFinite(raw)) return "";
   switch (kind) {
@@ -178,6 +180,7 @@ export function fromDisplayString(
   units: DisplayUnits,
 ): unknown {
   if (kind === "text" || kind === "enum") return displayValue;
+  if (kind === "boolean") return displayValue === "true";
   const parsed = Number(displayValue);
   if (!Number.isFinite(parsed)) return NaN;
   switch (kind) {
@@ -215,7 +218,7 @@ export function sameDisplayValue(
   a: string,
   b: string,
 ): boolean {
-  if (kind === "text" || kind === "enum") return a === b;
+  if (kind === "text" || kind === "enum" || kind === "boolean") return a === b;
   const na = Number(a);
   const nb = Number(b);
   if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
@@ -344,6 +347,27 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         max: 100,
         description:
           "The wider version of the dispatch threshold above, used only while a zone's Sleep Mode is active — fewer, larger corrections instead of frequent small motor noises overnight. Comfort accuracy is unaffected; only how often a correction is bothered with changes.",
+        tier: "advanced",
+      },
+      {
+        path: "sleep_quiet_anchor_enabled",
+        baseLabel: "Sleep-mode quiet vent anchor",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          "While a zone's Sleep Mode is active and it's comfortable (satisfied), freeze its vent at the position that last achieved comfort instead of continuously re-chasing small temperature changes — cuts overnight vent noise. A zone that's actively demanding is completely unaffected, regardless of this setting. Disable to revert to the original continuous ramp immediately.",
+        tier: "advanced",
+      },
+      {
+        path: "sleep_quiet_reanchor_interval_minutes",
+        baseLabel: "Sleep-mode quiet anchor refresh interval",
+        kind: "minutes",
+        min: 1,
+        description:
+          "Only consulted while the quiet vent anchor above is enabled. How often a comfortable, Sleep-Mode zone's frozen position is allowed to re-capture from the live ramp, so it can still track real overnight drift (compressor performance, outdoor temperature) instead of staying fixed to the very first position captured that night.",
         tier: "advanced",
       },
       {
@@ -695,7 +719,19 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         kind: "minutes",
         min: 0,
         description:
-          "The same idea as the whole-system alert above, scoped to one specific zone commanded near its own ceiling with a deviation that genuinely isn't shrinking. Alert-only, per zone.",
+          "The same idea as the whole-system alert above, scoped to one specific zone commanded near its own ceiling with a deviation that genuinely isn't shrinking. Alert-only, per zone. Also the trigger threshold for capacity sharing below, when enabled.",
+        tier: "advanced",
+      },
+      {
+        path: "capacity_sharing_enabled",
+        baseLabel: "Capacity sharing",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          'When a zone has been commanded near its ceiling with no measurable improvement (the alert above), pull every other comfortable, eligible flair_smart_vent zone on the same air handler down to its own min_vent_position, freeing real duct capacity for the struggling zone. A zone can opt out per-zone (its own "Capacity sharing exempt" checkbox); an active Sleep Mode window is always exempt regardless. Disable to revert immediately — every zone goes back to tracking only its own deviation.',
         tier: "advanced",
       },
       {
@@ -724,12 +760,12 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
       },
       {
         path: "minimum_comfort_tolerance_c",
-        baseLabel: "Minimum comfort tolerance",
+        baseLabel: "Minimum demand tolerance",
         kind: "tempDelta",
         min: 0,
         step: 0.1,
         description:
-          "A floor applied to every zone's resolved comfort tolerance, including an unset or explicit-zero schedule tolerance — so a room configured for tight targeting still gets at least this much deadband against ordinary sensor noise, instead of flapping between satisfied and demanding every tick.",
+          "A floor applied to every zone's resolved demand tolerance only, including an unset or explicit-zero schedule value — so a room configured for tight targeting still gets at least this much deadband against ordinary sensor noise, instead of flapping between satisfied and demanding every tick. Deliberately not applied to the overshoot side, so a room can still be configured to close aggressively as soon as it's satisfied.",
         tier: "advanced",
       },
       {

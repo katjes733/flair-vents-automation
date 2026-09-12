@@ -56,7 +56,8 @@ export interface ZoneEvaluatedFields {
   temp_raw: number | null;
   temp_calibrated: number | null;
   setpoint: number | null;
-  tolerance: number | null;
+  demand_tolerance: number | null;
+  overshoot_tolerance: number | null;
   deviation: number | null;
   desired_position_pct: number | null;
   satisfied: boolean;

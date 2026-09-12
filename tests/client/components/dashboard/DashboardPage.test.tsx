@@ -94,6 +94,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       homekit_sensor_serial: null,
       thermal_load_flags: [],
       observation_only: false,
+      capacity_sharing_exempt: false,
       idle_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
