@@ -125,6 +125,7 @@ describe("ZoneGrid", () => {
                     },
                   ],
                   reason: "still cooling",
+                  vent_misalignment_suspected: false,
                 },
               ],
             ])

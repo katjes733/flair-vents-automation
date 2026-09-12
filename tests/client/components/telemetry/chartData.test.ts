@@ -6,6 +6,7 @@ import {
   computeOpenCapacityYTicks,
   computeAgreementMetric,
   computeDegradedPeriodsForVent,
+  computeVentMisalignmentPeriodsForZone,
   computeFaultPeriodsForAirHandler,
   findLatestVentName,
   computeOverrideSegments,
@@ -52,6 +53,7 @@ function makeZone(
     post_contention_position_pct: null,
     vents: [],
     reason: "",
+    vent_misalignment_suspected: false,
     ...overrides,
   };
 }
@@ -293,6 +295,28 @@ describe("computeDegradedPeriodsForVent", () => {
     ]);
     // A different vent id never went degraded in these points.
     expect(computeDegradedPeriodsForVent(points, "z1", "v2", 300)).toEqual([]);
+  });
+});
+
+describe("computeVentMisalignmentPeriodsForZone", () => {
+  it("finds the suspected-misalignment period for the given zone only", () => {
+    const points = [
+      makePoint(100, {
+        zones: [
+          makeZone({ zone_id: "z1", vent_misalignment_suspected: false }),
+        ],
+      }),
+      makePoint(200, {
+        zones: [makeZone({ zone_id: "z1", vent_misalignment_suspected: true })],
+      }),
+    ];
+    expect(computeVentMisalignmentPeriodsForZone(points, "z1", 300)).toEqual([
+      { startMs: 200, endMs: 300 },
+    ]);
+    // A different zone never flagged suspected in these points.
+    expect(computeVentMisalignmentPeriodsForZone(points, "z2", 300)).toEqual(
+      [],
+    );
   });
 });
 

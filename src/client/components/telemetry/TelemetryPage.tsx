@@ -23,6 +23,7 @@ import VentPositionChart from "~/client/components/telemetry/VentPositionChart";
 import HvacStateTimeline from "~/client/components/telemetry/HvacStateTimeline";
 import OpenCapacityChart from "~/client/components/telemetry/OpenCapacityChart";
 import SpikeEventTimeline from "~/client/components/telemetry/SpikeEventTimeline";
+import VentMisalignmentHistory from "~/client/components/telemetry/VentMisalignmentHistory";
 import AgreementMetric from "~/client/components/telemetry/AgreementMetric";
 import DegradedVentHistory from "~/client/components/diagnostics/DegradedVentHistory";
 import EquipmentFaultLog from "~/client/components/diagnostics/EquipmentFaultLog";
@@ -245,6 +246,10 @@ export default function TelemetryPage() {
                     zoneId={selectedZone.id}
                   />
                   <SpikeEventTimeline
+                    points={points}
+                    zoneId={selectedZone.id}
+                  />
+                  <VentMisalignmentHistory
                     points={points}
                     zoneId={selectedZone.id}
                   />

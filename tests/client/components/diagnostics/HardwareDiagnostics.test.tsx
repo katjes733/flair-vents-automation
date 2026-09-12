@@ -97,6 +97,7 @@ function makeDecision(
           },
         ],
         reason: "",
+        vent_misalignment_suspected: false,
       },
     ],
     contention: null,

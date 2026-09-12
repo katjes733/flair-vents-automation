@@ -49,6 +49,7 @@ function makePoint(
             },
           ],
           reason: "",
+          vent_misalignment_suspected: false,
         },
       ],
       contention: null,

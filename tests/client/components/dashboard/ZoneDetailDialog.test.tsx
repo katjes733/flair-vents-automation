@@ -602,6 +602,7 @@ describe("ZoneDetailDialog", () => {
         desired_position_pct: 100,
         post_contention_position_pct: 100,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-a",

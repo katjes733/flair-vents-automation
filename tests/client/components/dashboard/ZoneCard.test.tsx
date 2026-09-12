@@ -195,40 +195,6 @@ describe("ZoneCard", () => {
     expect(screen.getByText("Degraded vent")).toBeInTheDocument();
   });
 
-  it("shows a rolling recalibration count chip when the vent has recalibrated within the last 24h", () => {
-    renderCard({
-      zone: makeZone({
-        state: {
-          ...makeZone().state,
-          vent_misalignment_recalibration_history: [
-            new Date(Date.now() - 3600000).toISOString(),
-            new Date(Date.now() - 7200000).toISOString(),
-          ],
-        },
-      }),
-    });
-    expect(screen.getByText("Vent recalibrated 2x (24h)")).toBeInTheDocument();
-  });
-
-  it("does not show the recalibration chip once every entry has aged past 24h", () => {
-    renderCard({
-      zone: makeZone({
-        state: {
-          ...makeZone().state,
-          vent_misalignment_recalibration_history: [
-            new Date(Date.now() - 25 * 3600000).toISOString(),
-          ],
-        },
-      }),
-    });
-    expect(screen.queryByText(/Vent recalibrated/)).not.toBeInTheDocument();
-  });
-
-  it("does not show the recalibration chip when the zone has never recalibrated", () => {
-    renderCard();
-    expect(screen.queryByText(/Vent recalibrated/)).not.toBeInTheDocument();
-  });
-
   it("offers 'Set manual override' for a controllable zone with no active override", () => {
     renderCard();
     expect(
@@ -345,6 +311,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 100,
         post_contention_position_pct: 100,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-a",
@@ -406,6 +373,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 100,
         post_contention_position_pct: 100,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-a",
@@ -460,6 +428,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 42,
         post_contention_position_pct: 42,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-1",
@@ -495,6 +464,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 60,
         post_contention_position_pct: 60,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-1",
@@ -534,6 +504,7 @@ describe("ZoneCard", () => {
         desired_position_pct: 0,
         post_contention_position_pct: 0,
         reason: "",
+        vent_misalignment_suspected: false,
         vents: [
           {
             flair_vent_id: "vent-1",

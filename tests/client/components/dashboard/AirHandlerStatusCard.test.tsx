@@ -45,6 +45,7 @@ function makeZone(
     post_contention_position_pct: 60,
     vents: [],
     reason: "demanding — cooling toward setpoint",
+    vent_misalignment_suspected: false,
     ...overrides,
   };
 }
