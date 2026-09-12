@@ -12,7 +12,6 @@ import Typography from "@mui/material/Typography";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import FormControlLabel from "@mui/material/FormControlLabel";
-import Checkbox from "@mui/material/Checkbox";
 import Switch from "@mui/material/Switch";
 import IconButton from "@mui/material/IconButton";
 import Alert from "@mui/material/Alert";
@@ -23,6 +22,8 @@ import AddIcon from "@mui/icons-material/Add";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import BedtimeIcon from "@mui/icons-material/Bedtime";
+import BedtimeOffOutlinedIcon from "@mui/icons-material/BedtimeOffOutlined";
 import Divider from "@mui/material/Divider";
 import type { Zone } from "~/client/api/zonesApi";
 import type { AirHandler } from "~/client/api/airHandlersApi";
@@ -424,13 +425,13 @@ export default function EventEditorDialog({
       maxWidth={false}
       sx={{
         // A precise, measured width (the Rooms row's own real content need
-        // — the reorder arrows plus four 90px fields — plus DialogContent's
-        // 24px horizontal padding each side) — not a generic sm/md
-        // breakpoint — so there's no leftover whitespace beyond a small,
-        // deliberate safety margin. Capped to the viewport on narrow
-        // screens via maxWidth here rather than relying on the breakpoint
-        // system.
-        "& .MuiDialog-paper": { width: 480, maxWidth: "calc(100% - 64px)" },
+        // — the reorder arrows, four uniform 80px fields, and the sleep/
+        // delete icon buttons, all on one line — plus DialogContent's 24px
+        // horizontal padding each side) — not a generic sm/md breakpoint —
+        // so there's no leftover whitespace beyond a small, deliberate
+        // safety margin. Capped to the viewport on narrow screens via
+        // maxWidth here rather than relying on the breakpoint system.
+        "& .MuiDialog-paper": { width: 510, maxWidth: "calc(100% - 64px)" },
       }}
     >
       <DialogTitle
@@ -643,7 +644,7 @@ export default function EventEditorDialog({
                                 type="number"
                                 label={`Cool (°${temperatureUnit})`}
                                 value={row.coolSetpoint}
-                                sx={{ width: 90, flexShrink: 0 }}
+                                sx={{ width: 80, flexShrink: 0 }}
                                 onChange={(e) =>
                                   updateRow(row.zoneId, {
                                     coolSetpoint: e.target.value,
@@ -655,7 +656,7 @@ export default function EventEditorDialog({
                                 type="number"
                                 label={`Heat (°${temperatureUnit})`}
                                 value={row.heatSetpoint}
-                                sx={{ width: 90, flexShrink: 0 }}
+                                sx={{ width: 80, flexShrink: 0 }}
                                 onChange={(e) =>
                                   updateRow(row.zoneId, {
                                     heatSetpoint: e.target.value,
@@ -671,7 +672,7 @@ export default function EventEditorDialog({
                               label="Demand"
                               value={row.comfortDemandTolerance}
                               slotProps={{ inputLabel: { shrink: true } }}
-                              sx={{ width: 90, flexShrink: 0 }}
+                              sx={{ width: 80, flexShrink: 0 }}
                               onChange={(e) =>
                                 updateRow(row.zoneId, {
                                   comfortDemandTolerance: e.target.value,
@@ -686,7 +687,7 @@ export default function EventEditorDialog({
                               label="Over"
                               value={row.comfortOvershootTolerance}
                               slotProps={{ inputLabel: { shrink: true } }}
-                              sx={{ width: 90, flexShrink: 0 }}
+                              sx={{ width: 80, flexShrink: 0 }}
                               onChange={(e) =>
                                 updateRow(row.zoneId, {
                                   comfortOvershootTolerance: e.target.value,
@@ -694,21 +695,36 @@ export default function EventEditorDialog({
                               }
                             />
                           </Tooltip>
-                          <FormControlLabel
-                            sx={{ mr: 0, flexShrink: 0, whiteSpace: "nowrap" }}
-                            control={
-                              <Checkbox
-                                size="small"
-                                checked={row.assumeOccupied}
-                                onChange={(e) =>
-                                  updateRow(row.zoneId, {
-                                    assumeOccupied: e.target.checked,
-                                  })
-                                }
-                              />
+                          <Tooltip
+                            title={
+                              row.assumeOccupied
+                                ? "Sleep Mode on — forces occupied during this window, since motion sensors can't detect a sleeping person"
+                                : "Sleep Mode off — occupancy follows the sensor as usual"
                             }
-                            label="Sleep Mode"
-                          />
+                          >
+                            <IconButton
+                              size="small"
+                              aria-label={
+                                row.assumeOccupied
+                                  ? `Disable Sleep Mode for ${label}`
+                                  : `Enable Sleep Mode for ${label}`
+                              }
+                              aria-pressed={row.assumeOccupied}
+                              color={row.assumeOccupied ? "primary" : "default"}
+                              onClick={() =>
+                                updateRow(row.zoneId, {
+                                  assumeOccupied: !row.assumeOccupied,
+                                })
+                              }
+                              sx={{ flexShrink: 0 }}
+                            >
+                              {row.assumeOccupied ? (
+                                <BedtimeIcon fontSize="small" />
+                              ) : (
+                                <BedtimeOffOutlinedIcon fontSize="small" />
+                              )}
+                            </IconButton>
+                          </Tooltip>
                           <IconButton
                             size="small"
                             aria-label={`Remove ${label} from this event`}

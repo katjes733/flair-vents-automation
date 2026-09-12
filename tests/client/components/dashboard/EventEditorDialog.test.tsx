@@ -330,7 +330,9 @@ describe("EventEditorDialog", () => {
     expect(screen.getByLabelText("Heat (°F)")).toHaveValue(66);
     expect(screen.getByLabelText("Demand")).toHaveValue(1.01);
     expect(screen.getByLabelText("Over")).toHaveValue(2);
-    expect(screen.getByRole("checkbox", { name: "Sleep Mode" })).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Disable Sleep Mode for Den Front" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("the Advanced section is collapsed by default and reveals only the driving-zone picker", () => {
