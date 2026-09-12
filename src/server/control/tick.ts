@@ -1939,9 +1939,52 @@ export async function runTick(
     // against a wider threshold, so small deviations accumulate into
     // fewer, larger movements instead of repeated small motor cycles —
     // see the "quiet actuation" comment on sleep_mode_min_step_delta_pct.
-    const effectiveMinStepDeltaPct = sleepModeActiveByZone.get(zone.id)
-      ? ctx.settings.sleep_mode_min_step_delta_pct
-      : ctx.settings.min_step_delta_pct;
+    // Demanding is exempt regardless of Sleep Mode, mirroring the sleep-
+    // quiet-anchor's own "a genuinely demanding zone still runs the full
+    // ramp" safety-net promise (sleep_quiet_anchor_enabled's comment) —
+    // that promise is hollow if the position math bypasses the anchor for
+    // a demanding zone but dispatch still throttles the correction behind
+    // the same wide threshold a *comfortable* zone tolerates. A real,
+    // confirmed live gap: a bedroom crossed into demanding (warming toward
+    // its cool setpoint) but its own 10-point correction never cleared the
+    // 30-point sleep-mode bar, leaving it stuck at its last dispatched
+    // position with no way to actually correct until the deviation grew
+    // large enough on its own — exactly the runaway drift Sleep Mode
+    // should never cause for a room someone is sleeping in.
+    // A freshly-(re)captured anchor is also exempt — a real, confirmed
+    // live gap: a satisfied zone's anchor can sit meaningfully far from
+    // its last *dispatched* position (e.g. captured at ~15% while the
+    // vent's still sitting wherever it was before Sleep Mode began, say
+    // 0%) without that gap ever being large enough on its own to clear
+    // the wide threshold — since every later tick just holds the same
+    // frozen anchor flat, the vent can then stay stuck at its stale
+    // position for the zone's *entire* Sleep Mode window, never once
+    // syncing up with what the system actually computed. The anchor's own
+    // demanding->satisfied/reanchor transitions (sleepQuietAnchors's
+    // sinceMs advancing past what was persisted last tick) are exactly the
+    // "less often but further each time" correction opportunities quiet
+    // actuation is supposed to allow through — see
+    // sleep_quiet_reanchor_interval_minutes's own comment — so only that
+    // one tick per anchor cycle bypasses the wide threshold; every other
+    // tick, where the anchor is genuinely just holding flat, still gets
+    // the full quiet treatment.
+    // ?? null, not bare optional chaining — several earlier branches
+    // (manual position override, inactive, stale, FAN_ONLY,
+    // unclassified_no_sensor) never populate sleepQuietAnchors[zone.id] at
+    // all, and an `undefined !== null` comparison would otherwise
+    // misfire "freshly captured" for every one of them.
+    const currentAnchorSinceMs =
+      pipelineResult.sleepQuietAnchors[zone.id]?.sinceMs ?? null;
+    const anchorFreshlyCaptured =
+      currentAnchorSinceMs !== null &&
+      currentAnchorSinceMs !==
+        parseIsoOrNull(zone.state.sleep_quiet_anchor_since);
+    const effectiveMinStepDeltaPct =
+      sleepModeActiveByZone.get(zone.id) &&
+      pipelineResult.classifications[zone.id] !== "demanding" &&
+      !anchorFreshlyCaptured
+        ? ctx.settings.sleep_mode_min_step_delta_pct
+        : ctx.settings.min_step_delta_pct;
 
     let vents = currentVentsByZoneId.get(zone.id) ?? zone.state.vents;
     let zoneDispatchedThisTick = false;
