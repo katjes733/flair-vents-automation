@@ -99,15 +99,28 @@ jobs:
       # only in its command (bun src/server/worker.ts, overriding the
       # image's own default CMD) and its env: no PORT/SSL_*/ALLOWED_ORIGINS
       # (no HTTP server here), no SESSION_SECRET/WEBAUTHN_* (no sessions or
-      # passkeys here), no fixed macvlan IP (no inbound traffic ever
-      # reaches this container — see the SaaS Transformation plan's
-      # "Horizontal Scaling" → "Docker and Infra Shape"). It DOES need the
-      # same DB/Redis/Flair/SMTP config as the API server: it talks to the
-      # same database, decrypts the same Flair tokens, and sends the same
-      # alert emails (control-loop alerts — token budget, outage, OAuth
-      # refresh failure — now fire from here, not the API process).
-      # CONTROL_LOOP_ENABLED lives here now too, not on the API container,
-      # since ticking no longer happens there at all.
+      # passkeys here). It DOES need the same DB/Redis/Flair/SMTP config as
+      # the API server: it talks to the same database, decrypts the same
+      # Flair tokens, and sends the same alert emails (control-loop alerts
+      # — token budget, outage, OAuth refresh failure — now fire from here,
+      # not the API process). CONTROL_LOOP_ENABLED lives here now too, not
+      # on the API container, since ticking no longer happens there at all.
+      #
+      # --network tesla-macvlan --ip 192.168.2.112 — a real, confirmed
+      # incident (2026-09-12/13): this container previously had no
+      # --network flag at all, defaulting to Docker's isolated bridge
+      # network. That's fine for inbound traffic (there is none, correctly
+      # noted below), but HomeKit/mDNS discovery is an outbound *and*
+      # listen multicast operation that also requires real LAN presence —
+      # a bridge-networked container can reach a cached IP:port via plain
+      # TCP (works fine through NAT) but can never rediscover a HAP
+      # accessory whose port has rotated, since multicast doesn't cross the
+      # bridge/NAT boundary. This silently defeated HomeKit reconnection
+      # for as long as this container has existed; only ever "worked" when
+      # the last cached address happened to still be valid. See
+      # src/server/util/homekit/discoveryRegistry.ts's own top-of-file
+      # comment for the client-side half of this fix (which is necessary
+      # but not sufficient without this network change).
       - name: Start worker container
         run: |
           LOKI_PIPELINE='- json:
@@ -119,6 +132,8 @@ jobs:
               air_handler_id:'
           docker run -d \
             --name flair-vents-automation-worker \
+            --network tesla-macvlan \
+            --ip 192.168.2.112 \
             --restart unless-stopped \
             --log-driver loki \
             --log-opt loki-url="http://192.168.2.103:3100/loki/api/v1/push" \
