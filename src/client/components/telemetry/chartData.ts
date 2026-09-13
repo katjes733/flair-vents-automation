@@ -216,6 +216,20 @@ export function computeFaultPeriodsForAirHandler(
   return computeTruePeriods(samples, domainEndMs);
 }
 
+/** The historical half of HomeKitOutageHistory — see that component. */
+export function computeHomeKitOutagePeriodsForAirHandler(
+  points: TickHistoryPoint[],
+  domainEndMs: number,
+): BooleanPeriod[] {
+  const samples = points.map((p) => ({
+    timeMs: p.loggedAtMs,
+    value:
+      p.decision.setpoint_push?.delivery_mode === "homekit" &&
+      p.decision.setpoint_push.homekit_error !== null,
+  }));
+  return computeTruePeriods(samples, domainEndMs);
+}
+
 /**
  * A vent's own Flair-app nickname as of the most recent point that saw it —
  * mirrors the "prefer the real nickname over the opaque id" rule already

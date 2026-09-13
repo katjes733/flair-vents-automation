@@ -8,6 +8,7 @@ import {
   computeDegradedPeriodsForVent,
   computeVentMisalignmentPeriodsForZone,
   computeFaultPeriodsForAirHandler,
+  computeHomeKitOutagePeriodsForAirHandler,
   findLatestVentName,
   computeOverrideSegments,
 } from "~/client/components/telemetry/chartData";
@@ -330,6 +331,88 @@ describe("computeFaultPeriodsForAirHandler", () => {
     expect(computeFaultPeriodsForAirHandler(points, 400)).toEqual([
       { startMs: 200, endMs: 300 },
     ]);
+  });
+});
+
+describe("computeHomeKitOutagePeriodsForAirHandler", () => {
+  it("finds outage periods only while delivery mode is homekit and homekit_error is set", () => {
+    const points = [
+      makePoint(100, {
+        setpoint_push: {
+          delivery_mode: "homekit",
+          pushed_value: null,
+          pushed_value_c: null,
+          thermostat_reading: null,
+          thermostat_current_setpoint: null,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
+          would_write: false,
+          demanding_zone_count: 0,
+          homekit_paired: true,
+          homekit_write_kind: null,
+          homekit_error: null,
+        },
+      }),
+      makePoint(200, {
+        setpoint_push: {
+          delivery_mode: "homekit",
+          pushed_value: null,
+          pushed_value_c: null,
+          thermostat_reading: null,
+          thermostat_current_setpoint: null,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
+          would_write: false,
+          demanding_zone_count: 0,
+          homekit_paired: false,
+          homekit_write_kind: null,
+          homekit_error:
+            "Could not discover HAP accessory on the local network",
+        },
+      }),
+      makePoint(300, {
+        setpoint_push: {
+          delivery_mode: "homekit",
+          pushed_value: null,
+          pushed_value_c: null,
+          thermostat_reading: null,
+          thermostat_current_setpoint: null,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
+          would_write: false,
+          demanding_zone_count: 0,
+          homekit_paired: true,
+          homekit_write_kind: null,
+          homekit_error: null,
+        },
+      }),
+    ];
+    expect(computeHomeKitOutagePeriodsForAirHandler(points, 400)).toEqual([
+      { startMs: 200, endMs: 300 },
+    ]);
+  });
+
+  it("never flags a flair-delivery air handler, even with a null setpoint_push", () => {
+    const points = [
+      makePoint(100, { setpoint_push: null }),
+      makePoint(200, {
+        setpoint_push: {
+          delivery_mode: "flair",
+          pushed_value: null,
+          pushed_value_c: null,
+          thermostat_reading: null,
+          thermostat_current_setpoint: null,
+          thermostat_heat_threshold: null,
+          thermostat_cool_threshold: null,
+          would_write: false,
+          demanding_zone_count: 0,
+          homekit_paired: null,
+          homekit_write_kind: null,
+          homekit_error: null,
+        },
+      }),
+    ];
+    expect(computeHomeKitOutagePeriodsForAirHandler(points, 300)).toEqual([]);
   });
 });
 

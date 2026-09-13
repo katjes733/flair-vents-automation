@@ -1,6 +1,7 @@
 import { HttpClient, IPDiscovery } from "hap-controller";
 import type { PairingData } from "hap-controller";
 import type { HapTargetHeatingCoolingState } from "~/server/domain/setpoint/homekitCharacteristicSelection";
+import { hapDiscoveryRegistry } from "~/server/util/homekit/discoveryRegistry";
 
 // Standard HAP characteristic-type UUIDs — protocol-level constants, not
 // per-device, confirmed against this app's own real unit and cited from
@@ -462,7 +463,12 @@ export class HapControllerClient implements HomeKitClient {
       address: string,
       port: number,
     ) => void,
-  ) {}
+  ) {
+    // Idempotent — the registry is a single process-lifetime singleton;
+    // this just ensures it's running by the time this client needs it,
+    // regardless of which air handler's client happens to construct first.
+    hapDiscoveryRegistry.start();
+  }
 
   private async connect(): Promise<HttpClient> {
     if (this.client) return this.client;
@@ -493,8 +499,26 @@ export class HapControllerClient implements HomeKitClient {
       }
     }
 
-    const discovered = await discoverAccessory(this.accessoryId);
+    // Fast path: an in-memory read from the persistent, interface-aware
+    // registry (see discoveryRegistry.ts) rather than a fresh one-shot
+    // mDNS query — that registry has been listening continuously since
+    // this process started, not just for the last 5 seconds. Only falls
+    // through to the old one-shot query if the registry genuinely hasn't
+    // seen this accessory yet (e.g. it was just rebound and the
+    // accessory's next re-announcement hasn't landed).
+    let discovered = hapDiscoveryRegistry.lookup(this.accessoryId);
     if (!discovered) {
+      discovered = await discoverAccessory(this.accessoryId);
+    }
+    if (!discovered) {
+      const { totalVisible } = hapDiscoveryRegistry.snapshot();
+      logger.warn(
+        {
+          accessory_id: this.accessoryId,
+          other_hap_accessories_visible_on_lan: totalVisible,
+        },
+        "Could not discover HAP accessory on the local network",
+      );
       throw new Error(
         `Could not discover HAP accessory ${this.accessoryId} on the local network`,
       );
