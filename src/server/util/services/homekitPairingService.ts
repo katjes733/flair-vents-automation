@@ -89,6 +89,16 @@ export async function recordHomekitConnectionInfo(
   );
 }
 
+// Preserves the *start* of the current failure streak in
+// last_connect_error_at (never refreshed to "now" on a repeat failure) so
+// a dwell-timer alert can measure how long this has been continuously
+// failing, not just when the most recent tick failed — mirroring how
+// FlairApiClient's outage tracker records a single sinceMs for the whole
+// streak. last_connect_error itself is always refreshed, since the
+// message can usefully change mid-streak (e.g. "connection refused" on a
+// stale cached port evolving into "could not discover" once rediscovery
+// itself starts failing too — real, observed live during the 2026-09-12
+// incident this was added for).
 export async function recordHomekitConnectError(
   airHandlerId: string,
   message: string,
@@ -96,9 +106,31 @@ export async function recordHomekitConnectError(
   const repo = (await AppDataSource.getInstance()).getRepository(
     "HomekitPairing",
   );
+  const existing = await repo.findOne({
+    where: { air_handler_id: airHandlerId },
+  });
+  if (!existing) return; // no stored pairing to annotate
   await repo.update(
     { air_handler_id: airHandlerId },
-    { last_connect_error: message, last_connect_error_at: new Date() },
+    {
+      last_connect_error: message,
+      last_connect_error_at: existing.last_connect_error_at ?? new Date(),
+    },
+  );
+}
+
+// Called once per tick after a successful HomeKit read/write, clearing any
+// in-progress failure streak — the recovery half of recordHomekitConnectError,
+// mirroring alertOnce/clearAlert's own record-and-clear pairing.
+export async function clearHomekitConnectError(
+  airHandlerId: string,
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "HomekitPairing",
+  );
+  await repo.update(
+    { air_handler_id: airHandlerId },
+    { last_connect_error: null, last_connect_error_at: null },
   );
 }
 

@@ -11,6 +11,11 @@ import {
 import { getSchedulesForInstallation } from "~/server/util/routes/schedule";
 import { getLatestOverridesForZones } from "~/server/util/routes/manualOverride";
 import { getSystemSettings } from "~/server/util/routes/systemSettings";
+import {
+  getHomekitPairing,
+  recordHomekitConnectError,
+  clearHomekitConnectError,
+} from "~/server/util/services/homekitPairingService";
 import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
 import { isControllable } from "~/server/domain/zone/predicates";
 import { patchVentState } from "~/shared/types/zone";
@@ -245,6 +250,8 @@ async function runTickForInstallation(
     const deps: TickDeps = {
       client,
       getHomeKitClient: getHomeKitClientForAirHandler,
+      recordHomeKitConnectError: recordHomekitConnectError,
+      clearHomeKitConnectError: clearHomekitConnectError,
       reconciliationQueue,
       spikeBufferStore,
       airHandlerRuntimeStore,
@@ -271,6 +278,30 @@ async function runTickForInstallation(
         { air_handler_id: airHandler.id, err },
         "Tick failed for air handler — continuing with remaining handlers",
       );
+    }
+
+    // Extended HomeKit outage — mirrors the Flair-outage check above, but
+    // per-air-handler (each has its own pairing) and polled from the
+    // pairing row runTick() just recorded/cleared, rather than an
+    // in-memory client tracker, since a HomeKit connection is re-derived
+    // fresh per air handler rather than shared like the one Flair client.
+    if (airHandler.config.setpoint_delivery_mode === "homekit") {
+      const homekitOutageAlertKey = `alert:homekitOutage:${airHandler.id}`;
+      const pairing = await getHomekitPairing(airHandler.id);
+      if (pairing?.lastConnectErrorAt) {
+        const outageMinutes =
+          (Date.now() - pairing.lastConnectErrorAt.getTime()) / 60000;
+        if (outageMinutes >= settings.homekit_outage_alert_minutes) {
+          await alerting.alertOnce({
+            key: homekitOutageAlertKey,
+            subject: "Extended HomeKit connection outage",
+            text: `The HomeKit connection for air handler "${airHandler.name}" has been failing for over ${settings.homekit_outage_alert_minutes} minute(s) (latest error: ${pairing.lastConnectError}) — its calls will run to the thermostat's own setpoint instead of ending early once every zone is satisfied, until this clears.`,
+            rateFloorMinutes: settings.email_rate_floor_minutes,
+          });
+        }
+      } else {
+        await alerting.clearAlert(homekitOutageAlertKey);
+      }
     }
   }
 }

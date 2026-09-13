@@ -142,6 +142,15 @@ export interface TickDeps {
   // HomeKit pairing. Optional so every existing test/caller that never
   // touches the HomeKit path doesn't need to supply it.
   getHomeKitClient?: (airHandlerId: string) => Promise<HomeKitClient | null>;
+  // Only called when an air handler's setpoint_delivery_mode is
+  // "homekit" — records/clears a persistent connect-failure streak so an
+  // outage dwell-timer alert (homekit_outage_alert_minutes) has something
+  // to measure. Optional for the same reason getHomeKitClient is.
+  recordHomeKitConnectError?: (
+    airHandlerId: string,
+    message: string,
+  ) => Promise<void>;
+  clearHomeKitConnectError?: (airHandlerId: string) => Promise<void>;
   reconciliationQueue: ReconciliationQueue;
   spikeBufferStore: SpikeBufferStore;
   airHandlerRuntimeStore: AirHandlerRuntimeStore;
@@ -1885,6 +1894,22 @@ export async function runTick(
   // while shadowed rather than freezing.
   if (dispatchWasAttempted && setpointDispatchError === null) {
     pendingTerminationRetryZoneId = null;
+  }
+
+  // Record/clear the HomeKit connect-failure streak for the outage
+  // dwell-timer alert — deliberately keyed off setpointDispatchError's
+  // final value (covering a read failure with no write attempted at all,
+  // same as a write failure), not just the dispatch try/catch above, since
+  // a read failure exercises the exact same connect()/mDNS path.
+  if (deliveryMode === "homekit") {
+    if (setpointDispatchError !== null) {
+      await deps.recordHomeKitConnectError?.(
+        airHandler.id,
+        setpointDispatchError,
+      );
+    } else {
+      await deps.clearHomeKitConnectError?.(airHandler.id);
+    }
   }
 
   // --- Step 11: manual disarm override ------------------------------------

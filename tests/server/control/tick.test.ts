@@ -4276,6 +4276,100 @@ describe("runTick — HomeKit setpoint delivery", () => {
     );
   });
 
+  // Regression coverage for the 2026-09-12/13 incident: a HomeKit outage
+  // ran undetected for 30+ hours because nothing recorded it anywhere.
+  // recordHomeKitConnectError/clearHomeKitConnectError are what an outage
+  // dwell-timer alert (homekit_outage_alert_minutes) reads from.
+  describe("HomeKit connect-error tracking", () => {
+    it("records a connect error when the HomeKit call fails", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({ targetMode: 2, currentTempC: 24 });
+      homeKitClient.forceError(new Error("accessory unreachable"));
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+      const recordHomeKitConnectError = vi.fn(async () => {});
+      const clearHomeKitConnectError = vi.fn(async () => {});
+
+      await runTick(airHandler, zones, makeCtx(), {
+        ...makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+        recordHomeKitConnectError,
+        clearHomeKitConnectError,
+      });
+
+      expect(recordHomeKitConnectError).toHaveBeenCalledWith(
+        airHandler.id,
+        expect.stringContaining("accessory unreachable"),
+      );
+      expect(clearHomeKitConnectError).not.toHaveBeenCalled();
+    });
+
+    it("clears any connect error once a HomeKit call succeeds", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const homeKitClient = new FakeHomeKitClient();
+      homeKitClient.setState({ targetMode: 2, currentTempC: 24 });
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const airHandler = makeAirHandler({ setpoint_delivery_mode: "homekit" });
+      const persisted = new Map<string, ZoneRuntimeState>();
+      const recordHomeKitConnectError = vi.fn(async () => {});
+      const clearHomeKitConnectError = vi.fn(async () => {});
+
+      await runTick(airHandler, zones, makeCtx(), {
+        ...makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+        recordHomeKitConnectError,
+        clearHomeKitConnectError,
+      });
+
+      expect(clearHomeKitConnectError).toHaveBeenCalledWith(airHandler.id);
+      expect(recordHomeKitConnectError).not.toHaveBeenCalled();
+    });
+
+    it("never touches HomeKit connect-error tracking when delivery mode is flair", async () => {
+      const client = new FakeFlairClient();
+      setupFlairFixture(client, [
+        {
+          roomId: "room-1",
+          ventId: "vent-1",
+          tempC: 26,
+          ductC: 14,
+          percentOpen: 50,
+        },
+      ]);
+      const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+      const persisted = new Map<string, ZoneRuntimeState>();
+      const recordHomeKitConnectError = vi.fn(async () => {});
+      const clearHomeKitConnectError = vi.fn(async () => {});
+
+      await runTick(makeAirHandler(), zones, makeCtx(), {
+        ...makeDeps(client, persisted, NOW),
+        recordHomeKitConnectError,
+        clearHomeKitConnectError,
+      });
+
+      expect(recordHomeKitConnectError).not.toHaveBeenCalled();
+      expect(clearHomeKitConnectError).not.toHaveBeenCalled();
+    });
+  });
+
   it("the existing Flair delivery path is unaffected when setpoint_delivery_mode is left at its default", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [

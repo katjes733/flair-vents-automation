@@ -349,6 +349,16 @@ export const systemSettingsConfigSchema = z.object({
   // the comfort-related "no improvement" thresholds. No specific figure
   // stated in the plan. PLACEHOLDER.
   flair_outage_alert_minutes: z.number().positive().default(5),
+  // Unlike a Flair outage, a failing HomeKit connection never stops vent
+  // control — it only silently disables early call termination (the
+  // setpoint-push mechanism that ends a call once every zone is already
+  // satisfied instead of running to the thermostat's own setpoint). A
+  // real, confirmed incident (2026-09-12/13) ran undetected for 30+ hours
+  // because nothing alerted on it at all. Defaulted to the same dwell as
+  // vent_degraded_alert_minutes rather than flair_outage's aggressive 5
+  // minutes, since a brief mDNS/pairing blip is expected background noise
+  // for this integration and shouldn't page on its own.
+  homekit_outage_alert_minutes: z.number().positive().default(30),
   // "default every 24h" (Manual disarm section).
   disarm_reminder_interval_hours: z.number().positive().default(24),
   // No specific figure stated for vent-degraded alert duration. PLACEHOLDER.

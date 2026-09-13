@@ -885,6 +885,15 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "advanced",
       },
       {
+        path: "homekit_outage_alert_minutes",
+        baseLabel: "HomeKit outage alert threshold",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long the HomeKit connection to a thermostat can stay failing before an outage alert fires for it. Unlike a Flair outage, this doesn't stop vent control — it silently disables early call termination, so calls run longer than they need to until this clears.",
+        tier: "advanced",
+      },
+      {
         path: "disarm_reminder_interval_hours",
         baseLabel: "Disarm reminder interval",
         kind: "hours",
