@@ -9,7 +9,6 @@ import {
 describe("resolveZoneConfig", () => {
   it("applies every stated default against an empty config", () => {
     const config = resolveZoneConfig({});
-    expect(config.idle_baseline_position).toBe(100);
     expect(config.sensor_calibration_offset).toBe(0);
     expect(config.min_vent_position).toBe(0);
     expect(config.max_vent_position).toBe(100);
@@ -24,6 +23,12 @@ describe("resolveZoneConfig", () => {
     const config = resolveZoneConfig({});
     expect(config.comfort_demand_tolerance).toBeUndefined();
     expect(config.comfort_overshoot_tolerance).toBeUndefined();
+  });
+
+  it("leaves idle_baseline_position and fan_only_idle_baseline_position unset rather than defaulting them — see systemSettings.ts's own comfort/fan-only fallbacks", () => {
+    const config = resolveZoneConfig({});
+    expect(config.idle_baseline_position).toBeUndefined();
+    expect(config.fan_only_idle_baseline_position).toBeUndefined();
   });
 
   it("resolves against null the same as against an empty object", () => {

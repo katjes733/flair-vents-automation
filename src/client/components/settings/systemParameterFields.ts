@@ -261,6 +261,26 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "common",
       },
       {
+        path: "comfort_idle_baseline_position",
+        baseLabel: "Comfort idle baseline",
+        kind: "percent",
+        min: 0,
+        max: 100,
+        description:
+          "System-wide fallback for how far open a satisfied zone's vent sits during an active call, for any zone that doesn't set its own override. Lower wastes less conditioned air on a room that doesn't need more — closing a satisfied zone costs nothing, since capacity sharing independently guarantees a genuinely struggling zone still gets reopened.",
+        tier: "common",
+      },
+      {
+        path: "fan_only_idle_baseline_position",
+        baseLabel: "Fan-only idle baseline",
+        kind: "percent",
+        min: 0,
+        max: 100,
+        description:
+          "System-wide fallback for how far open a zone's vent sits while the system is only circulating air, not conditioning it. Deliberately a separate setting from the comfort idle baseline above — fan-only's goal is even circulation throughout the structure, not conserving conditioned air, so a low comfort baseline shouldn't also starve fan-only circulation.",
+        tier: "common",
+      },
+      {
         path: "modifier_boosts.occupancy",
         baseLabel: "Occupancy boost",
         kind: "plainNumber",

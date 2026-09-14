@@ -27,6 +27,29 @@ export const systemSettingsConfigSchema = z.object({
   // Stated as a configurable 15%-25% range, not one hardcoded number — 20%
   // picked as the midpoint (Step 1 section).
   heating_choke_position_pct: z.number().min(15).max(25).default(20),
+  // System-wide fallback for a flair_smart_vent zone's own
+  // idle_baseline_position (zoneConfig.ts), used whenever a zone leaves it
+  // unset. Defaulted to 0, not the old flat 100 every zone used to get —
+  // a real, confirmed incident (docs/recommendation-engine-candidates.md):
+  // a zone sitting at its 100%-default idle baseline while merely
+  // satisfied (not overshooting enough to trigger the closing ramp) ran
+  // the "Upstairs" air handler at 190%+ of rated blower capacity, all
+  // day, for no comfort benefit — closing a satisfied zone by default
+  // costs nothing (real production data: zero insufficient-capacity
+  // ticks across 2.5 days even with three zones idling at a much lower
+  // baseline), since capacity-sharing independently guarantees a
+  // genuinely struggling zone gets reopened regardless of what this
+  // default is.
+  comfort_idle_baseline_position: z.number().min(0).max(100).default(0),
+  // The equivalent fallback for FAN_ONLY specifically — deliberately a
+  // separate setting from comfort_idle_baseline_position above, not the
+  // same value reused. FAN_ONLY's whole purpose is circulating air
+  // throughout the structure while nothing is being conditioned, so a
+  // "satisfied, keep it mostly closed" default makes no sense here — a
+  // closed vent during FAN_ONLY doesn't save anything (there's no
+  // conditioned air to conserve), it just fails to circulate that room.
+  // Defaulted to 100, the opposite of the comfort-case default.
+  fan_only_idle_baseline_position: z.number().min(0).max(100).default(100),
 
   // --- Step 2 / ramp & dispatch ---
   // The spec's own stated defaults, kept despite the deadlock they'd create

@@ -1251,7 +1251,12 @@ export async function runTick(
       hasTemperatureSensor: zone.config.has_temperature_sensor,
       minVentPosition: zone.config.min_vent_position,
       maxVentPosition: zone.config.max_vent_position,
-      idleBaselinePosition: zone.config.idle_baseline_position,
+      idleBaselinePosition:
+        zone.config.idle_baseline_position ??
+        ctx.settings.comfort_idle_baseline_position,
+      fanOnlyIdleBaselinePosition:
+        zone.config.fan_only_idle_baseline_position ??
+        ctx.settings.fan_only_idle_baseline_position,
       thermalLoadFlags: zone.config.thermal_load_flags,
       // Sum of each vent's own rating (falling back to the standard
       // default per vent left blank) — the ganged position still means
@@ -1922,7 +1927,8 @@ export async function runTick(
     for (const zone of zones) {
       if (!isControllable(zone.ventHardwareType)) continue;
       finalPositions[zone.id] = clampToZoneRange(
-        zone.config.idle_baseline_position,
+        zone.config.idle_baseline_position ??
+          ctx.settings.comfort_idle_baseline_position,
         zone.config.min_vent_position,
         zone.config.max_vent_position,
       );
@@ -2598,14 +2604,24 @@ async function holdAtIdleBaseline(params: {
   startedAtMs: number;
   hvac: { state: string; confidence: "reported" | "unknown" };
 }): Promise<AirHandlerTickDecision> {
-  const { airHandler, zones, readings, deps, log, dryRun, startedAtMs, hvac } =
-    params;
+  const {
+    airHandler,
+    zones,
+    readings,
+    ctx,
+    deps,
+    log,
+    dryRun,
+    startedAtMs,
+    hvac,
+  } = params;
   for (const zone of zones) {
     if (!isControllable(zone.ventHardwareType)) continue;
     const ventReadings = readings.get(zone.id)?.vents ?? [];
     if (ventReadings.length === 0) continue;
     const target = clampToZoneRange(
-      zone.config.idle_baseline_position,
+      zone.config.idle_baseline_position ??
+        ctx.settings.comfort_idle_baseline_position,
       zone.config.min_vent_position,
       zone.config.max_vent_position,
     );

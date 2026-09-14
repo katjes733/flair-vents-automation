@@ -69,6 +69,9 @@ interface ZoneDetailDialogProps {
 // comfort_overshoot_tolerance — a real, distinct state from 0 (see
 // zoneConfigSchema's own comment: unset means tight targeting). The form
 // preserves that distinction rather than defaulting a blank field to 0.
+// idle_baseline_position/fan_only_idle_baseline_position follow the same
+// convention now too — blank means "use the system-wide default," a real,
+// distinct state from an explicit 0 (which some zones deliberately want).
 export default function ZoneDetailDialog({
   open,
   zone,
@@ -88,7 +91,8 @@ export default function ZoneDetailDialog({
 
   const [ventHardwareType, setVentHardwareType] =
     useState<VentHardwareType>("flair_smart_vent");
-  const [idleBaseline, setIdleBaseline] = useState("100");
+  const [idleBaseline, setIdleBaseline] = useState("");
+  const [fanOnlyIdleBaseline, setFanOnlyIdleBaseline] = useState("");
   const [comfortDemandTolerance, setComfortDemandTolerance] = useState("");
   const [comfortOvershootTolerance, setComfortOvershootTolerance] =
     useState("");
@@ -114,7 +118,16 @@ export default function ZoneDetailDialog({
   if (zone && zone.id !== seededZoneId) {
     setSeededZoneId(zone.id);
     setVentHardwareType(zone.ventHardwareType);
-    setIdleBaseline(String(zone.config.idle_baseline_position));
+    setIdleBaseline(
+      zone.config.idle_baseline_position !== undefined
+        ? String(zone.config.idle_baseline_position)
+        : "",
+    );
+    setFanOnlyIdleBaseline(
+      zone.config.fan_only_idle_baseline_position !== undefined
+        ? String(zone.config.fan_only_idle_baseline_position)
+        : "",
+    );
     setComfortDemandTolerance(
       zone.config.comfort_demand_tolerance !== undefined
         ? toDisplayDelta(
@@ -214,7 +227,12 @@ export default function ZoneDetailDialog({
                     : {}),
                 }))
               : [],
-          idle_baseline_position: Number(idleBaseline),
+          idle_baseline_position:
+            idleBaseline.trim() === "" ? undefined : Number(idleBaseline),
+          fan_only_idle_baseline_position:
+            fanOnlyIdleBaseline.trim() === ""
+              ? undefined
+              : Number(fanOnlyIdleBaseline),
           min_vent_position: Number(minPosition),
           max_vent_position: Number(maxPosition),
           thermal_load_flags: thermalLoadFlags,
@@ -272,6 +290,7 @@ export default function ZoneDetailDialog({
     hasOccupancySensor,
     hasTemperatureSensor,
     idleBaseline,
+    fanOnlyIdleBaseline,
     manualVents,
     maxPosition,
     minPosition,
@@ -376,10 +395,20 @@ export default function ZoneDetailDialog({
                   Position
                 </Typography>
                 <TextField
-                  label="Idle baseline (0–100%)"
+                  label="Comfort idle baseline, % (blank = system default)"
                   type="number"
                   value={idleBaseline}
                   onChange={(e) => setIdleBaseline(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="Where this vent sits once the zone is satisfied during an active call — lower wastes less conditioned air on a room that doesn't need more."
+                />
+                <TextField
+                  label="Fan-only idle baseline, % (blank = system default)"
+                  type="number"
+                  value={fanOnlyIdleBaseline}
+                  onChange={(e) => setFanOnlyIdleBaseline(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="Where this vent sits while the system is only circulating air, not conditioning it — a separate setting since fan-only's goal (even circulation) is the opposite of the comfort baseline's (avoid waste)."
                 />
                 <Stack direction="row" spacing={2}>
                   <TextField
