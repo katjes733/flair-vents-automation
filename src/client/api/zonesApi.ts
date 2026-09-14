@@ -47,7 +47,12 @@ export interface ZoneConfig {
   // See "Multi-Vent Manual Zones" and zoneConfigSchema's own comment.
   manual_vents: ManualVent[];
   thermal_load_flags: ThermalLoadFlag[];
-  idle_baseline_position: number;
+  // Unset means "defer to the system-wide comfort_idle_baseline_position
+  // setting" — see zoneConfigSchema's own comment.
+  idle_baseline_position?: number;
+  // The FAN_ONLY-specific counterpart — see
+  // fan_only_idle_baseline_position's own comment in systemSettings.ts.
+  fan_only_idle_baseline_position?: number;
   // Telemetry-only — excluded from schedule-driven comfort tracking
   // entirely. See zoneConfigSchema's own comment.
   observation_only: boolean;

@@ -32,6 +32,10 @@ export interface PipelineZoneInput {
   minVentPosition: number;
   maxVentPosition: number;
   idleBaselinePosition: number;
+  // FAN_ONLY's own dedicated resting position — deliberately not the same
+  // value as idleBaselinePosition above (see
+  // fan_only_idle_baseline_position's own comment in systemSettings.ts).
+  fanOnlyIdleBaselinePosition: number;
   thermalLoadFlags: ThermalLoadFlag[];
   flowRateLps: number; // flair_smart_vent only — see manualVents below
   // manual_fixed_vent only — each vent's own fixed position and resolved
@@ -312,7 +316,11 @@ export function computeZoneCommands(params: {
     // FAN_ONLY is the one state genuinely unrelated to deviation — the
     // blower circulates *unconditioned* air, so proportional-to-deviation
     // math has nothing meaningful to react to. Every zone (sensored or
-    // not) rests at its occupancy-scaled idle baseline, same as ever.
+    // not) rests at its own occupancy-scaled FAN_ONLY baseline — a
+    // deliberately separate setting from the comfort idle baseline (see
+    // fanOnlyIdleBaselinePosition's own comment), since FAN_ONLY's whole
+    // purpose is circulating air house-wide, not conserving conditioned
+    // air a satisfied zone doesn't need.
     if (!callActive && params.state === "FAN_ONLY") {
       const rawFanOnly = classifyZone({
         hasTemperatureSensor: zone.hasTemperatureSensor,
@@ -328,7 +336,7 @@ export function computeZoneCommands(params: {
         rawFanOnly,
       );
       nonDemandingSmartVent[zone.zoneId] = effectiveIdleBaseline({
-        idleBaselinePosition: zone.idleBaselinePosition,
+        idleBaselinePosition: zone.fanOnlyIdleBaselinePosition,
         minVentPosition: zone.minVentPosition,
         maxVentPosition: zone.maxVentPosition,
         occupied: zone.occupied,

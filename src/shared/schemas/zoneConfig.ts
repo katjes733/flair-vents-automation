@@ -100,7 +100,23 @@ export const zoneConfigSchema = z.object({
   // Empty array = "standard" (no special thermal load). Both flags can be
   // set simultaneously — they aren't mutually exclusive.
   thermal_load_flags: z.array(z.enum(THERMAL_LOAD_FLAGS)).default([]),
-  idle_baseline_position: z.number().min(0).max(100).default(100),
+  // Unset (undefined) means "defer to the system-wide
+  // comfort_idle_baseline_position setting" — a real, distinct state from
+  // an explicit 0, mirroring comfort_demand_tolerance/
+  // comfort_overshoot_tolerance's own convention below (no `.default()`
+  // for exactly the same reason: defaulting would silently collapse
+  // "never configured" and "deliberately set to the same value" into one
+  // case). Every zone that exists as of this field's own split into a
+  // system-wide default (2026-09-14) already has an explicit value
+  // persisted from before — this change has no effect on any of them; it
+  // only matters for a zone that genuinely never sets this.
+  idle_baseline_position: z.number().min(0).max(100).optional(),
+  // The FAN_ONLY-specific counterpart — see
+  // fan_only_idle_baseline_position's own comment in systemSettings.ts
+  // for why this is a genuinely separate setting from
+  // idle_baseline_position above, not the same value reused. Same
+  // unset-is-distinct-from-zero convention.
+  fan_only_idle_baseline_position: z.number().min(0).max(100).optional(),
   // Telemetry-only: excluded from schedule-driven comfort tracking
   // entirely — target resolution short-circuits to "inactive" before even
   // consulting a schedule (see resolveZoneTargets), so this zone never

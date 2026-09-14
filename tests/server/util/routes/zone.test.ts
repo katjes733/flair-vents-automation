@@ -126,7 +126,7 @@ describe("getZoneById", () => {
       state: {},
     });
     const zone = await getZoneById("z1");
-    expect(zone?.config.idle_baseline_position).toBe(100);
+    expect(zone?.config.min_vent_position).toBe(0);
   });
 });
 

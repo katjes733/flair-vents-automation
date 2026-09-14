@@ -13,6 +13,7 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     minVentPosition: 0,
     maxVentPosition: 100,
     idleBaselinePosition: 100,
+    fanOnlyIdleBaselinePosition: 100,
     thermalLoadFlags: [],
     flowRateLps: 47,
     manualVents: [],
@@ -455,8 +456,18 @@ describe("computeZoneCommands — inactive and stale zones", () => {
 });
 
 describe("computeZoneCommands — FAN_ONLY baselines", () => {
-  it("rests every smart vent at its occupancy-scaled idle baseline with no Step 1 math", () => {
-    const zones = [zone({ zoneId: "z1", idleBaselinePosition: 60 })];
+  it("rests every smart vent at its own occupancy-scaled FAN_ONLY baseline with no Step 1 math", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        // Deliberately different from idleBaselinePosition (left at the
+        // factory's own default) — proves FAN_ONLY reads its own
+        // dedicated setting, not the comfort-idle one, even though both
+        // exist on the same zone.
+        idleBaselinePosition: 100,
+        fanOnlyIdleBaselinePosition: 60,
+      }),
+    ];
     const result = computeZoneCommands({
       state: "FAN_ONLY",
       zones,
@@ -465,7 +476,7 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
       capLps: 10000,
       floorLps: 0,
     });
-    // unoccupied, non-active-call -> idleBaselinePosition * unoccupiedIdleFactor
+    // unoccupied, non-active-call -> fanOnlyIdleBaselinePosition * unoccupiedIdleFactor
     // — FAN_ONLY circulates unconditioned air, so deviation-based math has
     // nothing to react to, unlike IDLE (see the describe block below).
     expect(result.commandedPositions["z1"]).toBe(30);

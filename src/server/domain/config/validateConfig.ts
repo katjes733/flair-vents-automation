@@ -39,7 +39,13 @@ export function validateZoneConfig(zone: {
   manualVents: Array<{ position: number; ductFlowRateLps: number | undefined }>;
   minVentPosition: number;
   maxVentPosition: number;
-  idleBaselinePosition: number;
+  // undefined means "deferring to the system-wide
+  // comfort_idle_baseline_position default" (see zoneConfigSchema's own
+  // comment) — skipped below, since there's no zone-specific value to
+  // range-check without threading system settings into this validation
+  // path, and the system default is already bounds-checked by its own
+  // schema.
+  idleBaselinePosition: number | undefined;
 }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -84,8 +90,9 @@ export function validateZoneConfig(zone: {
   }
 
   if (
-    zone.idleBaselinePosition < zone.minVentPosition ||
-    zone.idleBaselinePosition > zone.maxVentPosition
+    zone.idleBaselinePosition !== undefined &&
+    (zone.idleBaselinePosition < zone.minVentPosition ||
+      zone.idleBaselinePosition > zone.maxVentPosition)
   ) {
     issues.push({
       code: "idle_baseline_out_of_range",
