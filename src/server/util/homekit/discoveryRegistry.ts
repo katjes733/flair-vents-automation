@@ -131,6 +131,22 @@ export class HapDiscoveryRegistry {
     return { totalVisible: this.known.size, ids: [...this.known.keys()] };
   }
 
+  /**
+   * Called when a caller trusted a `lookup()` hit but the resulting
+   * connection attempt itself failed — the registry's cached answer was
+   * stale (the accessory moved again since its last real announcement).
+   * A real, confirmed incident: `lookup()` only counts a miss when it
+   * returns null, so a *wrong-but-present* entry was never evicted and
+   * never counted toward the rebind threshold, letting the same bad
+   * address/port get handed out and fail, silently, every tick
+   * indefinitely. Evicts the entry and counts it as a miss, same as a
+   * genuine lookup miss would.
+   */
+  reportStaleEntry(accessoryId: string): void {
+    this.known.delete(accessoryId);
+    this.recordMiss(accessoryId);
+  }
+
   /** Exposed (not just the interval above) so tests can trigger this deterministically without real timers. */
   maybeRebindForNetworkChange(): void {
     const fingerprint = this.listLocalInterfaces().join(",");
