@@ -38,6 +38,11 @@ interface ZoneCardProps {
   onMoveDown?: () => void;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
+  // Whether the air handler's own hvac_state is currently IDLE (no active
+  // call for anything) — optional, defaults to false so every existing
+  // caller/test that doesn't pass it renders exactly as before. See the
+  // "Almost there" override below for why this needs to reach this deep.
+  airHandlerIdle?: boolean;
 }
 
 const CLASSIFICATION_LABELS: Record<string, string> = {
@@ -47,6 +52,14 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
   inactive: "Inactive",
   unclassified_no_sensor: "No sensor",
 };
+
+// Other wordings considered and rejected before settling on "Almost
+// there": "Demanding · idle" (reads as a contradiction, not a
+// clarification — pairing the word "Demanding" with "idle" is exactly
+// the confusion this exists to resolve, not describe); "Settling" and
+// "Wrapping up" (both reasonable, kept here in case "Almost there" ever
+// needs revisiting).
+const ALMOST_THERE_LABEL = "Almost there";
 
 export default function ZoneCard({
   zone,
@@ -58,6 +71,7 @@ export default function ZoneCard({
   onMoveDown,
   canMoveUp,
   canMoveDown,
+  airHandlerIdle = false,
 }: ZoneCardProps) {
   const reorderable = onMoveUp !== undefined || onMoveDown !== undefined;
   const theme = useTheme();
@@ -70,8 +84,23 @@ export default function ZoneCard({
   const isControllable = zone.ventHardwareType === "flair_smart_vent";
 
   const classification = tickRecord?.classification;
-  const classificationColor =
-    classification === "satisfied"
+  // A zone can still be classified "demanding" for a few ticks after the
+  // air handler's own call has already stopped — the driving-setpoint
+  // push naturally converges and ends the call right around when the
+  // tracked zone reaches its own setpoint, while the classification badge
+  // deliberately lags a little behind (hysteresis, to avoid flapping). A
+  // real, confirmed user-facing confusion: seeing "Demanding" while
+  // nothing is actively happening reads as a contradiction. See
+  // ALMOST_THERE_LABEL's own comment for wordings considered.
+  const isAlmostThere = classification === "demanding" && airHandlerIdle;
+  const classificationLabel = isAlmostThere
+    ? ALMOST_THERE_LABEL
+    : classification
+      ? (CLASSIFICATION_LABELS[classification] ?? classification)
+      : null;
+  const classificationColor = isAlmostThere
+    ? theme.palette.status.almostThere
+    : classification === "satisfied"
       ? theme.palette.status.satisfied
       : classification === "demanding"
         ? theme.palette.status.demanding
@@ -205,9 +234,9 @@ export default function ZoneCard({
                 ? `${toDisplayAbsolute(asAbsoluteTemp(zone.state.last_reading_value), temperatureUnit).toFixed(1)}°${temperatureUnit}`
                 : "—"}
             </Typography>
-            {classification && (
+            {classificationLabel && (
               <Chip
-                label={CLASSIFICATION_LABELS[classification] ?? classification}
+                label={classificationLabel}
                 size="small"
                 sx={
                   classificationColor

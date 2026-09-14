@@ -1,6 +1,7 @@
 export interface StatusPalette {
   satisfied: string;
   demanding: string;
+  almostThere: string;
   spiking: string;
   degradedVent: string;
   staleReading: string;
@@ -18,6 +19,18 @@ export interface StatusPalette {
 export const lightStatusPalette: StatusPalette = {
   satisfied: "#2e7d32",
   demanding: "#ed6c02",
+  // A zone still classified "demanding" (hasn't cleared its own overshoot-
+  // tolerance hysteresis yet) while the air handler itself has already
+  // gone idle — a real, confirmed confusing moment: the driving-setpoint
+  // push naturally converges and stops the call right around when a
+  // tracked zone reaches its own setpoint, but the classification badge
+  // deliberately lags a little behind that (to avoid flapping), so the
+  // two signals visibly disagree for a few ticks even though nothing is
+  // wrong. Deliberately not reusing the "demanding" orange (implies
+  // active urgency, which is exactly untrue here) or "staleReading" gray
+  // (implies untrustworthy data, also untrue) — a distinct, calmer color
+  // for "converging on comfort, no action needed."
+  almostThere: "#0097a7",
   spiking: "#d32f2f",
   degradedVent: "#9c27b0",
   staleReading: "#757575",
@@ -36,6 +49,7 @@ export const lightStatusPalette: StatusPalette = {
 export const darkStatusPalette: StatusPalette = {
   satisfied: "#66bb6a",
   demanding: "#ffa726",
+  almostThere: "#4dd0e1",
   spiking: "#ef5350",
   degradedVent: "#ce93d8",
   staleReading: "#bdbdbd",

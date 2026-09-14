@@ -18,6 +18,9 @@ interface ZoneGridProps {
   activeOverridesByZoneId: Map<string, ManualOverride>;
   onChanged: () => void;
   onEdit: (zone: Zone) => void;
+  // Passed straight through to every ZoneCard — see its own
+  // airHandlerIdle prop comment. Optional, defaults to false.
+  airHandlerIdle?: boolean;
 }
 
 function sortedByDisplayOrder(zones: Zone[]): Zone[] {
@@ -59,6 +62,7 @@ export default function ZoneGrid({
   activeOverridesByZoneId,
   onChanged,
   onEdit,
+  airHandlerIdle = false,
 }: ZoneGridProps) {
   // Reordering persists via the same PATCH `updateZone` uses for any other
   // zone edit — gated on the identical permission, not a dedicated leaf.
@@ -212,6 +216,7 @@ export default function ZoneGrid({
               onMoveDown={canReorder ? () => move(index, 1) : undefined}
               canMoveUp={index > 0}
               canMoveDown={index < ordered.length - 1}
+              airHandlerIdle={airHandlerIdle}
             />
           </Grid>
         );

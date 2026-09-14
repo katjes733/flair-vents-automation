@@ -525,4 +525,62 @@ describe("ZoneCard", () => {
       screen.getByText("0% target · 0% reported · no change needed"),
     ).toBeInTheDocument();
   });
+
+  describe("the 'Almost there' state", () => {
+    function makeDemandingTickRecord() {
+      return {
+        zone_id: "z1",
+        name: "Bedroom",
+        vent_hardware_type: "flair_smart_vent" as const,
+        classification: "demanding" as const,
+        occupied: false,
+        spiking: false,
+        temp_calibrated: null,
+        resolved_setpoint: null,
+        desired_position_pct: null,
+        post_contention_position_pct: null,
+        reason: "",
+        vent_misalignment_suspected: false,
+        vents: [],
+      };
+    }
+
+    // Regression coverage: a zone can stay classified "demanding" for a
+    // few ticks after the air handler's own call has already stopped
+    // (the driving-setpoint push converges and ends the call right
+    // around when the tracked zone reaches its own setpoint, while the
+    // classification badge deliberately lags behind via hysteresis) — a
+    // real, confirmed confusing moment for a user glancing at the
+    // dashboard, since "Demanding" implies active urgency that isn't
+    // actually happening.
+    it("shows 'Almost there' instead of 'Demanding' when the air handler has gone idle", () => {
+      renderCard({
+        tickRecord: makeDemandingTickRecord(),
+        airHandlerIdle: true,
+      });
+      expect(screen.getByText("Almost there")).toBeInTheDocument();
+      expect(screen.queryByText("Demanding")).not.toBeInTheDocument();
+    });
+
+    it("still shows plain 'Demanding' while the air handler is actively calling", () => {
+      renderCard({
+        tickRecord: makeDemandingTickRecord(),
+        airHandlerIdle: false,
+      });
+      expect(screen.getByText("Demanding")).toBeInTheDocument();
+      expect(screen.queryByText("Almost there")).not.toBeInTheDocument();
+    });
+
+    it("never shows 'Almost there' for a satisfied zone, even when idle", () => {
+      renderCard({
+        tickRecord: {
+          ...makeDemandingTickRecord(),
+          classification: "satisfied",
+        },
+        airHandlerIdle: true,
+      });
+      expect(screen.getByText("Satisfied")).toBeInTheDocument();
+      expect(screen.queryByText("Almost there")).not.toBeInTheDocument();
+    });
+  });
 });

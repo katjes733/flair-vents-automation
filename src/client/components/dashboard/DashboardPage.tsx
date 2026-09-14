@@ -215,6 +215,7 @@ export default function DashboardPage() {
               activeOverridesByZoneId={activeOverridesByZoneId}
               onChanged={loadAll}
               onEdit={setEditingZone}
+              airHandlerIdle={decision?.hvac_state === "IDLE"}
             />
           </Box>
         );
