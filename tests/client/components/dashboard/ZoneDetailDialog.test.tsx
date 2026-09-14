@@ -345,8 +345,8 @@ describe("ZoneDetailDialog", () => {
         "z1",
         expect.objectContaining({
           config: expect.objectContaining({
-            comfort_demand_tolerance: undefined,
-            comfort_overshoot_tolerance: undefined,
+            comfort_demand_tolerance: null,
+            comfort_overshoot_tolerance: null,
           }),
         }),
       );
@@ -389,8 +389,8 @@ describe("ZoneDetailDialog", () => {
         "z1",
         expect.objectContaining({
           config: expect.objectContaining({
-            idle_baseline_position: undefined,
-            fan_only_idle_baseline_position: undefined,
+            idle_baseline_position: null,
+            fan_only_idle_baseline_position: null,
           }),
         }),
       );

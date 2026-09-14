@@ -65,13 +65,18 @@ interface ZoneDetailDialogProps {
   onDeleted: () => void;
 }
 
-// undefined/"" means "unset" for comfort_demand_tolerance/
-// comfort_overshoot_tolerance — a real, distinct state from 0 (see
-// zoneConfigSchema's own comment: unset means tight targeting). The form
-// preserves that distinction rather than defaulting a blank field to 0.
-// idle_baseline_position/fan_only_idle_baseline_position follow the same
-// convention now too — blank means "use the system-wide default," a real,
-// distinct state from an explicit 0 (which some zones deliberately want).
+// A blank field means "unset" for comfort_demand_tolerance/
+// comfort_overshoot_tolerance/idle_baseline_position/
+// fan_only_idle_baseline_position — a real, distinct state from an
+// explicit 0 (see zoneConfigSchema's own comments). The form sends an
+// explicit `null` for "blank," never `undefined` — a real, confirmed live
+// bug this fixes: `undefined` is silently dropped by JSON.stringify
+// before the request leaves the browser, so the server never sees the
+// field mentioned at all and a `{...existing, ...patch}` merge leaves
+// whatever was already saved in place, no matter how many times the form
+// is "cleared" and saved. See genuinePartial()'s own comment
+// (zodPartial.ts) for the server-side half — it already expects and
+// normalizes an incoming `null` into a genuine clear.
 export default function ZoneDetailDialog({
   open,
   zone,
@@ -228,10 +233,10 @@ export default function ZoneDetailDialog({
                 }))
               : [],
           idle_baseline_position:
-            idleBaseline.trim() === "" ? undefined : Number(idleBaseline),
+            idleBaseline.trim() === "" ? null : Number(idleBaseline),
           fan_only_idle_baseline_position:
             fanOnlyIdleBaseline.trim() === ""
-              ? undefined
+              ? null
               : Number(fanOnlyIdleBaseline),
           min_vent_position: Number(minPosition),
           max_vent_position: Number(maxPosition),
@@ -242,14 +247,14 @@ export default function ZoneDetailDialog({
           ),
           comfort_demand_tolerance:
             comfortDemandTolerance.trim() === ""
-              ? undefined
+              ? null
               : fromDisplayDelta(
                   Number(comfortDemandTolerance),
                   temperatureUnit,
                 ),
           comfort_overshoot_tolerance:
             comfortOvershootTolerance.trim() === ""
-              ? undefined
+              ? null
               : fromDisplayDelta(
                   Number(comfortOvershootTolerance),
                   temperatureUnit,

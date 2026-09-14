@@ -148,11 +148,26 @@ export interface CreateZoneRequest {
   config?: Partial<ZoneConfig>;
 }
 
+// Widens every ZoneConfig field to also accept an explicit `null` — the
+// only way a PATCH can genuinely clear an already-set optional field back
+// to "unset, defer to the system default." Sending `undefined` doesn't
+// work: JSON.stringify silently drops a key whose value is `undefined`
+// before the request ever leaves the browser, so the server never sees it
+// mentioned at all and a `{...existing, ...patch}` merge leaves the stale
+// value in place — confirmed live, this exact bug, for
+// idle_baseline_position/fan_only_idle_baseline_position (and, it turns
+// out, comfort_demand_tolerance/comfort_overshoot_tolerance the whole
+// time). See genuinePartial()'s own comment (zodPartial.ts) for the
+// server-side half: it already normalizes an incoming `null` to
+// `undefined` before merging — this type is what lets a caller actually
+// send that `null` instead of an `undefined` that never arrives.
+type ClearableZoneConfig = { [K in keyof ZoneConfig]?: ZoneConfig[K] | null };
+
 export interface UpdateZoneRequest {
   air_handler_id?: string;
   name?: string;
   vent_hardware_type?: VentHardwareType;
-  config?: Partial<ZoneConfig>;
+  config?: ClearableZoneConfig;
 }
 
 export async function fetchZones(): Promise<Zone[]> {
