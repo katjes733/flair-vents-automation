@@ -19,7 +19,7 @@ function base(
     hvacState: "COOLING_CALL" as const,
     callActive: true,
     classification: "satisfied" as const,
-    allVentsReportedClosed: true,
+    targetAtClosedExtreme: true,
     allVentsReportedOpenEnough: false,
     calibratedTempC: 21,
     prior: EMPTY_VENT_MISALIGNMENT_STATE,
@@ -50,7 +50,7 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({ kind: "none" });
     });
 
-    it("resets the window when the vent is no longer fully reported-closed", () => {
+    it("resets the window when the target is no longer at the closed extreme", () => {
       const prior: VentMisalignmentState = {
         windowSinceMs: NOW - 600_000,
         windowStartTempC: 21,
@@ -58,7 +58,7 @@ describe("evaluateVentMisalignment", () => {
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
-        base({ prior, allVentsReportedClosed: false, calibratedTempC: 19 }),
+        base({ prior, targetAtClosedExtreme: false, calibratedTempC: 19 }),
       );
       expect(result.next).toEqual(EMPTY_VENT_MISALIGNMENT_STATE);
       expect(result.action).toEqual({ kind: "none" });

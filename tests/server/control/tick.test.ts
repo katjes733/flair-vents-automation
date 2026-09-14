@@ -3581,7 +3581,7 @@ describe("runTick — vent misalignment auto-recalibration", () => {
     },
   ];
 
-  it("forces the vent fully open once a satisfied, reported-closed zone drifts past the threshold within one call segment", async () => {
+  it("forces the vent fully open once a satisfied zone with a fully-closed target drifts past the threshold within one call segment", async () => {
     const client = new FakeFlairClient();
     const persisted = new Map<string, ZoneRuntimeState>();
     const ctx = makeCtx({
@@ -3590,13 +3590,16 @@ describe("runTick — vent misalignment auto-recalibration", () => {
     });
     ctx.schedules = ALWAYS_ON_SCHEDULE;
 
-    // Tick 1: satisfied (20°C vs 21°C setpoint), vent reports fully
-    // closed — starts the detection window.
+    // Tick 1: satisfied and far enough below the 21°C setpoint that the
+    // ramp's own computed target is already fully closed (not just
+    // "satisfied" — see computeDesiredPosition's overshoot/closeRatio
+    // math: a small overshoot lands well above the floor, so this needs
+    // to be a large one) — starts the detection window.
     setupFlairFixture(client, [
       {
         roomId: "room-1",
         ventId: "vent-1",
-        tempC: 20,
+        tempC: 15,
         ductC: 14,
         percentOpen: 0,
       },
@@ -3609,17 +3612,17 @@ describe("runTick — vent misalignment auto-recalibration", () => {
     );
     const afterTick1 = persisted.get("z1")!;
     expect(afterTick1.vent_misalignment_window_since).not.toBeNull();
-    expect(afterTick1.vent_misalignment_window_start_temp).toBeCloseTo(20, 5);
+    expect(afterTick1.vent_misalignment_window_start_temp).toBeCloseTo(15, 5);
     expect(afterTick1.vent_misalignment_recalibrating_since).toBeNull();
 
-    // Tick 2, 20 minutes later: still reports fully closed, but the room
-    // kept cooling well past the threshold — exactly the "closed vent,
-    // room still tracking the call" signature.
+    // Tick 2, 20 minutes later: target is still fully closed, but the
+    // room kept cooling well past the threshold — exactly the "should be
+    // closed, room still tracking the call" signature.
     setupFlairFixture(client, [
       {
         roomId: "room-1",
         ventId: "vent-1",
-        tempC: 20 - 0.56 - 0.1,
+        tempC: 15 - 0.56 - 0.1,
         ductC: 14,
         percentOpen: 0,
       },
