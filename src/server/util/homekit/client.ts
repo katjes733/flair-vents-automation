@@ -507,8 +507,10 @@ export class HapControllerClient implements HomeKitClient {
     // seen this accessory yet (e.g. it was just rebound and the
     // accessory's next re-announcement hasn't landed).
     let discovered = hapDiscoveryRegistry.lookup(this.accessoryId);
+    let usedFallbackQuery = false;
     if (!discovered) {
       discovered = await discoverAccessory(this.accessoryId);
+      usedFallbackQuery = true;
     }
     if (!discovered) {
       const { totalVisible } = hapDiscoveryRegistry.snapshot();
@@ -523,7 +525,24 @@ export class HapControllerClient implements HomeKitClient {
         `Could not discover HAP accessory ${this.accessoryId} on the local network`,
       );
     }
-    this.client = await tryConnect(discovered.address, discovered.port);
+    try {
+      this.client = await tryConnect(discovered.address, discovered.port);
+    } catch (err) {
+      // A real, confirmed incident: the registry's cached answer for this
+      // accessory can itself go stale (it moved again since the
+      // registry's browsers last heard from it) — evict it and count it
+      // as a miss toward the consecutive-miss rebind threshold, rather
+      // than silently repeating the same failing address every tick
+      // forever. One more attempt via a fresh one-shot query before
+      // giving up for this tick, unless that's exactly what we just
+      // tried and it still produced this unusable answer.
+      hapDiscoveryRegistry.reportStaleEntry(this.accessoryId);
+      if (usedFallbackQuery) throw err;
+      const fresh = await discoverAccessory(this.accessoryId);
+      if (!fresh) throw err;
+      this.client = await tryConnect(fresh.address, fresh.port);
+      discovered = fresh;
+    }
     this.cachedAddress = discovered.address;
     this.cachedPort = discovered.port;
     this.onConnectionInfoUpdated?.(discovered.address, discovered.port);

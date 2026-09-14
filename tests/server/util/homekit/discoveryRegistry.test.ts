@@ -143,6 +143,47 @@ describe("HapDiscoveryRegistry", () => {
     });
   });
 
+  describe("reportStaleEntry", () => {
+    it("evicts the entry so a subsequent lookup treats it as a miss", () => {
+      const { registry } = makeRegistry();
+      registry.start();
+      created[0].emit("serviceUp", makeService());
+      expect(registry.lookup("AA:BB:CC:DD:EE:FF")).not.toBeNull();
+
+      registry.reportStaleEntry("AA:BB:CC:DD:EE:FF");
+
+      expect(registry.lookup("AA:BB:CC:DD:EE:FF")).toBeNull();
+      expect(registry.snapshot()).toEqual({ totalVisible: 0, ids: [] });
+    });
+
+    // Regression coverage for a real, confirmed incident: a caller trusted
+    // a lookup() hit, the resulting connection attempt failed, and
+    // nothing ever told the registry that answer was stale — the same
+    // wrong address/port kept getting handed out and failing, silently,
+    // every tick, forever, since lookup() only counts a miss when it
+    // returns null, never when a hit turns out to be unusable.
+    it("counts toward the consecutive-miss rebind threshold, same as a genuine lookup miss", () => {
+      const { registry, log } = makeRegistry();
+      registry.start();
+      created[0].emit("serviceUp", makeService());
+      const firstGeneration = [...created];
+
+      for (let i = 0; i < 5; i++) {
+        registry.reportStaleEntry("AA:BB:CC:DD:EE:FF");
+      }
+
+      expect(firstGeneration.every((d) => d.stopCount === 1)).toBe(true);
+      expect(created).toHaveLength(4); // 2 initial + 2 rebound
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accessory_id: "AA:BB:CC:DD:EE:FF",
+          miss_streak: 5,
+        }),
+        expect.any(String),
+      );
+    });
+  });
+
   it("start() is idempotent — a second call does not rebind", () => {
     const { registry } = makeRegistry();
     registry.start();
