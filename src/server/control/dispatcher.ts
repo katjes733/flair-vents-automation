@@ -37,6 +37,11 @@ export async function dispatchZoneCommand(params: {
   lastDispatchedPosition: number | null;
   reportedPosition: number | null;
   minStepDeltaPct: number;
+  // The zone's own configured vent-position range — see shouldDispatch's
+  // own comment for why a target at either extreme bypasses the min-step
+  // floor entirely.
+  minPosition: number;
+  maxPosition: number;
   reconciliationQueue: ReconciliationQueue;
   nowMs: number;
   actuationDelayMs: number;
@@ -51,6 +56,8 @@ export async function dispatchZoneCommand(params: {
     targetPosition: params.targetPosition,
     lastDispatchedPosition: params.lastDispatchedPosition,
     minStepDeltaPct: params.minStepDeltaPct,
+    minPosition: params.minPosition,
+    maxPosition: params.maxPosition,
   });
 
   if (!decision) {

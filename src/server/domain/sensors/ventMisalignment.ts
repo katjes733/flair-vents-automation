@@ -41,16 +41,26 @@ export interface VentMisalignmentEvaluation {
  * the call's own on/off cycling. A sealed vent shouldn't care whether the
  * compressor is running.
  *
- * Detection window: anchored the instant a zone is simultaneously (a)
- * every vent reporting exactly 0%, (b) classified `satisfied` — a
- * genuinely `demanding` zone's own dispatch gap is the separate,
- * already-fixed sleep-mode-threshold problem, not this one — and (c) the
- * system is actively calling (COOLING_CALL/HEATING_CALL). Reset the
- * instant any of those three breaks: an idle-segment rebound is normal
- * for every zone, sealed or not, so only the temp response *within one
- * uninterrupted call segment* is diagnostic. Flags once the zone has
+ * Detection window: anchored the instant a zone is simultaneously (a) its
+ * own *computed target* sitting at the zone's fully-closed extreme, (b)
+ * classified `satisfied` — a genuinely `demanding` zone's own dispatch gap
+ * is the separate, already-fixed sleep-mode-threshold problem, not this
+ * one — and (c) the system is actively calling (COOLING_CALL/HEATING_CALL).
+ * Reset the instant any of those three breaks: an idle-segment rebound is
+ * normal for every zone, sealed or not, so only the temp response *within
+ * one uninterrupted call segment* is diagnostic. Flags once the zone has
  * moved by `tempThresholdC` in the call's own direction since the window
  * opened (colder during COOLING_CALL, warmer during HEATING_CALL).
+ *
+ * Keyed off the *target*, not the vent's own *reported* position — a
+ * real, confirmed incident: a vent settled at a reported 10% (physically
+ * confirmed open closer to 30%) for 5+ hours while its target sat at 0%
+ * the whole time, undetected, because the original design required the
+ * vent to report exactly 0% before this even started tracking. The
+ * target is what this app has already concluded is correct; whether the
+ * vent is currently stuck reporting 0%, 10%, or anything else in between
+ * doesn't change that a "should be closed, room keeps drifting anyway"
+ * situation is just as real and just as worth auto-correcting.
  *
  * Correction: a full home cycle rather than a diagnosis-only alert — an
  * occasional deliberate open/close is cheaper than a vent silently stuck
@@ -71,7 +81,7 @@ export function evaluateVentMisalignment(params: {
   hvacState: HvacCallState;
   callActive: boolean;
   classification: ZoneClassification | "inactive";
-  allVentsReportedClosed: boolean;
+  targetAtClosedExtreme: boolean;
   allVentsReportedOpenEnough: boolean;
   calibratedTempC: number | null;
   prior: VentMisalignmentState;
@@ -118,7 +128,7 @@ export function evaluateVentMisalignment(params: {
 
   const trackingActive =
     params.callActive &&
-    params.allVentsReportedClosed &&
+    params.targetAtClosedExtreme &&
     params.classification === "satisfied";
   if (!trackingActive) {
     return {

@@ -78,7 +78,7 @@ import {
 import { computeSetpointPush } from "~/server/domain/setpoint/setpointPush";
 import { resolveHomeKitSetpointWrite } from "~/server/domain/setpoint/homekitCharacteristicSelection";
 import { evaluateReconciliation } from "~/server/domain/dispatch/reconciliation";
-import { detectDrift } from "~/server/domain/dispatch/stepDelta";
+import { detectDrift, isAtExtreme } from "~/server/domain/dispatch/stepDelta";
 import {
   isControllable,
   contributesToPressure,
@@ -801,6 +801,8 @@ export async function runTick(
                 ?.last_reported_position ?? null,
             reportedPosition: ventReading.reportedPositionPct,
             minStepDeltaPct: 0, // fail-safe bypasses the step-delta suppressor entirely
+            minPosition: zone.config.min_vent_position,
+            maxPosition: zone.config.max_vent_position,
             reconciliationQueue: deps.reconciliationQueue,
             nowMs: startedAtMs,
             actuationDelayMs: ACTUATION_DELAY_MS,
@@ -1995,8 +1997,10 @@ export async function runTick(
         hvacState: effectiveCallState,
         callActive,
         classification: pipelineResult.classifications[zone.id] ?? "inactive",
-        allVentsReportedClosed: ventReadings.every(
-          (v) => v.reportedPositionPct === 0,
+        targetAtClosedExtreme: isAtExtreme(
+          finalPositions[zone.id],
+          zone.config.min_vent_position,
+          zone.config.max_vent_position,
         ),
         allVentsReportedOpenEnough: ventReadings.every(
           (v) => (v.reportedPositionPct ?? 0) >= 90,
@@ -2166,6 +2170,8 @@ export async function runTick(
           lastDispatchedPosition: priorVent?.last_reported_position ?? null,
           reportedPosition: ventReading.reportedPositionPct,
           minStepDeltaPct: effectiveMinStepDeltaPct,
+          minPosition: zone.config.min_vent_position,
+          maxPosition: zone.config.max_vent_position,
           reconciliationQueue: deps.reconciliationQueue,
           nowMs: startedAtMs,
           actuationDelayMs: ACTUATION_DELAY_MS,
@@ -2619,6 +2625,8 @@ async function holdAtIdleBaseline(params: {
           lastDispatchedPosition: priorVent?.last_reported_position ?? null,
           reportedPosition: ventReading.reportedPositionPct,
           minStepDeltaPct: 0,
+          minPosition: zone.config.min_vent_position,
+          maxPosition: zone.config.max_vent_position,
           reconciliationQueue: deps.reconciliationQueue,
           nowMs: startedAtMs,
           actuationDelayMs: ACTUATION_DELAY_MS,

@@ -388,7 +388,7 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           { value: "false", label: "Disabled" },
         ],
         description:
-          "Detects a vent that's physically stuck partway open despite reporting 0% (a satisfied zone whose room keeps drifting with the active call anyway) and auto-corrects by forcing it fully open, then letting it re-close normally once it reports open. No email alert by default — see Vent misalignment alert below.",
+          "Detects a vent that's physically stuck partway open despite its target being fully closed (a satisfied zone whose room keeps drifting with the active call anyway) and auto-corrects by forcing it fully open, then letting it re-close normally once it reports open. No email alert by default — see Vent misalignment alert below.",
         tier: "advanced",
       },
       {
