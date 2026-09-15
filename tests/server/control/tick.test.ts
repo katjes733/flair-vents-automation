@@ -871,6 +871,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     await runTick(makeAirHandler(), zones, ctx, deps);
@@ -937,6 +938,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     await runTick(makeAirHandler(), zones, ctx, deps);
@@ -985,6 +987,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     await runTick(makeAirHandler(), zones, ctx, deps);
@@ -1085,6 +1088,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, ctx, deps);
@@ -1158,6 +1162,7 @@ describe("runTick — HVAC extended call with no improvement", () => {
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     await runTick(makeAirHandler(), zones, ctx, deps);
@@ -1219,6 +1224,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -1278,6 +1284,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -1343,6 +1350,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -1392,6 +1400,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -1438,6 +1447,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: NOW - 4 * 60000,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -1491,6 +1501,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -1542,6 +1553,7 @@ describe("runTick — emergency fail-safe", () => {
       equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -2254,6 +2266,7 @@ describe("runTick — periodic drift-check backstop", () => {
       equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck,
+      terminationAnchorZoneId: null,
     };
   }
 
@@ -2435,6 +2448,7 @@ describe("runTick — equipment fault clearing", () => {
       equipmentFaultTriggerDwellSinceMs: null,
       worstDeviationAtCallStartC: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: null,
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -5131,7 +5145,9 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
     const deps = makeDeps(client, persisted, NOW);
     // Simulates exactly what a real prior tick leaves behind while z1 was
     // still genuinely demanding and being tracked: a cold smoothed offset
-    // and a correspondingly cold last-pushed value.
+    // and a correspondingly cold last-pushed value. terminationAnchorZoneId
+    // mirrors trackedDrivingZoneId here — while a zone is actively driving,
+    // both fields track it identically (see the final persistence step).
     const staleFrozenValue = 21.89;
     await deps.airHandlerRuntimeStore.set("ah-1", {
       trackedDrivingZoneId: "z1",
@@ -5145,6 +5161,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: "z1",
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -5216,6 +5233,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: "z1",
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
@@ -5232,7 +5250,15 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
     );
   });
 
-  it("does not re-fire on a later tick once termination has already run and nothing is tracked", async () => {
+  // A second, real gap found after the one-shot fix above shipped: firing
+  // termination exactly once on the transition tick still leaves a fully
+  // satisfied system unmonitored forever afterward — if that one write
+  // never actually reaches the device (or something later knocks the
+  // thermostat's own hold back out of range), nothing ever notices. The
+  // fix keeps recomputing every idle tick and compares against the
+  // device's own reported target — see terminationAnchorZoneId's own
+  // comment and resolveReportedThermostatSetpoint.
+  it("does not redispatch on a later tick once the device already reports the terminated value", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
       {
@@ -5243,17 +5269,32 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
         percentOpen: 50,
       },
     ]);
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "cool",
+      mode: "cool",
+      ambientTemperatureC: 25,
+      targetTemperatureC: 21,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: false,
+      writtenConfirmed: false,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
     const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
     const persisted = new Map<string, ZoneRuntimeState>();
     const deps = makeDeps(client, persisted, NOW);
-    const alreadyTerminatedValue = 22.9;
-    // trackedDrivingZoneId is already null here — exactly what the fix's
-    // own prior tick would have persisted right after termination fired.
+    // terminationAnchorZoneId survives from an earlier idle tick — z1
+    // hasn't demanded in a while, but the anchor is never released while
+    // demandingZoneCount stays 0 (unlike trackedDrivingZoneId, which is
+    // already null here).
     await deps.airHandlerRuntimeStore.set("ah-1", {
       trackedDrivingZoneId: null,
       ticksSinceLeadChanged: 0,
       smoothedOffsetC: 0,
-      lastPushedSetpointC: alreadyTerminatedValue,
+      lastPushedSetpointC: 21,
       lastHvacState: "COOLING_CALL",
       callStartedAtMs: null,
       worstDeviationAtCallStartC: null,
@@ -5261,23 +5302,107 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: "z1",
+    });
+
+    // Tick 1: Flair's relayed target (21) doesn't yet match what
+    // termination requires given the live 25° ambient reading, so this
+    // still redispatches — capture what it actually computes rather than
+    // hand-deriving computeSetpointPush's own math here.
+    const decision1 = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+    expect(decision1.setpoint_push?.would_write).toBe(true);
+    const confirmedValue = decision1.setpoint_push!.pushed_value!;
+
+    // Simulates Flair's cloud relay catching up to that write.
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "cool",
+      mode: "cool",
+      ambientTemperatureC: 25,
+      targetTemperatureC: confirmedValue,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: true,
+      writtenConfirmed: true,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+
+    // Tick 2: same live conditions, but the device now echoes exactly
+    // what this app already pushed — genuinely nothing left to confirm
+    // or redo.
+    const decision2 = await runTick(makeAirHandler(), zones, makeCtx(), deps);
+    expect(decision2.driving_zone?.reason).toBe("none_eligible");
+    expect(decision2.setpoint_push?.would_write).toBe(false);
+    expect(decision2.setpoint_push?.pushed_value).toBeCloseTo(
+      confirmedValue,
+      1,
+    );
+  });
+
+  it("redoes the termination push once the device's reported target drifts away from what was last confirmed", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23.89,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    // Reports a target far below what termination requires — as if a
+    // schedule change or a manual adjustment on the thermostat/Ecobee app
+    // knocked the hold back down after this app last confirmed it.
+    client.setThermostatState({
+      thermostatId: "therm-1",
+      operatingState: "cool",
+      mode: "cool",
+      ambientTemperatureC: 25,
+      targetTemperatureC: 18,
+      homeAway: "Home",
+      fanState: null,
+      online: true,
+      written: false,
+      writtenConfirmed: false,
+      writtenFailures: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    });
+    const zones = [makeZone({ id: "z1", flairRoomId: "room-1" })];
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const deps = makeDeps(client, persisted, NOW);
+    await deps.airHandlerRuntimeStore.set("ah-1", {
+      trackedDrivingZoneId: null,
+      ticksSinceLeadChanged: 0,
+      smoothedOffsetC: 0,
+      // What this app last pushed/confirmed before the drift.
+      lastPushedSetpointC: 21,
+      lastHvacState: "COOLING_CALL",
+      callStartedAtMs: null,
+      worstDeviationAtCallStartC: null,
+      equipmentFaultActive: false,
+      equipmentFaultClearDwellSinceMs: null,
+      equipmentFaultTriggerDwellSinceMs: null,
+      ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: "z1",
     });
 
     const decision = await runTick(makeAirHandler(), zones, makeCtx(), deps);
 
     expect(decision.driving_zone?.reason).toBe("none_eligible");
-    expect(decision.setpoint_push?.would_write).toBe(false);
-    expect(decision.setpoint_push?.pushed_value).toBeCloseTo(
-      alreadyTerminatedValue,
-      5,
-    );
+    // The device no longer reports the confirmed value — this app
+    // redispatches, moving the push back up rather than trusting the
+    // stale (successful, at the time) prior write forever.
+    expect(decision.setpoint_push?.would_write).toBe(true);
+    expect(decision.setpoint_push!.pushed_value!).toBeGreaterThan(18);
   });
 
   // Defensive hardening requested directly after the fix above shipped:
   // the fix makes termination *fire*, but a transient dispatch failure
   // at that exact moment would otherwise still leave the real device
   // stuck — with no zone tracked anymore to retry from on the next tick.
-  it("retries the termination write on the next tick if the first attempt fails, instead of abandoning it", async () => {
+  it("retries the termination write on the next tick if the first attempt fails, then stops once HomeKit itself echoes the confirmed value", async () => {
     const client = new FakeFlairClient();
     setupFlairFixture(client, [
       {
@@ -5309,6 +5434,7 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
       equipmentFaultClearDwellSinceMs: null,
       equipmentFaultTriggerDwellSinceMs: null,
       ticksSinceDriftCheck: 0,
+      terminationAnchorZoneId: "z1",
     });
 
     // Tick 1: termination fires, but the corrective write fails.
@@ -5317,22 +5443,39 @@ describe("runTick — setpoint-push termination when the last demanding zone bec
     expect(decision1.setpoint_push?.would_write).toBe(true);
     expect(decision1.setpoint_push?.homekit_error).not.toBeNull();
     const runtimeAfterFailure = await deps.airHandlerRuntimeStore.get("ah-1");
-    // The zone reference must survive the failed write — this is the
-    // actual defensive mechanism: without it, the next tick would have
-    // nothing left to retry from at all.
-    expect(runtimeAfterFailure.trackedDrivingZoneId).toBe("z1");
+    // The anchor must survive the failed write — without it, the next
+    // tick would have nothing left to retry from at all. Unlike the old
+    // one-shot design, this isn't a special "pending retry" flag: it's
+    // the same anchor every idle tick uses, kept alive regardless of
+    // whether the write succeeded.
+    expect(runtimeAfterFailure.terminationAnchorZoneId).toBe("z1");
 
     // Tick 2: same deps (retains the persisted runtime state above), the
-    // transient failure has cleared — the retry now succeeds.
+    // transient failure has cleared — the retry now succeeds. Nothing
+    // special drove this retry beyond the plain mismatch between
+    // HomeKit's still-stale reported target (22, the fake's own default)
+    // and the freshly computed pushed value.
     homeKitClient.forceError(null);
     const decision2 = await runTick(airHandler, zones, makeCtx(), deps);
     expect(decision2.setpoint_push?.would_write).toBe(true);
     expect(decision2.setpoint_push?.homekit_error).toBeNull();
-    expect(decision2.setpoint_push?.pushed_value).toBeGreaterThan(
-      staleFrozenValue,
-    );
+    const confirmedValue = decision2.setpoint_push!.pushed_value!;
+    expect(confirmedValue).toBeGreaterThan(staleFrozenValue);
     const runtimeAfterSuccess = await deps.airHandlerRuntimeStore.get("ah-1");
-    // Finally released now that a real write actually succeeded.
-    expect(runtimeAfterSuccess.trackedDrivingZoneId).toBeNull();
+    // Deliberately still alive — this app keeps monitoring for as long as
+    // the call stays satisfied, rather than trusting one successful write
+    // forever.
+    expect(runtimeAfterSuccess.terminationAnchorZoneId).toBe("z1");
+
+    // Tick 3: HomeKit's own accessory now genuinely echoes back the value
+    // this app just wrote (the fake only updates targetTemperatureC on a
+    // successful setTargetTemperature call, mirroring the real device) —
+    // confirmed, so nothing left to redo.
+    const decision3 = await runTick(airHandler, zones, makeCtx(), deps);
+    expect(decision3.setpoint_push?.would_write).toBe(false);
+    expect(decision3.setpoint_push?.pushed_value).toBeCloseTo(
+      confirmedValue,
+      1,
+    );
   });
 });

@@ -80,7 +80,10 @@ import {
   type DrivingZoneCandidate,
 } from "~/server/domain/setpoint/drivingZone";
 import { computeSetpointPush } from "~/server/domain/setpoint/setpointPush";
-import { resolveHomeKitSetpointWrite } from "~/server/domain/setpoint/homekitCharacteristicSelection";
+import {
+  resolveHomeKitSetpointWrite,
+  resolveReportedThermostatSetpoint,
+} from "~/server/domain/setpoint/homekitCharacteristicSelection";
 import { evaluateReconciliation } from "~/server/domain/dispatch/reconciliation";
 import { detectDrift, isAtExtreme } from "~/server/domain/dispatch/stepDelta";
 import {
@@ -1741,17 +1744,6 @@ export async function runTick(
   let smoothedOffsetC = priorRuntime.smoothedOffsetC;
   let wouldWrite = false;
   let selectionReason = drivingSelection.reason;
-  // Defensive hardening on top of the termination fix below: set only
-  // when this tick's push comes from the one-shot "last demanding zone
-  // just expired" path, and cleared only once its corrective write
-  // actually succeeds (checked after the dispatch attempt further down).
-  // If that write fails (a transient error), this stays set and gets
-  // persisted as trackedDrivingZoneId below instead of the normal
-  // (null) selection — so the very next tick retries the same
-  // termination computation/write, rather than the real device being
-  // left stuck at its last value until some unrelated future demand
-  // cycle happens to correct it.
-  let pendingTerminationRetryZoneId: string | null = null;
 
   // deliveryMode/homeKitClient/homeKitState/homeKitReadError were already
   // read once, up before Step 1, specifically so ingestion could use the
@@ -1761,6 +1753,18 @@ export async function runTick(
     deliveryMode === "homekit" && homeKitState
       ? homeKitState.currentTempC
       : (snapshot.thermostatState?.ambientTemperatureC ?? null);
+  // The real device echo for whichever characteristic a termination push
+  // would target — see resolveReportedThermostatSetpoint's own comment.
+  // Computed once here (rather than only inline in the decision log
+  // below) so the none_eligible branch can gate its own redo decision on
+  // it too.
+  const reportedThermostatSetpoint = resolveReportedThermostatSetpoint({
+    deliveryMode,
+    callState: effectiveCallState,
+    homeKitState,
+    flairTargetTemperatureC:
+      snapshot.thermostatState?.targetTemperatureC ?? null,
+  });
 
   if (drivingSelection.zoneId) {
     const trackedZone = zones.find((z) => z.id === drivingSelection.zoneId)!;
@@ -1796,36 +1800,40 @@ export async function runTick(
     // just froze wherever it last was, however cold, with nothing ever
     // correcting it back toward the real thermostat reading. Confirmed
     // live: a cooling threshold sat ~2°F below its real schedule for
-    // over 3.5 hours with zero recovery. Fixed by still running the
-    // termination computation exactly once, using whichever zone was
-    // tracked as of the *prior* tick — the very zone whose satisfaction
-    // is what triggered this transition — even though it's no longer
-    // eligible to keep tracking going forward. `priorRuntime
-    // .trackedDrivingZoneId` is only non-null on this one transition
-    // tick (it's persisted as `drivingSelection.zoneId` — null, this
-    // tick — at the end of runTick, so the next tick's own priorRuntime
-    // read is already null and this branch naturally doesn't re-fire).
-    const justExpiredZoneId = priorRuntime.trackedDrivingZoneId;
-    const justExpiredZone = justExpiredZoneId
-      ? zones.find((z) => z.id === justExpiredZoneId)
+    // over 3.5 hours with zero recovery.
+    //
+    // Fixed by keeping the termination computation running for as long
+    // as no zone is demanding — not just the single transition tick —
+    // using `terminationAnchorZoneId`, which (unlike trackedDrivingZoneId)
+    // deliberately survives every idle tick. Confirmed live a second
+    // time, after an earlier one-shot-only version of this fix: the
+    // moment its corrective write succeeded once, this anchor collapsed
+    // back to null and nothing ever re-checked the push again — a fully
+    // satisfied system could still drift for hours with a stale value,
+    // just one tick later than before. Recomputing every idle tick
+    // against the *live* thermostat reading, and redispatching whenever
+    // reportedThermostatSetpoint doesn't yet match, is what actually
+    // delivers "ease off once satisfied, confirm it stuck, otherwise
+    // redo" rather than a single best-effort nudge.
+    const anchorZoneId = priorRuntime.terminationAnchorZoneId;
+    const anchorZone = anchorZoneId
+      ? zones.find((z) => z.id === anchorZoneId)
       : undefined;
-    const justExpiredTarget = justExpiredZone
-      ? targetsByZone.get(justExpiredZone.id)
+    const anchorTarget = anchorZone
+      ? targetsByZone.get(anchorZone.id)
       : undefined;
-    const justExpiredReading = justExpiredZone
-      ? readings.get(justExpiredZone.id)
-      : undefined;
+    const anchorReading = anchorZone ? readings.get(anchorZone.id) : undefined;
     if (
-      justExpiredZone &&
-      justExpiredTarget &&
-      justExpiredReading &&
+      anchorZone &&
+      anchorTarget &&
+      anchorReading &&
       demandingZoneCount === 0
     ) {
       const pushResult = computeSetpointPush({
         state: effectiveCallState,
-        trackedZoneSetpoint: justExpiredTarget.setpoint ?? 0,
-        trackedZoneTemp: justExpiredReading.room.calibratedTemp,
-        trackedZoneStale: zoneStaleness.get(justExpiredZone.id) ?? false,
+        trackedZoneSetpoint: anchorTarget.setpoint ?? 0,
+        trackedZoneTemp: anchorReading.room.calibratedTemp,
+        trackedZoneStale: zoneStaleness.get(anchorZone.id) ?? false,
         thermostatReading: thermostatReadingC,
         previousSmoothedOffset: priorRuntime.smoothedOffsetC,
         alpha: ctx.settings.offset_smoothing_alpha,
@@ -1835,8 +1843,18 @@ export async function runTick(
       });
       pushedValue = pushResult.pushedValue;
       smoothedOffsetC = pushResult.smoothedOffset;
-      wouldWrite = true;
-      pendingTerminationRetryZoneId = justExpiredZone.id;
+      // Redo unless the device itself already echoes this exact value —
+      // "the last dispatch attempt didn't throw" is not good enough on
+      // its own: Flair's relayed target can lag well behind an actual
+      // write, and a plain success flag can't tell a genuinely stuck
+      // device apart from one that's already caught up. A small epsilon
+      // absorbs device-side rounding (e.g. HomeKit's own minStep).
+      const TERMINATION_CONFIRM_EPSILON_C = 0.3;
+      const alreadyConfirmed =
+        reportedThermostatSetpoint !== null &&
+        Math.abs(reportedThermostatSetpoint - pushedValue) <
+          TERMINATION_CONFIRM_EPSILON_C;
+      wouldWrite = !alreadyConfirmed;
     }
   }
 
@@ -1908,17 +1926,6 @@ export async function runTick(
         error: setpointDispatchError,
       });
     }
-  }
-  // Only release the retry reference once the corrective write actually
-  // reached the real device — see pendingTerminationRetryZoneId's own
-  // comment above. Left set (and persisted below) on any failure, and
-  // also left set if dispatch wasn't genuinely attempted at all (shadow
-  // mode/disarmed) — there's nothing to retry differently in that case,
-  // so keep recomputing/attempting it every tick, mirroring how a still-
-  // actively-tracked zone's push already keeps recomputing every tick
-  // while shadowed rather than freezing.
-  if (dispatchWasAttempted && setpointDispatchError === null) {
-    pendingTerminationRetryZoneId = null;
   }
 
   // Record/clear the HomeKit connect-failure streak for the outage
@@ -2455,11 +2462,7 @@ export async function runTick(
   }
 
   await deps.airHandlerRuntimeStore.set(airHandler.id, {
-    // pendingTerminationRetryZoneId overrides the normal (null)
-    // selection only while a termination write is still awaiting a
-    // successful retry — see its own comment above.
-    trackedDrivingZoneId:
-      pendingTerminationRetryZoneId ?? drivingSelection.zoneId,
+    trackedDrivingZoneId: drivingSelection.zoneId,
     ticksSinceLeadChanged,
     smoothedOffsetC,
     lastPushedSetpointC: pushedValue,
@@ -2470,6 +2473,11 @@ export async function runTick(
     equipmentFaultClearDwellSinceMs: faultClearDwellSinceMs,
     equipmentFaultTriggerDwellSinceMs: faultTriggerDwellSinceMs,
     ticksSinceDriftCheck: nextTicksSinceDriftCheck,
+    // Carries the last known driving zone forward across every idle tick
+    // (only replaced once a new zone actually starts demanding) — see its
+    // own comment on AirHandlerRuntimeState.
+    terminationAnchorZoneId:
+      drivingSelection.zoneId ?? priorRuntime.terminationAnchorZoneId,
   });
 
   const finishedAtMs = deps.now();
@@ -2551,28 +2559,10 @@ export async function runTick(
       // stale or simply wrong (e.g. a hold cleared directly on the
       // thermostat/Ecobee app has no reason to be reflected there until
       // Flair's own next cloud sync, which may lag well behind reality).
-      // A local HomeKit read has no such intermediary.
-      //
-      // A real, confirmed bug this fixes: in Auto mode, `targetTemperatureC`
-      // is correctly null now (see client.ts's own getCurrentState fix),
-      // but falling all the way through to Flair's relayed value on that
-      // path would reintroduce the exact staleness problem this feature
-      // exists to avoid — Auto mode's real "currently held" value is
-      // whichever threshold the current call direction actually uses, and
-      // that's already read locally too. Only falls through to Flair when
-      // HomeKit genuinely has nothing for either (unpaired, read error).
-      thermostat_current_setpoint:
-        deliveryMode === "homekit" && homeKitState?.targetTemperatureC !== null
-          ? (homeKitState?.targetTemperatureC ?? null)
-          : deliveryMode === "homekit" &&
-              homeKitState?.targetMode === 3 &&
-              (effectiveCallState === "COOLING_CALL"
-                ? homeKitState.coolThresholdC
-                : homeKitState.heatThresholdC) !== null
-            ? effectiveCallState === "COOLING_CALL"
-              ? homeKitState.coolThresholdC
-              : homeKitState.heatThresholdC
-            : (snapshot.thermostatState?.targetTemperatureC ?? null),
+      // A local HomeKit read has no such intermediary. See
+      // resolveReportedThermostatSetpoint's own comment — this is the
+      // exact same value the termination-push confirm check above uses.
+      thermostat_current_setpoint: reportedThermostatSetpoint,
       // Auto mode holds a genuine two-sided range (both thresholds always
       // simultaneously in effect), not a single number — the field above
       // picks one side to match the current call direction, which is a
