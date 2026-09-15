@@ -47,6 +47,10 @@ import {
   type VentMisalignmentState,
 } from "~/server/domain/sensors/ventMisalignment";
 import {
+  evaluateDemandStall,
+  type DemandStallState,
+} from "~/server/domain/sensors/demandStall";
+import {
   evaluateSpike,
   type SpikeHysteresisState,
 } from "~/server/domain/sensors/spikeDetection";
@@ -121,6 +125,9 @@ import {
   logVentDegraded,
   logVentMisalignmentSuspected,
   logVentMisalignmentRecalibration,
+  logDemandStallDetected,
+  logDemandStallCleared,
+  logDemandStallRecalibration,
   logControlTickCompleted,
   logControlTickDecision,
   logDriftCheckCompleted,
@@ -1320,6 +1327,7 @@ export async function runTick(
       heatingChokePositionPct: ctx.settings.heating_choke_position_pct,
       unoccupiedIdleFactor: ctx.settings.unoccupied_idle_factor,
       modulationStepPct: ctx.settings.modulation_step_pct,
+      discretePositionStepPct: ctx.settings.discrete_position_step_pct,
       maxStepsPerTick: ctx.settings.max_steps_per_tick,
       classificationStabilizationMinutes:
         ctx.settings.classification_stabilization_minutes,
@@ -1557,6 +1565,11 @@ export async function runTick(
         deviation,
         priorityRank: ctx.settings.zone_priority_order.indexOf(z.id),
         occupied: trustedOccupiedByZone.get(z.id) ?? false,
+        // Prior tick's persisted verdict — this tick's own demand-stall
+        // evaluation runs later (Step 11b, after driving-zone selection
+        // already needs this), same one-tick lag every other rolling/
+        // hysteresis state in this pipeline already has.
+        demandStalled: z.state.demand_stalled_since !== null,
       };
     })
     .map((c) => ({
@@ -2078,6 +2091,86 @@ export async function runTick(
     }
   }
 
+  // --- Step 11b: demand stall detection & mitigation ----------------------
+  // See demand_stall_detection_enabled's own comment (systemSettings.ts)
+  // and evaluateDemandStall's own comment for the real, confirmed live
+  // problem this fixes: a demanding zone whose vent Flair confirms
+  // reaching a real commanded position, but whose room shows no genuine
+  // improvement anyway — the call keeps running indefinitely for a zone
+  // that can never actually benefit, wasting energy on every sibling zone
+  // sharing it. Skipped entirely while disarmed, same as vent misalignment
+  // above. NOT gated on callActive either, for the same reason — see
+  // evaluateDemandStall's own callActive comment.
+  const demandStallNextStateByZoneId = new Map<string, DemandStallState>();
+  const demandStalledByZoneId = new Map<string, boolean>();
+  if (ctx.settings.demand_stall_detection_enabled && !controlDisarmed) {
+    for (const zone of zones) {
+      if (!isControllable(zone.ventHardwareType)) continue;
+      const ventReadings = readings.get(zone.id)?.vents ?? [];
+      if (ventReadings.length === 0) continue;
+      const prior: DemandStallState = {
+        windowSinceMs: parseIsoOrNull(zone.state.demand_stall_window_since),
+        windowStartTempC: zone.state.demand_stall_window_start_temp,
+        recalibratingSinceMs: parseIsoOrNull(
+          zone.state.demand_stall_recalibrating_since,
+        ),
+        lastRecalibratedAtMs: parseIsoOrNull(
+          zone.state.demand_stall_last_recalibrated_at,
+        ),
+        stalledSinceMs: parseIsoOrNull(zone.state.demand_stalled_since),
+      };
+      const wasStalled = prior.stalledSinceMs !== null;
+      const evaluation = evaluateDemandStall({
+        nowMs: startedAtMs,
+        hvacState: effectiveCallState,
+        callActive,
+        classification: pipelineResult.classifications[zone.id] ?? "inactive",
+        calibratedTempC: readings.get(zone.id)!.room.calibratedTemp,
+        prior,
+        tempThresholdC: ctx.settings.demand_stall_temp_threshold_c,
+        detectionMs: ctx.settings.demand_stall_detection_minutes * 60000,
+        cooldownMs:
+          ctx.settings.demand_stall_recalibration_cooldown_hours * 3600000,
+        maxOpenWaitMs: ctx.settings.demand_stall_max_open_wait_minutes * 60000,
+        allVentsReportedOpenEnough: ventReadings.every(
+          (v) => (v.reportedPositionPct ?? 0) >= 90,
+        ),
+      });
+      demandStallNextStateByZoneId.set(zone.id, evaluation.next);
+      demandStalledByZoneId.set(zone.id, evaluation.stalled);
+
+      if (evaluation.stalled && !wasStalled) {
+        logDemandStallDetected(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zone.id,
+          hvac_state: hvac.state,
+          window_start_temp_c: prior.windowStartTempC ?? 0,
+          current_temp_c: readings.get(zone.id)!.room.calibratedTemp ?? 0,
+          temp_delta_c:
+            (readings.get(zone.id)!.room.calibratedTemp ?? 0) -
+            (prior.windowStartTempC ?? 0),
+          threshold_c: ctx.settings.demand_stall_temp_threshold_c,
+        });
+      } else if (!evaluation.stalled && wasStalled) {
+        logDemandStallCleared(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zone.id,
+        });
+      }
+
+      if (evaluation.action.kind === "force_open") {
+        finalPositions[zone.id] = 100;
+      } else if (evaluation.action.kind === "recalibration_finished") {
+        logDemandStallRecalibration(log, {
+          air_handler_id: airHandler.id,
+          zone_id: zone.id,
+          outcome: evaluation.action.outcome,
+          waited_ms: startedAtMs - (prior.recalibratingSinceMs ?? startedAtMs),
+        });
+      }
+    }
+  }
+
   // --- Steps 12-13: dispatch ------------------------------------------
   // Per vent, not per zone — every vent in a zone is ganged to the same
   // target, but dispatches/reconciles/persists independently, since one
@@ -2322,6 +2415,34 @@ export async function runTick(
             vent_misalignment_recalibration_history:
               zone.state.vent_misalignment_recalibration_history,
           }),
+      // Same absent-means-unchanged fallback as vent misalignment above —
+      // absent from demandStallNextStateByZoneId means the feature is
+      // off, disarmed, or this zone was skipped this tick.
+      ...(demandStallNextStateByZoneId.has(zone.id)
+        ? (() => {
+            const next = demandStallNextStateByZoneId.get(zone.id)!;
+            return {
+              demand_stall_window_since: toIsoOrNull(next.windowSinceMs),
+              demand_stall_window_start_temp: next.windowStartTempC,
+              demand_stall_recalibrating_since: toIsoOrNull(
+                next.recalibratingSinceMs,
+              ),
+              demand_stall_last_recalibrated_at: toIsoOrNull(
+                next.lastRecalibratedAtMs,
+              ),
+              demand_stalled_since: toIsoOrNull(next.stalledSinceMs),
+            };
+          })()
+        : {
+            demand_stall_window_since: zone.state.demand_stall_window_since,
+            demand_stall_window_start_temp:
+              zone.state.demand_stall_window_start_temp,
+            demand_stall_recalibrating_since:
+              zone.state.demand_stall_recalibrating_since,
+            demand_stall_last_recalibrated_at:
+              zone.state.demand_stall_last_recalibrated_at,
+            demand_stalled_since: zone.state.demand_stalled_since,
+          }),
     });
   }
 
@@ -2391,11 +2512,14 @@ export async function runTick(
                 ?.degraded ?? false,
             voltage: v.voltage,
             current_rssi: v.currentRssi,
+            duct_temperature_c: v.ductTemperatureC,
+            duct_reading_created_at: v.ductReadingCreatedAt,
           }),
         ),
         reason: "",
         vent_misalignment_suspected:
           ventMisalignmentSuspectedByZoneId.get(zone.id) ?? false,
+        demand_stalled: demandStalledByZoneId.get(zone.id) ?? false,
       };
     }),
     contention: pipelineResult.contention,
@@ -2578,11 +2702,14 @@ function buildFaultDecision(
             degraded: false,
             voltage: null,
             current_rssi: null,
+            duct_temperature_c: null,
+            duct_reading_created_at: null,
           }))
         : [],
       reason:
         "Emergency fail-safe active — forced open, bypassing all other logic.",
       vent_misalignment_suspected: false,
+      demand_stalled: false,
     })),
     contention: null,
     pressure: null,

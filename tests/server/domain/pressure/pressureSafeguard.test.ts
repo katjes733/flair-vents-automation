@@ -104,6 +104,7 @@ describe("clampToPressureFloor", () => {
       [{ zoneId: "a", position: 50, maxVentPosition: 100, flowRateLps: 100 }],
       500,
       500,
+      null,
     );
     expect(result.clamped).toBe(false);
   });
@@ -123,7 +124,7 @@ describe("clampToPressureFloor", () => {
         flowRateLps: 100,
       },
     ];
-    const result = clampToPressureFloor(ranked, 0, 50);
+    const result = clampToPressureFloor(ranked, 0, 50, null);
     expect(result.positions["high-priority"]).toBeGreaterThan(0);
     expect(result.positions["low-priority"]).toBeUndefined();
   });
@@ -132,7 +133,7 @@ describe("clampToPressureFloor", () => {
     const ranked = [
       { zoneId: "a", position: 100, maxVentPosition: 100, flowRateLps: 100 },
     ];
-    const result = clampToPressureFloor(ranked, 0, 500);
+    const result = clampToPressureFloor(ranked, 0, 500, null);
     expect(result.insufficient).toBe(true);
   });
 
@@ -140,8 +141,37 @@ describe("clampToPressureFloor", () => {
     const ranked = [
       { zoneId: "a", position: 0, maxVentPosition: 100, flowRateLps: 0 },
     ];
-    const result = clampToPressureFloor(ranked, 0, 50);
+    const result = clampToPressureFloor(ranked, 0, 50, null);
     expect(result.insufficient).toBe(true);
     expect(Number.isNaN(result.positions["a"] ?? 0)).toBe(false);
+  });
+
+  // Regression coverage for discrete_position_step_pct's own real gap:
+  // this function used to compute an unquantized float regardless of any
+  // grid the rest of the pipeline was enforcing — see
+  // clampToPressureFloor's own quantizeStepPct comment.
+  it("quantizes a reopened position UP to the effective step, never to nearest", () => {
+    const ranked = [
+      { zoneId: "a", position: 0, maxVentPosition: 100, flowRateLps: 100 },
+    ];
+    // Raw computed reopen is exactly 60% (60 of a 100 Lps-rated vent) —
+    // round-to-nearest-25 would give 50 (still short of the 60 Lps
+    // floor), so this proves it rounds up to 75 instead.
+    const result = clampToPressureFloor(ranked, 0, 60, 25);
+    expect(result.positions["a"]).toBe(75);
+  });
+
+  it("uses the actual quantized amount, not the raw pre-quantize estimate, when deciding whether a lower-priority zone still needs to open", () => {
+    const ranked = [
+      { zoneId: "high", position: 0, maxVentPosition: 100, flowRateLps: 100 },
+      { zoneId: "low", position: 0, maxVentPosition: 100, flowRateLps: 100 },
+    ];
+    // The raw reopen for "high" is exactly 60%, still short of the 60 Lps
+    // floor on its own — but rounding UP to the nearest 25 (75%) actually
+    // delivers 75 Lps, already past the floor, so "low" should never be
+    // asked to open at all.
+    const result = clampToPressureFloor(ranked, 0, 60, 25);
+    expect(result.positions["high"]).toBe(75);
+    expect(result.positions["low"]).toBeUndefined();
   });
 });

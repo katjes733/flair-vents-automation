@@ -16,6 +16,7 @@ function candidate(
     deviation: 1,
     priorityRank: 0,
     occupied: false,
+    demandStalled: false,
     ...overrides,
   };
 }
@@ -125,6 +126,36 @@ describe("selectDrivingZone — dynamic selection", () => {
       ...hysteresis,
     });
     expect(result).toEqual({ zoneId: null, reason: "none_eligible" });
+  });
+
+  // Regression coverage for demand stall detection (demandStall.ts): a
+  // demanding zone stuck with no genuine improvement must not keep
+  // driving the call just because it's technically still "demanding" —
+  // see evaluateDemandStall's own comment for the real incident this
+  // fixes (Martin Office, 2026-09-15).
+  it("excludes a demanding zone that's demand-stalled from eligibility, even if it's the only candidate", () => {
+    const result = selectDrivingZone({
+      candidates: [candidate({ demanding: true, demandStalled: true })],
+      explicitOverrideZoneId: null,
+      currentlyTracked: null,
+      ticksSinceLeadChanged: 0,
+      ...hysteresis,
+    });
+    expect(result).toEqual({ zoneId: null, reason: "none_eligible" });
+  });
+
+  it("picks a healthy demanding zone over a demand-stalled one even if the stalled zone is worse-off", () => {
+    const result = selectDrivingZone({
+      candidates: [
+        candidate({ zoneId: "stalled", deviation: 5, demandStalled: true }),
+        candidate({ zoneId: "healthy", deviation: 1, demandStalled: false }),
+      ],
+      explicitOverrideZoneId: null,
+      currentlyTracked: null,
+      ticksSinceLeadChanged: 0,
+      ...hysteresis,
+    });
+    expect(result.zoneId).toBe("healthy");
   });
 });
 

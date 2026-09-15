@@ -83,6 +83,11 @@ describe("updateZoneState", () => {
       vent_misalignment_recalibrating_since: null,
       vent_misalignment_last_recalibrated_at: null,
       vent_misalignment_recalibration_history: [],
+      demand_stall_window_since: null,
+      demand_stall_window_start_temp: null,
+      demand_stall_recalibrating_since: null,
+      demand_stall_last_recalibrated_at: null,
+      demand_stalled_since: null,
     });
     expect(update).toHaveBeenCalledWith(
       "z1",

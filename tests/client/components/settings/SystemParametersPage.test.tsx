@@ -94,7 +94,7 @@ describe("SystemParametersPage", () => {
     renderPage();
     await screen.findByLabelText("Staleness threshold (min)");
     expect(
-      screen.getByText("Show advanced parameters (53 hidden)"),
+      screen.getByText("Show advanced parameters (54 hidden)"),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch"));
@@ -104,7 +104,7 @@ describe("SystemParametersPage", () => {
       screen.getByText("Dynamic thermal spike detection"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Show advanced parameters (53 shown)"),
+      screen.getByText("Show advanced parameters (54 shown)"),
     ).toBeInTheDocument();
     expect(localStorage.getItem("systemParametersShowAdvanced")).toBe("true");
   });

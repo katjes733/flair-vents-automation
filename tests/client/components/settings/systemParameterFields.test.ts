@@ -129,6 +129,19 @@ describe("toDisplayString / fromDisplayString", () => {
     expect(fromDisplayString("boolean", "true", F)).toBe(true);
     expect(fromDisplayString("boolean", "false", F)).toBe(false);
   });
+
+  // Regression coverage for the "nullableEnum" kind added for
+  // discrete_position_step_pct: unlike plain "enum" (a raw string
+  // pass-through, correct for a string-valued field like bucket_mode),
+  // this field's real schema type is a number or null — sending the
+  // literal string "25" instead of the number 25 would fail server-side
+  // validation.
+  it("round-trips a nullableEnum kind through numeric option strings as real numbers, and its off option as null", () => {
+    expect(toDisplayString("nullableEnum", 25, F)).toBe("25");
+    expect(toDisplayString("nullableEnum", null, F)).toBe("");
+    expect(fromDisplayString("nullableEnum", "25", F)).toBe(25);
+    expect(fromDisplayString("nullableEnum", "", F)).toBeNull();
+  });
 });
 
 describe("sameDisplayValue", () => {
@@ -157,6 +170,12 @@ describe("sameDisplayValue", () => {
     expect(sameDisplayValue("enum", "bucket_major", "priority_only")).toBe(
       false,
     );
+  });
+
+  it("compares nullableEnum by exact string equality too, including its off option", () => {
+    expect(sameDisplayValue("nullableEnum", "25", "25")).toBe(true);
+    expect(sameDisplayValue("nullableEnum", "", "")).toBe(true);
+    expect(sameDisplayValue("nullableEnum", "25", "50")).toBe(false);
   });
 
   it("compares boolean by exact string equality, same as enum/text", () => {

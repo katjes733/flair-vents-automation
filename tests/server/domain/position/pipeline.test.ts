@@ -56,6 +56,7 @@ const settings = {
   // no-op (step=1) while the ramp itself never limits movement, so these
   // tests isolate Steps 1/3 rather than Step 2's own ramp behavior.
   modulationStepPct: 1,
+  discretePositionStepPct: null,
   maxStepsPerTick: 1000,
   // Zero dwell — every zone() fixture starts with previousClassification:
   // null anyway (immediate adoption regardless of stabilization minutes),

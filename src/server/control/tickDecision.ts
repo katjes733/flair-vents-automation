@@ -28,6 +28,19 @@ export interface VentTickDecision {
   // snapshot (the fault short-circuit) or a vent not yet visible.
   voltage: number | null;
   current_rssi: number | null;
+  // Added purely for historical visibility into a real, unresolved
+  // question: whether this duct segment's own temperature reacts to actual
+  // airflow meaningfully faster than the whole room's does, for a vent
+  // Flair claims is at/near closed. Not yet consumed by any detection
+  // logic (see evaluateVentMisalignment, which still keys off room-temp
+  // drift alone) — logging first, deciding whether it's a usable signal
+  // second, once a real "vent lying about its position" incident happens
+  // again and both timelines can be compared side by side. Flair's own
+  // duct-reading refresh cadence is unconfirmed and may itself be no
+  // faster than the room reading, in which case this wouldn't help either
+  // — that's exactly what logging it is meant to find out.
+  duct_temperature_c: number | null;
+  duct_reading_created_at: string | null;
 }
 
 // The exhaustive per-tick record — see "Comprehensive tick decision
@@ -68,6 +81,13 @@ export interface ZoneTickDecision {
   // finishes, false whenever the feature is off/disarmed or this zone
   // isn't being tracked this tick.
   vent_misalignment_suspected: boolean;
+  // See demand_stall_detection_enabled's own comment (systemSettings.ts)
+  // — true from the tick a demanding zone with no genuine improvement is
+  // first detected through whichever later tick shows real progress
+  // again. While true, this zone is excluded from driving-zone
+  // eligibility (isEligible(), drivingZone.ts). False whenever the
+  // feature is off/disarmed or this zone isn't being tracked this tick.
+  demand_stalled: boolean;
 }
 
 export interface AirHandlerTickDecision {
