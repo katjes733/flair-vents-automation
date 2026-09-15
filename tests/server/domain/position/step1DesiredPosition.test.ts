@@ -14,6 +14,7 @@ function base(
     maxVentPosition: 100,
     thermalLoadFlags: [],
     demanding: false,
+    wasDemanding: false,
     state: "COOLING_CALL",
     calibratedTemp: asAbsoluteTemp(21),
     resolvedSetpoint: asAbsoluteTemp(21),
@@ -258,6 +259,79 @@ describe("computeDesiredPosition", () => {
     // The satisfied (closing) branch ran — desired position stays pinned at
     // idleBaselinePosition (0 here), never ramping up toward the ceiling.
     expect(result.desiredPosition).toBe(0);
+  });
+
+  // Regression coverage for a real, confirmed incident (2026-09-15, Martin
+  // Office): a zone that's already demanding stayed correctly classified
+  // that way per classifyZone's own asymmetric hysteresis, but this ramp
+  // kept anchoring to demandToleranceC regardless — computing a near-zero
+  // effectiveDemand (floored to a bare trickle) for the entire stretch
+  // between setpoint and setpoint+demandTolerance, even though the zone
+  // was actively, currently demanding there. A zone stuck on a trickle
+  // that can't finish closing a real gap never crosses back to satisfied,
+  // which can keep the whole air handler's call running indefinitely.
+  describe("an already-demanding zone keeps scaling off the full deviation, not just the entry threshold", () => {
+    it("computes a meaningfully larger position once wasDemanding is true, for the exact same deviation", () => {
+      const fixture = {
+        idleBaselinePosition: 0,
+        demanding: true,
+        demandTolerance: asTempDelta(0.56),
+        overshootTolerance: null,
+        // deviation = 0.5°C — inside demandTolerance (0.56), so a fresh
+        // entry would compute ~zero effective demand (floored to a
+        // trickle), but the zone is genuinely, currently demanding.
+        calibratedTemp: asAbsoluteTemp(21.5),
+      };
+      const freshEntry = computeDesiredPosition(
+        base({ ...fixture, wasDemanding: false }),
+      );
+      const alreadyDemanding = computeDesiredPosition(
+        base({ ...fixture, wasDemanding: true }),
+      );
+      expect(freshEntry.desiredPosition).toBe(10); // demand floor only
+      expect(freshEntry.clampedBy).toBe("demand_floor");
+      // effectiveDemand = 0.5 - (-0) = 0.5; ratio = 0.5/1.67 ≈ 0.30.
+      expect(alreadyDemanding.desiredPosition).toBeCloseTo(30, 0);
+      expect(alreadyDemanding.clampedBy).toBeNull();
+    });
+
+    it("keeps scaling all the way down to zero exactly at the point classifyZone would flip it back to satisfied", () => {
+      const result = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 0,
+          demanding: true,
+          wasDemanding: true,
+          demandTolerance: asTempDelta(0.56),
+          overshootTolerance: null,
+          // deviation = 0 — exactly setpoint, classifyZone's own edge for
+          // an already-demanding zone to go satisfied (-overshootToleranceC
+          // = 0 here).
+          calibratedTemp: asAbsoluteTemp(21),
+        }),
+      );
+      // demand_floor still applies (0 while genuinely demanding is still
+      // disallowed) — the point is the *ratio* itself bottoms out here,
+      // not that the position reaches a literal 0.
+      expect(result.clampedBy).toBe("demand_floor");
+    });
+
+    it("preserves continuity at the fresh-entry transition itself — wasDemanding only changes behavior on the tick after", () => {
+      // At exactly the entry threshold, a fresh entry's ratio is 0 by
+      // construction (matching the satisfied branch's own flat output
+      // right up to this same point) — confirming the asymmetric edge
+      // doesn't retroactively change anything about that first tick.
+      const result = computeDesiredPosition(
+        base({
+          idleBaselinePosition: 0,
+          demanding: true,
+          wasDemanding: false,
+          demandTolerance: asTempDelta(0.56),
+          overshootTolerance: null,
+          calibratedTemp: asAbsoluteTemp(21.56),
+        }),
+      );
+      expect(result.clampedBy).toBe("demand_floor");
+    });
   });
 
   // Regression coverage for a real gap found live: a satisfied zone

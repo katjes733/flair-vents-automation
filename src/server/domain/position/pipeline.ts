@@ -412,6 +412,7 @@ export function computeZoneCommands(params: {
       maxVentPosition: zone.maxVentPosition,
       thermalLoadFlags: zone.thermalLoadFlags,
       demanding: isDemanding,
+      wasDemanding: zone.previousClassification === "demanding",
       state: effectiveState,
       calibratedTemp: zone.calibratedTemp,
       resolvedSetpoint: zone.resolvedSetpoint,
