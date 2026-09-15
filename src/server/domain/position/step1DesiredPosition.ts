@@ -18,6 +18,12 @@ export interface DesiredPositionInput {
   // call, so a single-tick noise blip in the raw reading can't flip which
   // branch runs here out from under the caller's own hysteresis dwell.
   demanding: boolean;
+  // Whether the *previous* tick's own stabilized classification was
+  // already "demanding" — i.e. classifyZone's own `wasDemanding`, mirrored
+  // here for the ramp's benefit. See the demanding branch's own comment on
+  // why this needs its own asymmetric edge, same as classifyZone already
+  // has for the label itself.
+  wasDemanding: boolean;
   state: HvacCallState;
   calibratedTemp: AbsoluteTemp;
   resolvedSetpoint: AbsoluteTemp;
@@ -57,7 +63,10 @@ export interface DesiredPositionResult {
  * COOLING_CALL; distant_high_duct_loss additionally persists into
  * HEATING_CALL (direction-agnostic), while high_internal_heat_load instead
  * inverts to a choke override in HEATING_CALL (along with any actively
- * spiking zone).
+ * spiking zone). The demanding branch's own effective tolerance edge is
+ * asymmetric once a zone is already demanding, not just on fresh entry —
+ * see its own comment for why (a real "AC runs forever, starved zone never
+ * reaches setpoint" incident this fixes).
  */
 export function computeDesiredPosition(
   i: DesiredPositionInput,
@@ -135,7 +144,48 @@ export function computeDesiredPosition(
     };
   }
 
-  const effectiveDemand = Math.max(0, deviation - demandToleranceC);
+  // A real, confirmed incident (2026-09-15, Martin Office): a zone that's
+  // *already* demanding stayed classified that way — correctly, per
+  // classifyZone's own asymmetric hysteresis, which only requires
+  // `deviation > -overshootToleranceC` (not the full demandToleranceC) to
+  // *stay* demanding once it's already there — while this ramp kept
+  // anchoring to demandToleranceC regardless, computing an effectiveDemand
+  // near zero for the entire stretch between setpoint and
+  // setpoint+demandTolerance. The result: a zone labeled "Demanding" but
+  // floored to a bare trickle, with real, non-trivial deviation left to
+  // close (e.g. a genuine 0.9°F short of setpoint computed only a 10%
+  // target). If that trickle isn't enough real airflow to finish the job,
+  // the zone can plateau indefinitely in that band — never accumulating
+  // enough cooling to cross back to satisfied, never getting more than a
+  // trickle because the ramp thinks demand is basically zero — which keeps
+  // the whole air handler's call alive forever and overcools every other
+  // (especially manual/uncontrolled) zone sharing it. A real thermostat's
+  // deadband governs only *when* to start/stop calling; it doesn't also
+  // throttle back effort mid-call just because the remaining gap happens
+  // to be smaller than the entry threshold. This mirrors that: once a zone
+  // is *already* demanding (not freshly entering this tick), the ramp
+  // switches to the same edge classifyZone itself would use to let the
+  // zone go satisfied again (-overshootToleranceC, i.e. literal setpoint
+  // when overshoot is 0) — so it keeps pushing real, meaningfully-scaled
+  // airflow all the way down to the point that would actually satisfy it,
+  // not just down to the entry threshold. Continuity at the fresh-entry
+  // transition itself is preserved (demandToleranceC still governs that
+  // one tick, matching the satisfied branch's own flat idleBaselinePosition
+  // output for the entire deviation-in-(-(overshoot), demandTolerance]
+  // range) — the one-tick step up in ambition the tick after genuinely
+  // confirmed, sustained demand is deliberate, not noise-driven: it only
+  // fires once per demand episode, gated on the same already-stabilized
+  // signal classifyZone's own hysteresis uses, never on raw per-tick
+  // wobble. To verify this actually closes the gap in practice (not just
+  // in theory): pull a zone's tick-decision history for an episode where
+  // it enters demanding and confirm desired_position_pct now scales with
+  // the full remaining deviation, and that temp_calibrated actually
+  // reaches resolved_setpoint rather than plateauing partway — the same
+  // Loki-query method used to diagnose the original incident.
+  const effectiveToleranceC = i.wasDemanding
+    ? -overshootToleranceC
+    : demandToleranceC;
+  const effectiveDemand = Math.max(0, deviation - effectiveToleranceC);
   const ratio =
     effectiveBand > 0 ? Math.min(1, effectiveDemand / effectiveBand) : 1;
   let desiredPosition =
