@@ -412,6 +412,7 @@ export function computeZoneCommands(params: {
         maxPositionPct: params.settings.maxPositionPct,
         modifierBoosts: params.settings.modifierBoosts,
         heatingChokePositionPct: params.settings.heatingChokePositionPct,
+        modulationStepPct: params.settings.modulationStepPct,
       },
     });
 

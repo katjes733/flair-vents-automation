@@ -34,6 +34,11 @@ export interface DesiredPositionInput {
     maxPositionPct: number;
     modifierBoosts: ModifierBoosts;
     heatingChokePositionPct: number;
+    // Reused here as the demanding branch's own minimum step above
+    // idleBaselinePosition — see the demand-floor comment below. Same
+    // grid Step 2 (rampTowardTarget) quantizes to; deliberately not a
+    // separate setting of its own.
+    modulationStepPct: number;
   };
 }
 
@@ -137,6 +142,25 @@ export function computeDesiredPosition(
     i.idleBaselinePosition + (maxPositionPct - i.idleBaselinePosition) * ratio;
   let clampedBy: string | null = null;
 
+  // Demand floor: "demanding" and "satisfied" are supposed to be
+  // operationally distinct states, not just labels — a zone whose ratio
+  // rounds down near 0 here computes the *same* position a satisfied zone
+  // rests at, which means it never actually pursues comfort and is left
+  // hoping incidental leakage from a sibling zone's ducting happens to
+  // help (confirmed live: Martin Bedroom sat "demanding" for 53 straight
+  // minutes at a literal 0% target once comfort_idle_baseline_position
+  // moved to 0, since ratio≈0 near the demand-tolerance edge now lands
+  // exactly on idleBaselinePosition instead of the old 100%-default idle
+  // baseline that accidentally made this a non-issue). Applied *before*
+  // the heating-choke safety clamp below, deliberately — the choke's job
+  // is to cap the position back down regardless of how it got here, so it
+  // must keep final say even over this floor.
+  const demandFloor = i.idleBaselinePosition + i.settings.modulationStepPct;
+  if (desiredPosition < demandFloor) {
+    desiredPosition = demandFloor;
+    clampedBy = "demand_floor";
+  }
+
   const chokeCandidate =
     i.state === "HEATING_CALL" &&
     (i.thermalLoadFlags.includes("high_internal_heat_load") || i.spiking);
@@ -145,12 +169,16 @@ export function computeDesiredPosition(
     clampedBy = "heating_choke";
   }
 
+  // Unconditional from here on (not `?? clampedBy`) — with the demand
+  // floor above now able to fire before either of these, clampedBy should
+  // always reflect whichever clamp actually determined the *final* value,
+  // not just whichever fired first.
   if (desiredPosition < i.minVentPosition) {
     desiredPosition = i.minVentPosition;
-    clampedBy = clampedBy ?? "zone_min";
+    clampedBy = "zone_min";
   } else if (desiredPosition > i.maxVentPosition) {
     desiredPosition = i.maxVentPosition;
-    clampedBy = clampedBy ?? "zone_max";
+    clampedBy = "zone_max";
   }
 
   return { desiredPosition, deviation, clampedBy };

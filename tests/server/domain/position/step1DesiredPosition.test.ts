@@ -31,6 +31,7 @@ function base(
         distantHighDuctLoss: 0.3,
       },
       heatingChokePositionPct: 20,
+      modulationStepPct: 10,
     },
     ...overrides,
   };
@@ -135,11 +136,13 @@ describe("computeDesiredPosition", () => {
       base({
         idleBaselinePosition: 0,
         demanding: true,
-        minVentPosition: 10,
+        // Above idleBaselinePosition + modulationStepPct (10) so this
+        // exercises zone_min itself, not just the demand floor below it.
+        minVentPosition: 20,
         calibratedTemp: asAbsoluteTemp(21.01),
       }),
     );
-    expect(result.desiredPosition).toBe(10);
+    expect(result.desiredPosition).toBe(20);
     expect(result.clampedBy).toBe("zone_min");
   });
 
@@ -154,6 +157,58 @@ describe("computeDesiredPosition", () => {
     );
     expect(result.desiredPosition).toBe(50);
     expect(result.clampedBy).toBe("zone_max");
+  });
+
+  // Regression coverage for a real incident: Martin Bedroom sat
+  // "demanding" for 53 straight minutes at a literal 0% target overnight
+  // once comfort_idle_baseline_position moved to 0 — a deviation only
+  // just past demandTolerance computed a ratio near 0, landing exactly on
+  // idleBaselinePosition instead of some meaningfully-open position.
+  it("floors a barely-demanding zone at one step above idle baseline instead of collapsing to it", () => {
+    const result = computeDesiredPosition(
+      base({
+        idleBaselinePosition: 0,
+        demanding: true,
+        demandTolerance: asTempDelta(0.56),
+        // deviation = 0.61, only just past demandTolerance — the raw ratio
+        // alone would compute well under one modulation step (10).
+        calibratedTemp: asAbsoluteTemp(21.61),
+      }),
+    );
+    expect(result.desiredPosition).toBe(10);
+    expect(result.clampedBy).toBe("demand_floor");
+  });
+
+  it("leaves a substantially-demanding zone's own ratio alone — the floor only raises, never lowers", () => {
+    const result = computeDesiredPosition(
+      base({
+        idleBaselinePosition: 0,
+        demanding: true,
+        calibratedTemp: asAbsoluteTemp(21 + 1.67 / 2), // same fixture as the "scales linearly" test
+      }),
+    );
+    expect(result.desiredPosition).toBeCloseTo(50, 0);
+    expect(result.clampedBy).not.toBe("demand_floor");
+  });
+
+  // The heating choke is a safety ceiling, not just "whichever clamp fired
+  // first" — it must keep final say even over a floor that raised the
+  // position moments earlier in the same call.
+  it("lets the heating choke override the demand floor, not the other way around", () => {
+    const result = computeDesiredPosition(
+      base({
+        idleBaselinePosition: 0,
+        demanding: true,
+        state: "HEATING_CALL",
+        thermalLoadFlags: ["high_internal_heat_load"],
+        // deviation ~0 -> ratio ~0 -> demand floor would raise this to 10,
+        // but a choke ceiling below that must still win.
+        calibratedTemp: asAbsoluteTemp(21),
+        settings: { ...base().settings, heatingChokePositionPct: 5 },
+      }),
+    );
+    expect(result.desiredPosition).toBe(5);
+    expect(result.clampedBy).toBe("heating_choke");
   });
 
   it("pins and warns when the system max is below the zone's own idle baseline", () => {
