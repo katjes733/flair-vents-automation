@@ -81,6 +81,13 @@ export interface ZoneTickDecision {
   // finishes, false whenever the feature is off/disarmed or this zone
   // isn't being tracked this tick.
   vent_misalignment_suspected: boolean;
+  // See demand_stall_detection_enabled's own comment (systemSettings.ts)
+  // — true from the tick a demanding zone with no genuine improvement is
+  // first detected through whichever later tick shows real progress
+  // again. While true, this zone is excluded from driving-zone
+  // eligibility (isEligible(), drivingZone.ts). False whenever the
+  // feature is off/disarmed or this zone isn't being tracked this tick.
+  demand_stalled: boolean;
 }
 
 export interface AirHandlerTickDecision {

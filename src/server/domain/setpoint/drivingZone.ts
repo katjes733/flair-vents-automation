@@ -6,6 +6,12 @@ export interface DrivingZoneCandidate {
   deviation: number; // raw calibrated deviation — never the boosted Step 1 value
   priorityRank: number;
   occupied: boolean;
+  // See evaluateDemandStall's own comment (demandStall.ts) — a demanding
+  // zone whose vent Flair confirms reaching a real commanded position but
+  // whose room shows no genuine improvement anyway. Excluded here so the
+  // call doesn't keep running indefinitely for a zone that can never
+  // actually benefit, at every other zone's expense.
+  demandStalled: boolean;
 }
 
 export type DrivingZoneSelectionReason =
@@ -20,7 +26,7 @@ export interface DrivingZoneSelection {
 }
 
 function isEligible(z: DrivingZoneCandidate): boolean {
-  return z.hasTemperatureSensor && !z.stale && z.demanding;
+  return z.hasTemperatureSensor && !z.stale && z.demanding && !z.demandStalled;
 }
 
 function selectDynamic(params: {

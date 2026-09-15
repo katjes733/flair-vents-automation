@@ -109,6 +109,17 @@ export interface ZoneRuntimeState {
   // undefined, since the server backfills every zone's state against
   // EMPTY_ZONE_RUNTIME_STATE before responding.
   vent_misalignment_recalibration_history: string[];
+  // Demand stall detection — see demand_stall_detection_enabled's own
+  // comment (systemSettings.ts) and evaluateDemandStall (demandStall.ts)
+  // for the mirror-image failure this tracks: a demanding zone whose
+  // vent Flair confirms reaching a real position, but whose room shows
+  // no genuine improvement. Non-null demand_stalled_since means this
+  // zone is currently excluded from driving-zone eligibility.
+  demand_stall_window_since: string | null;
+  demand_stall_window_start_temp: number | null;
+  demand_stall_recalibrating_since: string | null;
+  demand_stall_last_recalibrated_at: string | null;
+  demand_stalled_since: string | null;
 }
 
 /** A zone is degraded if any of its vents are — see "Multi-Vent Zones". */

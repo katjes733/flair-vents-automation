@@ -178,6 +178,48 @@ export const systemSettingsConfigSchema = z.object({
   // flag but does not also warrant an email by default; flip this on only
   // if you want that email too.
   vent_misalignment_alert_enabled: z.boolean().default(false),
+  // Demand stall detection — the mirror-image failure to vent
+  // misalignment above: a *demanding* zone whose vent Flair confirms
+  // reaching a real, meaningfully-open commanded position, but whose room
+  // temperature shows no genuine improvement anyway. Found live (Martin
+  // Office, 2026-09-15): demanding for over an hour, vent confirmed
+  // cycling through 0/10/20/30% the whole time, temp never moved toward
+  // setpoint, and the vent was in fact physically closed regardless of
+  // what Flair reported — the AC kept running the whole time for a zone
+  // that could never actually benefit, wasting real energy on every other
+  // zone sharing the same call. Detection anchors per-zone temp across a
+  // single continuous "demanding, call active" stretch (see
+  // ZoneRuntimeState.demand_stall_window_since/_start_temp), reset the
+  // instant either condition breaks. Unlike vent misalignment, mitigation
+  // doesn't wait on a recalibration attempt to also fail first: the zone
+  // is marked stalled (see demand_stalled_since, read by isEligible() in
+  // drivingZone.ts to exclude it from keeping the call running)
+  // immediately once a detection window elapses with no improvement, and
+  // clears itself the moment a later window shows real progress. A
+  // best-effort force-open home cycle (same shape as vent misalignment's
+  // own) runs in parallel, independently gated by its own cooldown, as a
+  // cheap attempt at an actual fix rather than only working around the
+  // symptom. Defaults to off — like vent misalignment, this changes real
+  // call-continuation behavior, so it ships opt-in.
+  demand_stall_detection_enabled: z.boolean().default(false),
+  // PLACEHOLDER pending real-world tuning — deliberately much shorter
+  // than zone_no_improvement_alert_minutes (45): that alert only ever
+  // fires once a zone is already commanded near its own ceiling, so it
+  // can afford to wait; this fires on a zone that might be sitting at a
+  // low, unremarkable-looking position the whole time; per the live
+  // 2026-09-15 incident this began, waiting 45 minutes (or worse, a full
+  // hour+) to notice — let alone act — is the exact problem being fixed.
+  demand_stall_detection_minutes: z.number().positive().default(12),
+  demand_stall_temp_threshold_c: z.number().positive().default(0.56),
+  // How long a zone must stay clear of a completed (or abandoned, see
+  // demand_stall_max_open_wait_minutes) force-open attempt before another
+  // is tried — independent of demand_stalled_since itself, which is not
+  // gated by this cooldown at all (see the feature's own comment above).
+  // PLACEHOLDER pending real-world tuning.
+  demand_stall_recalibration_cooldown_hours: z.number().positive().default(4),
+  // Safety timeout on the force-open attempt — mirrors
+  // vent_misalignment_max_open_wait_minutes's own reasoning exactly.
+  demand_stall_max_open_wait_minutes: z.number().positive().default(10),
   // Backstop drift check, compares reported vs. last_target_position every
   // Nth tick (Resolved Design Decisions).
   drift_check_interval_ticks: z.number().int().positive().default(10),

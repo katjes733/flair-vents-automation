@@ -102,6 +102,31 @@ export interface ZoneRuntimeState {
   // this zone right now" at a glance. See updateRecalibrationHistory's
   // own comment.
   vent_misalignment_recalibration_history: string[];
+  // Demand stall detection (see demand_stall_detection_enabled) — the
+  // mirror-image failure to vent misalignment above: a *demanding* zone
+  // whose vent Flair confirms reaching a real, non-floor commanded
+  // position, but whose room temperature shows no genuine improvement —
+  // found live (Martin Office, 2026-09-15): over an hour demanding,
+  // vent confirmed at 0/10/20/30% throughout, temp never moved toward
+  // setpoint, and the physical vent was in fact fully closed regardless
+  // of what Flair reported. Window fields anchor a *single continuous*
+  // "demanding, call active" stretch, reset to null the instant either
+  // breaks (mirrors vent_misalignment_window_since's own reset shape).
+  // recalibrating_since is non-null only while a best-effort force-open
+  // attempt is in progress. last_recalibrated_at gates
+  // demand_stall_recalibration_cooldown_hours, same shape as the
+  // vent-misalignment cooldown. stalled_since is the actual mitigation
+  // flag — non-null the instant a detection window elapses with no real
+  // improvement (independent of whether a force-open attempt is also in
+  // flight), read by isEligible() (drivingZone.ts) to stop this zone from
+  // being treated as a reason to keep the call running. Cleared the
+  // moment a later window shows genuine improvement — self-healing, no
+  // manual reset needed.
+  demand_stall_window_since: string | null;
+  demand_stall_window_start_temp: number | null;
+  demand_stall_recalibrating_since: string | null;
+  demand_stall_last_recalibrated_at: string | null;
+  demand_stalled_since: string | null;
 }
 
 export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
@@ -127,6 +152,11 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   vent_misalignment_recalibrating_since: null,
   vent_misalignment_last_recalibrated_at: null,
   vent_misalignment_recalibration_history: [],
+  demand_stall_window_since: null,
+  demand_stall_window_start_temp: null,
+  demand_stall_recalibrating_since: null,
+  demand_stall_last_recalibrated_at: null,
+  demand_stalled_since: null,
 };
 
 /** A zone is degraded if any of its vents are — see "Multi-Vent Zones". */

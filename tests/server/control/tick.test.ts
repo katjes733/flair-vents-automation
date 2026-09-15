@@ -3787,6 +3787,170 @@ describe("runTick — vent misalignment auto-recalibration", () => {
   });
 });
 
+describe("runTick — demand stall detection & mitigation", () => {
+  const ALWAYS_ON_SCHEDULE = [
+    {
+      id: "sched-1",
+      installationId: "inst-1",
+      name: "Always on",
+      config: { enabled: true, default_inactive: false },
+      events: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          created_at: "2024-01-01T00:00:00.000Z",
+          modified_at: "2024-01-01T00:00:00.000Z",
+          mode: "active" as const,
+          start_time: "00:00",
+          end_time: "23:59",
+          days_of_week: 0b1111111,
+          zone_settings: [
+            {
+              zone_id: "z1",
+              cool_setpoint: 21,
+              heat_setpoint: 19,
+              assume_occupied: false,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("takes no action by default — the feature is opt-in", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx();
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23,
+        ductC: 22,
+        percentOpen: 100,
+      },
+    ]);
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1" })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    // Same temp, well past the default 12-minute detection window — would
+    // stall if the feature were on.
+    const decision2 = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          state: persisted.get("z1"),
+        }),
+      ],
+      ctx,
+      makeDeps(client, persisted, NOW + 20 * 60000),
+    );
+    const z1 = decision2.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.demand_stalled).toBe(false);
+    expect(persisted.get("z1")?.demand_stalled_since).toBeNull();
+  });
+
+  it("detects a stalled zone once the detection window elapses with no improvement, and force-opens it as a best-effort fix", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ demand_stall_detection_enabled: true });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    // Tick 1: demanding (23°C vs the fixture's fixed 21°C setpoint), vent
+    // already confirmed fully open — starts the detection window.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23,
+        ductC: 22,
+        percentOpen: 100,
+      },
+    ]);
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1" })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+    const afterTick1 = persisted.get("z1")!;
+    expect(afterTick1.demand_stall_window_since).not.toBeNull();
+    expect(afterTick1.demand_stalled_since).toBeNull();
+
+    // Tick 2, past the default 12-minute detection window: same temp, vent
+    // still confirmed fully open — genuinely no progress despite real,
+    // confirmed airflow the whole time.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 23,
+        ductC: 22,
+        percentOpen: 100,
+      },
+    ]);
+    const decision2 = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1", state: afterTick1 })],
+      ctx,
+      makeDeps(client, persisted, NOW + 12 * 60000 + 1000),
+    );
+
+    const z1 = decision2.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.demand_stalled).toBe(true);
+    expect(z1.vents[0]?.commanded_position_pct).toBe(100);
+    expect(persisted.get("z1")?.demand_stalled_since).not.toBeNull();
+  });
+
+  it("self-heals once a later window shows genuine improvement", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ demand_stall_detection_enabled: true });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const stalledState: Partial<ZoneRuntimeState> = {
+      demand_stall_window_since: new Date(NOW - 12 * 60000).toISOString(),
+      demand_stall_window_start_temp: 23,
+      demand_stall_recalibrating_since: null,
+      demand_stall_last_recalibrated_at: new Date(
+        NOW - 12 * 60000,
+      ).toISOString(),
+      demand_stalled_since: new Date(NOW - 12 * 60000).toISOString(),
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 21.5, // genuinely cooled toward the 21°C setpoint
+        ductC: 20,
+        percentOpen: 100,
+      },
+    ]);
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          state: stalledState,
+        }),
+      ],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.demand_stalled).toBe(false);
+    expect(persisted.get("z1")?.demand_stalled_since).toBeNull();
+  });
+});
+
 describe("runTick — capacity sharing", () => {
   const CAPACITY_SHARING_SCHEDULE = [
     {

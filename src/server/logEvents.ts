@@ -228,6 +228,47 @@ export function logVentMisalignmentRecalibration(
   log.info(fields, "Vent misalignment recalibration cycle finished");
 }
 
+export interface DemandStallDetectedFields {
+  air_handler_id: string;
+  zone_id: string;
+  hvac_state: string;
+  window_start_temp_c: number;
+  current_temp_c: number;
+  temp_delta_c: number;
+  threshold_c: number;
+}
+export function logDemandStallDetected(
+  log: Logger,
+  fields: DemandStallDetectedFields,
+): void {
+  log.warn(
+    fields,
+    "Demand stall detected — zone demanding with no improvement, excluded from driving the call",
+  );
+}
+export function logDemandStallCleared(
+  log: Logger,
+  fields: Pick<DemandStallDetectedFields, "air_handler_id" | "zone_id">,
+): void {
+  log.info(
+    fields,
+    "Demand stall cleared — zone showing real improvement again",
+  );
+}
+
+export interface DemandStallRecalibrationFields {
+  air_handler_id: string;
+  zone_id: string;
+  outcome: "opened" | "timed_out";
+  waited_ms: number;
+}
+export function logDemandStallRecalibration(
+  log: Logger,
+  fields: DemandStallRecalibrationFields,
+): void {
+  log.info(fields, "Demand stall force-open attempt finished");
+}
+
 export interface ThermalSpikeFields {
   air_handler_id: string;
   zone_id: string;
