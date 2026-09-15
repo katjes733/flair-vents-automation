@@ -2391,6 +2391,8 @@ export async function runTick(
                 ?.degraded ?? false,
             voltage: v.voltage,
             current_rssi: v.currentRssi,
+            duct_temperature_c: v.ductTemperatureC,
+            duct_reading_created_at: v.ductReadingCreatedAt,
           }),
         ),
         reason: "",
@@ -2578,6 +2580,8 @@ function buildFaultDecision(
             degraded: false,
             voltage: null,
             current_rssi: null,
+            duct_temperature_c: null,
+            duct_reading_created_at: null,
           }))
         : [],
       reason:
