@@ -488,6 +488,54 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           "Send an email each time a vent misalignment is suspected. Off by default — auto-recalibration handles it without intervention, and this is common enough on real hardware that alerting on it would just be noise. History is always visible on the zone's Telemetry page regardless of this setting.",
         tier: "advanced",
       },
+      {
+        path: "demand_stall_detection_enabled",
+        baseLabel: "Demand stall detection",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          "Detects the mirror-image failure to vent misalignment above: a demanding zone whose vent confirms reaching a real commanded position, but whose room shows no genuine improvement anyway. Excludes the zone from driving the call (so the air handler stops running indefinitely for a zone that can't benefit) and attempts a best-effort force-open as a fix, independent of each other. No email alert — check the zone's own tick decision for demand_stalled instead.",
+        tier: "advanced",
+      },
+      {
+        path: "demand_stall_detection_minutes",
+        baseLabel: "Demand stall detection window",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long a demanding zone can show no real temperature improvement before it's flagged stalled. Deliberately much shorter than the no-improvement alert below — this zone might be sitting at a low, unremarkable-looking position the whole time, so waiting 45+ minutes to notice is the exact problem this exists to fix.",
+        tier: "advanced",
+      },
+      {
+        path: "demand_stall_temp_threshold_c",
+        baseLabel: "Demand stall temp threshold",
+        kind: "tempDelta",
+        step: 0.1,
+        description:
+          "How much a demanding zone's temperature has to move toward its setpoint within the detection window above to count as real improvement, not noise.",
+        tier: "advanced",
+      },
+      {
+        path: "demand_stall_recalibration_cooldown_hours",
+        baseLabel: "Demand stall recalibration cooldown",
+        kind: "hours",
+        min: 0,
+        description:
+          "How long to wait after a force-open attempt finishes before trying another for the same zone. Only gates the fix attempt — a zone stays excluded from driving the call for as long as it's genuinely not improving, regardless of this cooldown.",
+        tier: "advanced",
+      },
+      {
+        path: "demand_stall_max_open_wait_minutes",
+        baseLabel: "Demand stall max open wait",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long a force-open attempt will wait for the vent to actually report itself open before giving up and treating the cycle as timed out (still starting the cooldown either way).",
+        tier: "advanced",
+      },
     ],
   },
   {
