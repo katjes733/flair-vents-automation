@@ -42,6 +42,10 @@ export async function dispatchZoneCommand(params: {
   // floor entirely.
   minPosition: number;
   maxPosition: number;
+  // See shouldDispatch's own second bypass clause — a target crossing
+  // above this from a last dispatch at or below it bypasses the min-step
+  // floor too, same reasoning as an extreme.
+  idleBaselinePosition: number;
   reconciliationQueue: ReconciliationQueue;
   nowMs: number;
   actuationDelayMs: number;
@@ -58,6 +62,7 @@ export async function dispatchZoneCommand(params: {
     minStepDeltaPct: params.minStepDeltaPct,
     minPosition: params.minPosition,
     maxPosition: params.maxPosition,
+    idleBaselinePosition: params.idleBaselinePosition,
   });
 
   if (!decision) {

@@ -40,6 +40,7 @@ describe("shouldDispatch", () => {
         minStepDeltaPct: 15,
         minPosition: 0,
         maxPosition: 100,
+        idleBaselinePosition: 0,
       }),
     ).toBe(true);
   });
@@ -52,6 +53,7 @@ describe("shouldDispatch", () => {
         minStepDeltaPct: 15,
         minPosition: 0,
         maxPosition: 100,
+        idleBaselinePosition: 0,
       }),
     ).toBe(true);
   });
@@ -64,6 +66,7 @@ describe("shouldDispatch", () => {
         minStepDeltaPct: 15,
         minPosition: 0,
         maxPosition: 100,
+        idleBaselinePosition: 0,
       }),
     ).toBe(false);
   });
@@ -76,6 +79,7 @@ describe("shouldDispatch", () => {
         minStepDeltaPct: 15,
         minPosition: 0,
         maxPosition: 100,
+        idleBaselinePosition: 0,
       }),
     ).toBe(false);
   });
@@ -94,6 +98,7 @@ describe("shouldDispatch", () => {
           minStepDeltaPct: 15,
           minPosition: 0,
           maxPosition: 100,
+          idleBaselinePosition: 0,
         }),
       ).toBe(true);
     });
@@ -106,6 +111,7 @@ describe("shouldDispatch", () => {
           minStepDeltaPct: 15,
           minPosition: 0,
           maxPosition: 100,
+          idleBaselinePosition: 0,
         }),
       ).toBe(true);
     });
@@ -118,6 +124,7 @@ describe("shouldDispatch", () => {
           minStepDeltaPct: 15,
           minPosition: 20,
           maxPosition: 80,
+          idleBaselinePosition: 0,
         }),
       ).toBe(true);
     });
@@ -130,18 +137,23 @@ describe("shouldDispatch", () => {
           minStepDeltaPct: 15,
           minPosition: 0,
           maxPosition: 100,
+          idleBaselinePosition: 0,
         }),
       ).toBe(false);
     });
 
-    it("does not bypass the floor for a mid-range target, even a small one", () => {
+    // Ordinary mid-range movement (neither endpoint anywhere near idle
+    // baseline) still doesn't bypass the floor — only a genuine departure
+    // FROM idle baseline does (see the next describe block).
+    it("does not bypass the floor for an ordinary mid-range move that never touches idle baseline", () => {
       expect(
         shouldDispatch({
-          targetPosition: 10,
-          lastDispatchedPosition: 0,
+          targetPosition: 35,
+          lastDispatchedPosition: 30,
           minStepDeltaPct: 15,
           minPosition: 0,
           maxPosition: 100,
+          idleBaselinePosition: 0,
         }),
       ).toBe(false);
     });
@@ -154,6 +166,7 @@ describe("shouldDispatch", () => {
           minStepDeltaPct: 15,
           minPosition: 0,
           maxPosition: 100,
+          idleBaselinePosition: 0,
         }),
       ).toBe(true);
     });
@@ -166,8 +179,77 @@ describe("shouldDispatch", () => {
           minStepDeltaPct: 15,
           minPosition: 0,
           maxPosition: 100,
+          idleBaselinePosition: 0,
         }),
       ).toBe(false);
+    });
+  });
+
+  // Regression coverage for a real, confirmed incident: step1DesiredPosition
+  // .ts's demand floor guarantees a barely-demanding zone's computed target
+  // clears idle baseline (e.g. 10% instead of a literal 0), but a last
+  // dispatch sitting at idle baseline (0) meant that 10-point move never
+  // cleared a 15-point min_step_delta_pct floor — the zone stayed
+  // "demanding" with a real, non-zero, floor-guaranteed target that could
+  // never actually reach the vent, indistinguishable from the original bug
+  // from the dashboard's own point of view.
+  describe("a target crossing above idle baseline from a resting dispatch bypasses the min-step floor", () => {
+    it("dispatches the demand floor's own value even though it's under the step-delta threshold", () => {
+      expect(
+        shouldDispatch({
+          targetPosition: 10,
+          lastDispatchedPosition: 0,
+          minStepDeltaPct: 15,
+          minPosition: 0,
+          maxPosition: 100,
+          idleBaselinePosition: 0,
+        }),
+      ).toBe(true);
+    });
+
+    it("does not bypass once the last dispatch already crossed above idle baseline", () => {
+      // The zone already has real airflow (last dispatch was 20, already
+      // above idle baseline 0) — this is now an ordinary mid-range move,
+      // not a "just started trying" transition, so the floor applies
+      // normally.
+      expect(
+        shouldDispatch({
+          targetPosition: 25,
+          lastDispatchedPosition: 20,
+          minStepDeltaPct: 15,
+          minPosition: 0,
+          maxPosition: 100,
+          idleBaselinePosition: 0,
+        }),
+      ).toBe(false);
+    });
+
+    it("does not bypass when the target itself hasn't actually cleared idle baseline", () => {
+      // A satisfied zone closing back down toward idle baseline should
+      // never trigger this — only genuinely leaving idle baseline should.
+      expect(
+        shouldDispatch({
+          targetPosition: 0,
+          lastDispatchedPosition: 0,
+          minStepDeltaPct: 15,
+          minPosition: 0,
+          maxPosition: 100,
+          idleBaselinePosition: 0,
+        }),
+      ).toBe(false);
+    });
+
+    it("respects a non-zero idle baseline", () => {
+      expect(
+        shouldDispatch({
+          targetPosition: 35,
+          lastDispatchedPosition: 25,
+          minStepDeltaPct: 15,
+          minPosition: 0,
+          maxPosition: 100,
+          idleBaselinePosition: 25,
+        }),
+      ).toBe(true);
     });
   });
 });

@@ -810,6 +810,11 @@ export async function runTick(
             minStepDeltaPct: 0, // fail-safe bypasses the step-delta suppressor entirely
             minPosition: zone.config.min_vent_position,
             maxPosition: zone.config.max_vent_position,
+            // Inert here — minStepDeltaPct: 0 above already bypasses both
+            // of shouldDispatch's clauses regardless of position.
+            idleBaselinePosition:
+              zone.config.idle_baseline_position ??
+              ctx.settings.comfort_idle_baseline_position,
             reconciliationQueue: deps.reconciliationQueue,
             nowMs: startedAtMs,
             actuationDelayMs: ACTUATION_DELAY_MS,
@@ -2271,6 +2276,9 @@ export async function runTick(
           minStepDeltaPct: effectiveMinStepDeltaPct,
           minPosition: zone.config.min_vent_position,
           maxPosition: zone.config.max_vent_position,
+          idleBaselinePosition:
+            zone.config.idle_baseline_position ??
+            ctx.settings.comfort_idle_baseline_position,
           reconciliationQueue: deps.reconciliationQueue,
           nowMs: startedAtMs,
           actuationDelayMs: ACTUATION_DELAY_MS,
@@ -2770,6 +2778,7 @@ async function holdAtIdleBaseline(params: {
           minStepDeltaPct: 0,
           minPosition: zone.config.min_vent_position,
           maxPosition: zone.config.max_vent_position,
+          idleBaselinePosition: target,
           reconciliationQueue: deps.reconciliationQueue,
           nowMs: startedAtMs,
           actuationDelayMs: ACTUATION_DELAY_MS,

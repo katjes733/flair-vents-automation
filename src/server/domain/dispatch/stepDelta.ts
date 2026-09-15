@@ -44,6 +44,13 @@ export function shouldDispatch(params: {
   // specifically to avoid noisy tiny corrections.
   minPosition: number;
   maxPosition: number;
+  // The same value step1DesiredPosition.ts's demand floor scales from —
+  // see the second bypass clause below for why this is needed alongside
+  // the extreme-only one above it. A caller with no meaningful concept of
+  // an idle baseline (the fail-safe path, which already passes
+  // minStepDeltaPct: 0 and never reaches either bypass clause) can pass
+  // either extreme; it's inert there either way.
+  idleBaselinePosition: number;
 }): boolean {
   if (params.lastDispatchedPosition === null) return true;
   const meetsFloor =
@@ -61,7 +68,7 @@ export function shouldDispatch(params: {
   // hold) never reaches this branch at all, since meetsFloor is always
   // true for them regardless of position — this only changes behavior
   // for a real, nonzero floor.
-  return (
+  if (
     isAtExtreme(
       params.targetPosition,
       params.minPosition,
@@ -72,6 +79,27 @@ export function shouldDispatch(params: {
       params.minPosition,
       params.maxPosition,
     )
+  ) {
+    return true;
+  }
+  // A real, confirmed gap this fixes: step1DesiredPosition.ts's demand
+  // floor guarantees a barely-demanding zone's *computed* target clears
+  // idleBaselinePosition (never literally 0 while genuinely demanding),
+  // but that guarantee was purely cosmetic if the resulting target still
+  // couldn't clear minStepDeltaPct from a last dispatch sitting AT idle
+  // baseline — a zone stuck at 10% target / confirmed-resting reported
+  // position, "holding" forever whenever demand stays marginal, would
+  // have to fall back on the much slower demand-stall detector to ever
+  // get real airflow, even though nothing about this transition is
+  // ambiguous or noise-prone: crossing from "resting" to "genuinely
+  // trying" is exactly as decisive as landing on an extreme is above, and
+  // deserves the same unconditional dispatch. Guarded the same way the
+  // extreme clause is (only fires while the last dispatch hasn't already
+  // crossed too), so it can't cause a redispatch loop once the vent
+  // actually reflects the floor.
+  return (
+    params.targetPosition > params.idleBaselinePosition &&
+    params.lastDispatchedPosition <= params.idleBaselinePosition
   );
 }
 
