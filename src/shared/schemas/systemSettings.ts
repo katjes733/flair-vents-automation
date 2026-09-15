@@ -56,6 +56,43 @@ export const systemSettingsConfigSchema = z.object({
   // together — validateConfig warns, it doesn't reject (Resolved Design
   // Decisions).
   modulation_step_pct: z.number().positive().default(10),
+  // Opt-in "discrete positions" experiment (default null = off, today's
+  // fine-grained behavior unchanged). Flair's own `percent-open` is
+  // documented as an accumulated motor estimate, not a true position
+  // sensor — the only two positions with a real hard-stop physical
+  // reference are 0% and 100%; every intermediate value is an unverified
+  // estimate that can only drift further from reality with each
+  // subsequent move (confirmed live: Martin Office commanded/confirmed at
+  // 20% while physically closer to 80% open). Flair's own app reportedly
+  // never offers anything but fully open/closed for exactly this reason.
+  // When set, this REPLACES modulation_step_pct as the effective grid for
+  // every finally-committed smart-vent position — both the demanding
+  // branch's own floor (step1DesiredPosition.ts) and Step 2's ramp/
+  // quantize (step2Ramp.ts) — and also as the ramp-rate limit itself, so
+  // a zone commits directly to its next trusted position in one tick
+  // rather than crawling through now-untrusted intermediate values before
+  // snapping. Also closes a real gap this change surfaced: the pressure/
+  // aggregate-flow safeguard's own reopen calculation
+  // (pressureSafeguard.ts) previously computed an unquantized float
+  // always, regardless of this setting — now rounds *up* (never to
+  // nearest, which could under-shoot the very floor it exists to
+  // satisfy) to the nearest multiple of the effective step, but ONLY
+  // while this setting is active. Deliberately not extended to the
+  // plain-modulation_step_pct case even though the same off-grid gap
+  // exists there too: a tiny, functionally-negligible reopen (a fraction
+  // of a percent, e.g. from a near-zero configured floor) is harmless as
+  // an unquantized float on the fine 10%-step grid — confirmed live, this
+  // exact change broke a real vent-misalignment test by turning a
+  // dust-sized 0.002%-open nudge into a disruptive full 10%-open jump
+  // before being scoped down to bucketing-only. 100 = binary (0/100
+  // only, mirroring Flair's own app); 50 = 0/50/100; 25 = 0/25/50/75/100.
+  // Does not affect manual position overrides, manual_fixed_vent, or
+  // no_vent zones — none of those have a software-estimated position to
+  // distrust.
+  discrete_position_step_pct: z
+    .union([z.literal(25), z.literal(50), z.literal(100)])
+    .nullable()
+    .default(null),
   max_steps_per_tick: z.number().int().positive().default(1),
   min_step_delta_pct: z.number().positive().default(15),
   // Quiet actuation: while a zone's currently-active schedule event has

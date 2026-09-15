@@ -1320,6 +1320,7 @@ export async function runTick(
       heatingChokePositionPct: ctx.settings.heating_choke_position_pct,
       unoccupiedIdleFactor: ctx.settings.unoccupied_idle_factor,
       modulationStepPct: ctx.settings.modulation_step_pct,
+      discretePositionStepPct: ctx.settings.discrete_position_step_pct,
       maxStepsPerTick: ctx.settings.max_steps_per_tick,
       classificationStabilizationMinutes:
         ctx.settings.classification_stabilization_minutes,

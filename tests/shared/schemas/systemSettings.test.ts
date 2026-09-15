@@ -13,6 +13,7 @@ describe("resolveSystemSettings", () => {
     expect(settings.max_position_pct).toBe(100);
     expect(settings.modifier_boosts.occupancy).toBeCloseTo(0.3);
     expect(settings.modulation_step_pct).toBe(10);
+    expect(settings.discrete_position_step_pct).toBeNull();
     expect(settings.max_steps_per_tick).toBe(1);
     expect(settings.min_step_delta_pct).toBe(15);
     expect(settings.unoccupied_idle_factor).toBe(0.5);
@@ -51,6 +52,27 @@ describe("resolveSystemSettings", () => {
   it("rejects an out-of-range token budget alert threshold", () => {
     expect(() =>
       resolveSystemSettings({ token_budget_alert_threshold_pct: 150 }),
+    ).toThrow();
+  });
+
+  it("accepts each of the three discrete_position_step_pct presets", () => {
+    expect(
+      resolveSystemSettings({ discrete_position_step_pct: 100 })
+        .discrete_position_step_pct,
+    ).toBe(100);
+    expect(
+      resolveSystemSettings({ discrete_position_step_pct: 50 })
+        .discrete_position_step_pct,
+    ).toBe(50);
+    expect(
+      resolveSystemSettings({ discrete_position_step_pct: 25 })
+        .discrete_position_step_pct,
+    ).toBe(25);
+  });
+
+  it("rejects a discrete_position_step_pct outside the three presets", () => {
+    expect(() =>
+      resolveSystemSettings({ discrete_position_step_pct: 33 }),
     ).toThrow();
   });
 });

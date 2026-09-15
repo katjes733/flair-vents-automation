@@ -33,6 +33,13 @@ export type ParamKind =
   | "seconds"
   | "hours"
   | "enum"
+  // Like "enum", but the stored value is a number (or null for an
+  // explicit "off"/unset option) rather than a string — "enum" itself is
+  // a raw string pass-through (see bucket_mode), which would send the
+  // literal string "25" instead of the number 25 the schema actually
+  // expects. Reusable for any future nullable-literal-set setting, not
+  // just this one.
+  | "nullableEnum"
   | "boolean"
   | "text";
 
@@ -152,7 +159,12 @@ export function toDisplayString(
   storedValue: unknown,
   units: DisplayUnits,
 ): string {
-  if (kind === "text" || kind === "enum" || kind === "boolean")
+  if (
+    kind === "text" ||
+    kind === "enum" ||
+    kind === "nullableEnum" ||
+    kind === "boolean"
+  )
     return String(storedValue ?? "");
   const raw = Number(storedValue);
   if (!Number.isFinite(raw)) return "";
@@ -180,6 +192,8 @@ export function fromDisplayString(
   units: DisplayUnits,
 ): unknown {
   if (kind === "text" || kind === "enum") return displayValue;
+  if (kind === "nullableEnum")
+    return displayValue === "" ? null : Number(displayValue);
   if (kind === "boolean") return displayValue === "true";
   const parsed = Number(displayValue);
   if (!Number.isFinite(parsed)) return NaN;
@@ -218,7 +232,13 @@ export function sameDisplayValue(
   a: string,
   b: string,
 ): boolean {
-  if (kind === "text" || kind === "enum" || kind === "boolean") return a === b;
+  if (
+    kind === "text" ||
+    kind === "enum" ||
+    kind === "nullableEnum" ||
+    kind === "boolean"
+  )
+    return a === b;
   const na = Number(a);
   const nb = Number(b);
   if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
@@ -228,6 +248,15 @@ export function sameDisplayValue(
 const BUCKET_MODE_OPTIONS: ParamFieldOption[] = [
   { value: "bucket_major", label: "Spiking → occupied → unoccupied buckets" },
   { value: "priority_only", label: "Priority order only (no bucketing)" },
+];
+
+// "" (empty string) is this field's off/null sentinel — see toDisplayString/
+// fromDisplayString's "nullableEnum" handling.
+const DISCRETE_POSITION_STEP_OPTIONS: ParamFieldOption[] = [
+  { value: "", label: "Off (continuous, fine-grained)" },
+  { value: "100", label: "0% / 100% only" },
+  { value: "50", label: "0% / 50% / 100%" },
+  { value: "25", label: "0% / 25% / 50% / 75% / 100%" },
 ];
 
 // Every scalar (non-picker) system_settings.config tunable, grouped to
@@ -338,6 +367,15 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         max: 100,
         description:
           "How large one ramp step is, in percentage points, each time a vent moves toward a new target position. Larger steps reach the target faster but move more abruptly.",
+        tier: "advanced",
+      },
+      {
+        path: "discrete_position_step_pct",
+        baseLabel: "Discrete position mode",
+        kind: "nullableEnum",
+        options: DISCRETE_POSITION_STEP_OPTIONS,
+        description:
+          "Flair's own reported vent position is an accumulated motor estimate, not a real sensor reading — only fully open and fully closed have a physical hard-stop to anchor against, so every intermediate value can drift from reality the more it's used. When set, every commanded position (including the pressure safeguard's own reopen logic) is restricted to the chosen set of trusted values instead of ramping continuously.",
         tier: "advanced",
       },
       {

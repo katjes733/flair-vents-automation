@@ -166,6 +166,10 @@ export function computeZoneCommands(params: {
     heatingChokePositionPct: number;
     unoccupiedIdleFactor: number;
     modulationStepPct: number;
+    // See discrete_position_step_pct's own comment (systemSettings.ts) —
+    // null (default) leaves modulationStepPct as the effective grid,
+    // unchanged from today.
+    discretePositionStepPct: 25 | 50 | 100 | null;
     maxStepsPerTick: number;
     classificationStabilizationMinutes: number;
     sleepQuietAnchorEnabled: boolean;
@@ -177,6 +181,14 @@ export function computeZoneCommands(params: {
 }): PipelineResult {
   const callActive =
     params.state === "COOLING_CALL" || params.state === "HEATING_CALL";
+  // See discrete_position_step_pct's own comment — when opted in, this
+  // substitutes for modulationStepPct everywhere a position gets
+  // quantized or ramp-rate-limited below, so a zone commits directly to
+  // its next trusted position rather than crawling through intermediate
+  // values only to have them quantized away.
+  const effectivePositionStepPct =
+    params.settings.discretePositionStepPct ??
+    params.settings.modulationStepPct;
   const commandedPositions: Record<string, number> = {};
   const classifications: Record<string, ZoneClassification | "inactive"> = {};
   const classificationPending: PipelineResult["classificationPending"] = {};
@@ -412,7 +424,7 @@ export function computeZoneCommands(params: {
         maxPositionPct: params.settings.maxPositionPct,
         modifierBoosts: params.settings.modifierBoosts,
         heatingChokePositionPct: params.settings.heatingChokePositionPct,
-        modulationStepPct: params.settings.modulationStepPct,
+        modulationStepPct: effectivePositionStepPct,
       },
     });
 
@@ -532,7 +544,7 @@ export function computeZoneCommands(params: {
     commandedPositions[zoneId] = rampTowardTarget({
       desiredPosition: position,
       lastCommandedTarget: zone.lastCommandedTarget,
-      modulationStepPct: params.settings.modulationStepPct,
+      modulationStepPct: effectivePositionStepPct,
       maxStepsPerTick: params.settings.maxStepsPerTick,
       minVentPosition: zone.minVentPosition,
       maxVentPosition: zone.maxVentPosition,
@@ -574,6 +586,7 @@ export function computeZoneCommands(params: {
     rankedHighestPriorityFirst,
     currentAggregateLps,
     params.floorLps,
+    params.settings.discretePositionStepPct,
   );
   for (const [zoneId, position] of Object.entries(floorResult.positions)) {
     commandedPositions[zoneId] = position;
