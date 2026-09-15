@@ -15,11 +15,20 @@ import { systemSettingsConfigSchema } from "~/shared/schemas/systemSettings";
 
 afterEach(cleanup);
 
-// This page renders ~50 MUI TextFields across 15 Cards — by far the
-// largest single form in the app — which comfortably clears the default
-// 5000ms test timeout on its own but not under v8 coverage instrumentation
-// (bun run test:coverage). Bumped file-wide rather than per-test.
-vi.setConfig({ testTimeout: 15000 });
+// This page renders ~60 MUI TextFields across 15 Cards — by far the
+// largest single form in the app, and still growing as more settings gain
+// UI — which comfortably clears the default 5000ms test timeout in
+// isolation (measured ~5s even under coverage instrumentation) but not
+// under full-suite contention: `bun run test:coverage` runs ~1700+ tests
+// competing for the same worker-thread pool, and this test's own render
+// cost is heavy enough that contention alone pushed it past the previous
+// 15000ms bump (measured ~16-17s locally, on an 11-core machine).
+// GitHub Actions' `ubuntu-latest` runners have only 4 vCPUs — categorically
+// less parallel headroom than local dev — which is why this specifically
+// started failing in CI more than it ever did locally. Bumped file-wide
+// (not per-test) with real margin against that gap; expect to revisit this
+// again as more settings fields land here.
+vi.setConfig({ testTimeout: 30000 });
 
 const { fetchSettings, updateSettings, fetchZones } = vi.hoisted(() => ({
   fetchSettings: vi.fn(),
