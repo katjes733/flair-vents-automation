@@ -142,6 +142,18 @@ describe("toDisplayString / fromDisplayString", () => {
     expect(fromDisplayString("nullableEnum", "25", F)).toBe(25);
     expect(fromDisplayString("nullableEnum", "", F)).toBeNull();
   });
+
+  // Regression coverage for the "nullablePercent" kind added for
+  // dead_zone_recovery_jump_pct: unlike plain "percent" (Number(null) is
+  // 0, and Number("") is also 0 — both would silently coerce an unset
+  // value into a real, distinct-meaning 0 rather than round-tripping it
+  // as blank/null), this field's real schema type is a number or null.
+  it("round-trips a nullablePercent kind through a free-form number, and null as a blank field", () => {
+    expect(toDisplayString("nullablePercent", 50, F)).toBe("50");
+    expect(toDisplayString("nullablePercent", null, F)).toBe("");
+    expect(fromDisplayString("nullablePercent", "50", F)).toBe(50);
+    expect(fromDisplayString("nullablePercent", "", F)).toBeNull();
+  });
 });
 
 describe("sameDisplayValue", () => {
@@ -176,6 +188,12 @@ describe("sameDisplayValue", () => {
     expect(sameDisplayValue("nullableEnum", "25", "25")).toBe(true);
     expect(sameDisplayValue("nullableEnum", "", "")).toBe(true);
     expect(sameDisplayValue("nullableEnum", "25", "50")).toBe(false);
+  });
+
+  it("compares nullablePercent by exact string equality, including a blank field", () => {
+    expect(sameDisplayValue("nullablePercent", "50", "50")).toBe(true);
+    expect(sameDisplayValue("nullablePercent", "", "")).toBe(true);
+    expect(sameDisplayValue("nullablePercent", "50", "35")).toBe(false);
   });
 
   it("compares boolean by exact string equality, same as enum/text", () => {

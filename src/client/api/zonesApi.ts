@@ -53,6 +53,10 @@ export interface ZoneConfig {
   // The FAN_ONLY-specific counterpart — see
   // fan_only_idle_baseline_position's own comment in systemSettings.ts.
   fan_only_idle_baseline_position?: number;
+  // Per-zone override of dead_zone_recovery_jump_pct (systemSettings.ts) —
+  // unset defers to the global setting, same convention as
+  // idle_baseline_position above.
+  dead_zone_recovery_jump_pct?: number;
   // Telemetry-only — excluded from schedule-driven comfort tracking
   // entirely. See zoneConfigSchema's own comment.
   observation_only: boolean;

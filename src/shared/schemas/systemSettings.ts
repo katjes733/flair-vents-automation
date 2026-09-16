@@ -94,6 +94,29 @@ export const systemSettingsConfigSchema = z.object({
     .nullable()
     .default(null),
   max_steps_per_tick: z.number().int().positive().default(1),
+  // Dead-zone recovery: Flair's own vent motors have been observed, on
+  // real hardware, to sit fully unresponsive to ordinary
+  // modulation_step_pct-sized commands for a stretch when first starting
+  // to move away from a hard physical extreme (0%/100%) — confirmed in
+  // both directions (opening from closed and closing from open), with no
+  // consistent/predictable threshold from one occasion to the next (see
+  // docs/adr). Rather than try to calibrate an exact deadzone width, a
+  // zone leaving 0% or 100% jumps straight to this percentage once, then
+  // resumes the normal step-capped ramp from there — even if that
+  // overshoots or undershoots the real target, which the ordinary ramp
+  // then corrects in whichever direction is actually needed. A per-zone
+  // override (zoneConfigSchema's own `dead_zone_recovery_jump_pct`) takes
+  // precedence when set. Null here (an explicitly cleared global setting,
+  // distinct from the default) falls back to an ordinary max-size step
+  // (modulation_step_pct * max_steps_per_tick, or discrete_position_step_pct
+  // in its place) — functionally identical to not having this feature at
+  // all.
+  dead_zone_recovery_jump_pct: z
+    .number()
+    .min(0)
+    .max(100)
+    .nullable()
+    .default(50),
   min_step_delta_pct: z.number().positive().default(15),
   // Quiet actuation: while a zone's currently-active schedule event has
   // Sleep Mode (assume_occupied) set for it, this threshold replaces

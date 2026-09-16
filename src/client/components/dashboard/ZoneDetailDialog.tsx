@@ -98,6 +98,7 @@ export default function ZoneDetailDialog({
     useState<VentHardwareType>("flair_smart_vent");
   const [idleBaseline, setIdleBaseline] = useState("");
   const [fanOnlyIdleBaseline, setFanOnlyIdleBaseline] = useState("");
+  const [deadZoneRecoveryJumpPct, setDeadZoneRecoveryJumpPct] = useState("");
   const [comfortDemandTolerance, setComfortDemandTolerance] = useState("");
   const [comfortOvershootTolerance, setComfortOvershootTolerance] =
     useState("");
@@ -131,6 +132,11 @@ export default function ZoneDetailDialog({
     setFanOnlyIdleBaseline(
       zone.config.fan_only_idle_baseline_position !== undefined
         ? String(zone.config.fan_only_idle_baseline_position)
+        : "",
+    );
+    setDeadZoneRecoveryJumpPct(
+      zone.config.dead_zone_recovery_jump_pct !== undefined
+        ? String(zone.config.dead_zone_recovery_jump_pct)
         : "",
     );
     setComfortDemandTolerance(
@@ -238,6 +244,10 @@ export default function ZoneDetailDialog({
             fanOnlyIdleBaseline.trim() === ""
               ? null
               : Number(fanOnlyIdleBaseline),
+          dead_zone_recovery_jump_pct:
+            deadZoneRecoveryJumpPct.trim() === ""
+              ? null
+              : Number(deadZoneRecoveryJumpPct),
           min_vent_position: Number(minPosition),
           max_vent_position: Number(maxPosition),
           thermal_load_flags: thermalLoadFlags,
@@ -296,6 +306,7 @@ export default function ZoneDetailDialog({
     hasTemperatureSensor,
     idleBaseline,
     fanOnlyIdleBaseline,
+    deadZoneRecoveryJumpPct,
     manualVents,
     maxPosition,
     minPosition,
@@ -431,6 +442,14 @@ export default function ZoneDetailDialog({
                     onChange={(e) => setMaxPosition(e.target.value)}
                   />
                 </Stack>
+                <TextField
+                  label="Dead-zone recovery jump, % (blank = system default)"
+                  type="number"
+                  value={deadZoneRecoveryJumpPct}
+                  onChange={(e) => setDeadZoneRecoveryJumpPct(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="How far this vent jumps in one tick when leaving a fully-open or fully-closed position, to clear real mechanical stiction near either extreme before resuming the normal gradual ramp."
+                />
                 <FormControlLabel
                   control={
                     <Checkbox

@@ -1272,6 +1272,9 @@ export async function runTick(
       fanOnlyIdleBaselinePosition:
         zone.config.fan_only_idle_baseline_position ??
         ctx.settings.fan_only_idle_baseline_position,
+      deadZoneRecoveryJumpPct:
+        zone.config.dead_zone_recovery_jump_pct ??
+        ctx.settings.dead_zone_recovery_jump_pct,
       thermalLoadFlags: zone.config.thermal_load_flags,
       // Sum of each vent's own rating (falling back to the standard
       // default per vent left blank) — the ganged position still means

@@ -420,6 +420,61 @@ describe("ZoneDetailDialog", () => {
     });
   });
 
+  it("shows a blank dead-zone recovery jump as blank, not a stale default", () => {
+    renderDialog(
+      makeZone({
+        config: {
+          ...makeZone().config,
+          dead_zone_recovery_jump_pct: undefined,
+        },
+      }),
+    );
+    expect(screen.getByLabelText(/Dead-zone recovery jump/)).toHaveValue(null);
+  });
+
+  it("saves an explicit dead-zone recovery jump override", async () => {
+    renderDialog(makeZone());
+    fireEvent.change(screen.getByLabelText(/Dead-zone recovery jump/), {
+      target: { value: "35" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateZone).toHaveBeenCalledWith(
+        "z1",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            dead_zone_recovery_jump_pct: 35,
+          }),
+        }),
+      );
+    });
+  });
+
+  it("treats a blank dead-zone recovery jump as unset, deferring to the global default, not zero", async () => {
+    renderDialog(
+      makeZone({
+        config: {
+          ...makeZone().config,
+          dead_zone_recovery_jump_pct: 35,
+        },
+      }),
+    );
+    fireEvent.change(screen.getByLabelText(/Dead-zone recovery jump/), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => {
+      expect(updateZone).toHaveBeenCalledWith(
+        "z1",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            dead_zone_recovery_jump_pct: null,
+          }),
+        }),
+      );
+    });
+  });
+
   // Regression coverage for making vent_hardware_type editable after
   // creation/import — previously fixed at whatever it was set to
   // originally (e.g. `no_vent` for a sync-imported, sensor-only Flair

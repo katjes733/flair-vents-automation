@@ -29,6 +29,12 @@ export type ParamKind =
   | "plainNumber"
   | "int"
   | "percent"
+  // Like "percent", but null (system settings' own "off"/unset state,
+  // distinct from any real value including 0) round-trips through an
+  // empty field rather than being coerced to 0 — see
+  // dead_zone_recovery_jump_pct's own comment (systemSettings.ts) for the
+  // setting this exists for.
+  | "nullablePercent"
   | "minutes"
   | "seconds"
   | "hours"
@@ -139,6 +145,7 @@ export function paramUnitLabel(kind: ParamKind, units: DisplayUnits): string {
           ? "CFM"
           : "m³/h";
     case "percent":
+    case "nullablePercent":
       return "%";
     case "minutes":
       return "min";
@@ -166,6 +173,7 @@ export function toDisplayString(
     kind === "boolean"
   )
     return String(storedValue ?? "");
+  if (kind === "nullablePercent" && storedValue === null) return "";
   const raw = Number(storedValue);
   if (!Number.isFinite(raw)) return "";
   switch (kind) {
@@ -192,7 +200,7 @@ export function fromDisplayString(
   units: DisplayUnits,
 ): unknown {
   if (kind === "text" || kind === "enum") return displayValue;
-  if (kind === "nullableEnum")
+  if (kind === "nullableEnum" || kind === "nullablePercent")
     return displayValue === "" ? null : Number(displayValue);
   if (kind === "boolean") return displayValue === "true";
   const parsed = Number(displayValue);
@@ -236,6 +244,7 @@ export function sameDisplayValue(
     kind === "text" ||
     kind === "enum" ||
     kind === "nullableEnum" ||
+    kind === "nullablePercent" ||
     kind === "boolean"
   )
     return a === b;
@@ -367,6 +376,16 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         max: 100,
         description:
           "How large one ramp step is, in percentage points, each time a vent moves toward a new target position. Larger steps reach the target faster but move more abruptly.",
+        tier: "advanced",
+      },
+      {
+        path: "dead_zone_recovery_jump_pct",
+        baseLabel: "Dead-zone recovery jump",
+        kind: "nullablePercent",
+        min: 0,
+        max: 100,
+        description:
+          "Flair's vent motors have been observed to sit unresponsive to an ordinary ramp step for a stretch when first leaving a fully-open or fully-closed position — real mechanical stiction, with no consistent threshold from one occasion to the next. A zone leaving 0%/100% jumps straight to this percentage once, then resumes the normal gradual ramp from there. Clear this field to fall back to an ordinary max-size step (no special jump). Overridable per zone.",
         tier: "advanced",
       },
       {

@@ -54,6 +54,13 @@ export interface PipelineZoneInput {
   spiking: boolean;
   priorityRank: number;
   lastCommandedTarget: number | null;
+  // Resolved zone-override ?? global dead_zone_recovery_jump_pct
+  // (systemSettings.ts) — already merged by the caller, mirroring
+  // idleBaselinePosition above. `null` means neither level set one (an
+  // explicitly cleared global setting); computeZoneCommands falls back to
+  // an ordinary max-size step in that case, functionally the same as not
+  // having the feature at all.
+  deadZoneRecoveryJumpPct: number | null;
   manualPositionPct: number | null;
   degraded: boolean;
   // Hysteresis inputs for the satisfied/demanding classification boundary
@@ -549,6 +556,13 @@ export function computeZoneCommands(params: {
       maxStepsPerTick: params.settings.maxStepsPerTick,
       minVentPosition: zone.minVentPosition,
       maxVentPosition: zone.maxVentPosition,
+      // Neither override level set one (dead_zone_recovery_jump_pct
+      // explicitly cleared globally, with no zone-level override either)
+      // falls back to an ordinary max-size step — see
+      // rampTowardTarget's own comment.
+      deadZoneRecoveryJumpPct:
+        zone.deadZoneRecoveryJumpPct ??
+        effectivePositionStepPct * params.settings.maxStepsPerTick,
     });
   }
 
