@@ -65,6 +65,11 @@ const settings = {
   modulationStepPct: 1,
   discretePositionStepPct: null,
   maxStepsPerTick: 1000,
+  // "both" here is a harmless default for every pre-existing test in this
+  // file (none of them ever set lastCommandedTarget to a hard extreme) —
+  // the dedicated "dead-zone recovery" describe block below overrides
+  // modulationStepPct/maxStepsPerTick to actually exercise it.
+  deadZoneRecoveryDirection: "both" as const,
   // Zero dwell — every zone() fixture starts with previousClassification:
   // null anyway (immediate adoption regardless of stabilization minutes),
   // so these tests exercise Steps 1-3 without any hysteresis lag; the
@@ -1015,5 +1020,36 @@ describe("computeZoneCommands — dead-zone recovery", () => {
       floorLps: 0,
     });
     expect(result.commandedPositions["z"]).toBe(30);
+  });
+
+  it("respects settings.deadZoneRecoveryDirection — 'open' skips the jump when a zone is closing from fully-open", () => {
+    // A satisfied, non-demanding zone closing toward its (default 100)
+    // idle baseline from a fully-open rest — step2Ramp.test.ts's own
+    // direction-gating tests cover the pure function exhaustively; this
+    // confirms computeZoneCommands actually wires settings.deadZoneRecoveryDirection
+    // through rather than silently defaulting to "both".
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 100,
+          deadZoneRecoveryJumpPct: 50,
+          idleBaselinePosition: 20,
+          calibratedTemp: asAbsoluteTemp(21), // right at setpoint — satisfied
+        }),
+      ],
+      nowMs: 0,
+      settings: {
+        ...settings,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        deadZoneRecoveryDirection: "open",
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // Ordinary one-step ramp toward the idle baseline, not the jump to 50.
+    expect(result.commandedPositions["z"]).toBe(90);
   });
 });

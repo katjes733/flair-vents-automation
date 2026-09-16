@@ -1340,6 +1340,7 @@ export async function runTick(
       modulationStepPct: ctx.settings.modulation_step_pct,
       discretePositionStepPct: ctx.settings.discrete_position_step_pct,
       maxStepsPerTick: ctx.settings.max_steps_per_tick,
+      deadZoneRecoveryDirection: ctx.settings.dead_zone_recovery_direction,
       classificationStabilizationMinutes:
         ctx.settings.classification_stabilization_minutes,
       sleepQuietAnchorEnabled: ctx.settings.sleep_quiet_anchor_enabled,

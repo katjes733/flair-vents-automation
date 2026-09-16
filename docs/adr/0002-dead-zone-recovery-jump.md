@@ -35,3 +35,25 @@ its default) falls back to an ordinary max-size step
 (`modulation_step_pct * max_steps_per_tick`, or `discrete_position_step_pct`
 in its place) — functionally identical to not having this feature at all,
 so there's no separate on/off flag.
+
+## Update: the two directions aren't symmetric in practice
+
+Real-world use surfaced an asymmetry this ADR's original "always both
+directions" design didn't anticipate: closing quickly from a fully-open
+rest (backlash reversing the other way) has been observed to occasionally
+carry a vent almost fully shut — well past the jump's own landing value —
+a different, still-uncharacterized failure mode from the opening side,
+which hasn't shown the same problem.
+
+Added `dead_zone_recovery_direction` (global `open` | `close` | `both`,
+default `open`) to `rampTowardTarget` — gates which extreme(s) actually
+trigger the jump, independent of `dead_zone_recovery_jump_pct`'s own value.
+Deliberately global-only, no per-zone override (unlike the jump percentage
+itself): this exists to let the mechanism be narrowed or widened by
+direction while it's still being characterized on real hardware, not as a
+per-zone tuning knob. The default narrowed from the original "both" to
+"open" only, until the closing-side behavior is better understood.
+
+This is treated as an amendment to the same decision, not a new one: same
+mechanism, same trade-off (jump-then-correct beats calibrating an exact
+threshold), just discovered to need finer scoping than first shipped.
