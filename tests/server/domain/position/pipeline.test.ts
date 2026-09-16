@@ -27,6 +27,13 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     spiking: false,
     priorityRank: 0,
     lastCommandedTarget: null,
+    // null here (no per-zone override) + settings.maxStepsPerTick's huge
+    // 1000 cap below means the pipeline's own fallback resolves to an
+    // effectively unlimited jump size — harmless, since no fixture in this
+    // file sets lastCommandedTarget to a hard extreme (0/100) in the first
+    // place, so dead-zone recovery never actually triggers here. See
+    // step2Ramp.test.ts for the jump behavior itself.
+    deadZoneRecoveryJumpPct: null,
     manualPositionPct: null,
     degraded: false,
     previousClassification: null,
@@ -937,5 +944,76 @@ describe("computeZoneCommands — capacity sharing", () => {
       floorLps: 0,
     });
     expect(result.commandedPositions["z"]).toBe(46);
+  });
+});
+
+// Exercises pipeline.ts's own deadZoneRecoveryJumpPct resolution at Step 2
+// (`zone.deadZoneRecoveryJumpPct ?? effectivePositionStepPct *
+// maxStepsPerTick`) — step2Ramp.test.ts already covers rampTowardTarget's
+// jump behavior directly given an already-resolved value; these confirm
+// computeZoneCommands actually resolves and passes that value through for
+// a real demanding zone leaving a hard extreme.
+describe("computeZoneCommands — dead-zone recovery", () => {
+  it("jumps to the zone's own override when a demanding zone leaves a fully-closed vent", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 0,
+          // A multiple of modulationStepPct below, so quantization can't
+          // itself explain the result landing here.
+          deadZoneRecoveryJumpPct: 50,
+          calibratedTemp: asAbsoluteTemp(30), // well above setpoint — genuinely demanding, target far past 50
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...settings, modulationStepPct: 10, maxStepsPerTick: 1 },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // An ordinary ramp from 0 with modulationStepPct=10/maxStepsPerTick=1
+    // could only reach 10 this tick — 50 only appears because the jump
+    // fired.
+    expect(result.commandedPositions["z"]).toBe(50);
+  });
+
+  it("falls back to an ordinary max-size step when neither the zone nor the global setting resolves one", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 0,
+          deadZoneRecoveryJumpPct: null,
+          calibratedTemp: asAbsoluteTemp(30),
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...settings, modulationStepPct: 10, maxStepsPerTick: 1 },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // No jump at all — same result as an ordinary ramp step would produce.
+    expect(result.commandedPositions["z"]).toBe(10);
+  });
+
+  it("does not jump for a zone that was never resting at a hard extreme", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 20,
+          deadZoneRecoveryJumpPct: 45,
+          calibratedTemp: asAbsoluteTemp(30),
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...settings, modulationStepPct: 10, maxStepsPerTick: 1 },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(30);
   });
 });

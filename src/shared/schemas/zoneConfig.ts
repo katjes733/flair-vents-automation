@@ -117,6 +117,11 @@ export const zoneConfigSchema = z.object({
   // idle_baseline_position above, not the same value reused. Same
   // unset-is-distinct-from-zero convention.
   fan_only_idle_baseline_position: z.number().min(0).max(100).optional(),
+  // Per-zone override of dead_zone_recovery_jump_pct (systemSettings.ts) —
+  // unset defers to the global setting, same unset-is-distinct-from-zero
+  // convention as idle_baseline_position above (a zone deliberately set to
+  // 0 must stay distinguishable from one that never overrode it at all).
+  dead_zone_recovery_jump_pct: z.number().min(0).max(100).optional(),
   // Telemetry-only: excluded from schedule-driven comfort tracking
   // entirely — target resolution short-circuits to "inactive" before even
   // consulting a schedule (see resolveZoneTargets), so this zone never

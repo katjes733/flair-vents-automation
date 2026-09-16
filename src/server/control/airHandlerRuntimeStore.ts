@@ -43,6 +43,17 @@ export interface AirHandlerRuntimeState {
   // command to catch it. See "Resolved Design Decisions" (min_step_delta
   // vs. modulation_step_size) for why this backstop exists at all.
   ticksSinceDriftCheck: number;
+  // The zone setpoint-push termination (see setpointPush.ts's own "prompt
+  // termination" comment) uses as its reference once no zone is demanding
+  // — deliberately a *separate* field from trackedDrivingZoneId, which
+  // exists for driving-zone switch hysteresis and is null exactly when
+  // this needs to still hold a value (no zone is demanding). Kept alive
+  // indefinitely across every tick a call stays fully satisfied, not just
+  // the single transition tick, precisely so the termination push keeps
+  // recomputing against the live thermostat reading for as long as it
+  // takes to actually confirm — see tick.ts's own none_eligible branch.
+  // Only replaced once a new zone actually starts demanding again.
+  terminationAnchorZoneId: string | null;
 }
 
 export const EMPTY_AIR_HANDLER_RUNTIME_STATE: AirHandlerRuntimeState = {
@@ -57,6 +68,7 @@ export const EMPTY_AIR_HANDLER_RUNTIME_STATE: AirHandlerRuntimeState = {
   equipmentFaultClearDwellSinceMs: null,
   equipmentFaultTriggerDwellSinceMs: null,
   ticksSinceDriftCheck: 0,
+  terminationAnchorZoneId: null,
 };
 
 export interface AirHandlerRuntimeStore {

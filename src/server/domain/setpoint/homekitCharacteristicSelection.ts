@@ -47,3 +47,48 @@ export function resolveHomeKitSetpointWrite(params: {
       return { kind: "target", value: params.pushedValueC };
   }
 }
+
+/**
+ * The single number this app trusts as "what the thermostat is actually
+ * holding right now" — the read-side counterpart to
+ * resolveHomeKitSetpointWrite's write-side decision, and the same
+ * precedence tick.ts's own decision-log field already used inline (a real
+ * HomeKit read over Flair's relayed value, since Flair's cloud sync can lag
+ * a change made directly on the thermostat/Ecobee app — see
+ * HomeKitCurrentState's own comment). Extracted here so the exact same
+ * logic can also gate whether a termination push still needs to be
+ * (re)dispatched: comparing this against a freshly computed pushedValue is
+ * a genuine device echo, not an optimistic "the write call didn't throw" —
+ * which is what makes an indefinite "redo until confirmed" loop safe
+ * without its own separate persisted retry flag.
+ */
+export function resolveReportedThermostatSetpoint(params: {
+  deliveryMode: "flair" | "homekit";
+  callState: HvacCallState;
+  homeKitState: {
+    targetMode: HapTargetHeatingCoolingState;
+    targetTemperatureC: number | null;
+    heatThresholdC: number | null;
+    coolThresholdC: number | null;
+  } | null;
+  flairTargetTemperatureC: number | null;
+}): number | null {
+  if (
+    params.deliveryMode === "homekit" &&
+    params.homeKitState?.targetTemperatureC !== null
+  ) {
+    return params.homeKitState?.targetTemperatureC ?? null;
+  }
+  if (
+    params.deliveryMode === "homekit" &&
+    params.homeKitState?.targetMode === 3 &&
+    (params.callState === "COOLING_CALL"
+      ? params.homeKitState.coolThresholdC
+      : params.homeKitState.heatThresholdC) !== null
+  ) {
+    return params.callState === "COOLING_CALL"
+      ? params.homeKitState.coolThresholdC
+      : params.homeKitState.heatThresholdC;
+  }
+  return params.flairTargetTemperatureC;
+}
