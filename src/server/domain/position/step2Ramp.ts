@@ -1,5 +1,7 @@
 import { clampQuantizeClamp } from "~/server/domain/position/clamp";
 
+export type DeadZoneRecoveryDirection = "open" | "close" | "both";
+
 /**
  * Ramps from `lastCommandedTarget` (this app's own running target, not the
  * hardware's reported position — see "Step 2 — quantization & ramp
@@ -22,7 +24,11 @@ import { clampQuantizeClamp } from "~/server/domain/position/clamp";
  * `deadZoneRecoveryJumpPct` is always a concrete resolved value by the
  * time it reaches here (the caller's own fallback, when the feature is
  * effectively off, is an ordinary max-size step) — this function itself
- * has no separate on/off switch.
+ * has no separate on/off switch for the jump *value*. `deadZoneRecoveryDirection`
+ * gates which extreme(s) actually trigger it — "open" (leaving 0%),
+ * "close" (leaving 100%), or "both" — added after real-world use showed
+ * the two directions aren't symmetric in practice (see
+ * dead_zone_recovery_direction's own comment, systemSettings.ts).
  */
 export function rampTowardTarget(params: {
   desiredPosition: number;
@@ -32,10 +38,19 @@ export function rampTowardTarget(params: {
   minVentPosition: number;
   maxVentPosition: number;
   deadZoneRecoveryJumpPct: number;
+  deadZoneRecoveryDirection: DeadZoneRecoveryDirection;
 }): number {
   const origin = params.lastCommandedTarget ?? params.desiredPosition;
+  const leavingClosed =
+    params.lastCommandedTarget === 0 &&
+    (params.deadZoneRecoveryDirection === "open" ||
+      params.deadZoneRecoveryDirection === "both");
+  const leavingOpen =
+    params.lastCommandedTarget === 100 &&
+    (params.deadZoneRecoveryDirection === "close" ||
+      params.deadZoneRecoveryDirection === "both");
   const leavingDeadZone =
-    (params.lastCommandedTarget === 0 || params.lastCommandedTarget === 100) &&
+    (leavingClosed || leavingOpen) &&
     params.desiredPosition !== params.lastCommandedTarget;
   let ramped: number;
   if (leavingDeadZone) {

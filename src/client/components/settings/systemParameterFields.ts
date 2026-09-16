@@ -259,6 +259,12 @@ const BUCKET_MODE_OPTIONS: ParamFieldOption[] = [
   { value: "priority_only", label: "Priority order only (no bucketing)" },
 ];
 
+const DEAD_ZONE_RECOVERY_DIRECTION_OPTIONS: ParamFieldOption[] = [
+  { value: "open", label: "Opening from fully-closed only" },
+  { value: "close", label: "Closing from fully-open only" },
+  { value: "both", label: "Both directions" },
+];
+
 // "" (empty string) is this field's off/null sentinel — see toDisplayString/
 // fromDisplayString's "nullableEnum" handling.
 const DISCRETE_POSITION_STEP_OPTIONS: ParamFieldOption[] = [
@@ -386,6 +392,15 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         max: 100,
         description:
           "Flair's vent motors have been observed to sit unresponsive to an ordinary ramp step for a stretch when first leaving a fully-open or fully-closed position — real mechanical stiction, with no consistent threshold from one occasion to the next. A zone leaving 0%/100% jumps straight to this percentage once, then resumes the normal gradual ramp from there. Clear this field to fall back to an ordinary max-size step (no special jump). Overridable per zone.",
+        tier: "advanced",
+      },
+      {
+        path: "dead_zone_recovery_direction",
+        baseLabel: "Dead-zone recovery applies to",
+        kind: "enum",
+        options: DEAD_ZONE_RECOVERY_DIRECTION_OPTIONS,
+        description:
+          "Which extreme(s) the jump above actually fires from. Closing quickly from a fully-open rest has been observed to occasionally carry a vent almost fully shut, a different (and less well understood) failure mode than opening from fully-closed — this lets the two be tuned independently, or turned off on the closing side, without a code change. Global only.",
         tier: "advanced",
       },
       {

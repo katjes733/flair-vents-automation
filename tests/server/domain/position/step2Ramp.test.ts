@@ -12,6 +12,7 @@ describe("rampTowardTarget", () => {
         minVentPosition: 0,
         maxVentPosition: 100,
         deadZoneRecoveryJumpPct: 10,
+        deadZoneRecoveryDirection: "both",
       }),
     ).toBe(80);
   });
@@ -33,6 +34,7 @@ describe("rampTowardTarget", () => {
         minVentPosition: 0,
         maxVentPosition: 100,
         deadZoneRecoveryJumpPct: 10,
+        deadZoneRecoveryDirection: "both",
       });
       steps.push(target);
     }
@@ -49,6 +51,7 @@ describe("rampTowardTarget", () => {
         minVentPosition: 0,
         maxVentPosition: 47,
         deadZoneRecoveryJumpPct: 10,
+        deadZoneRecoveryDirection: "both",
       }),
     ).toBe(47);
   });
@@ -65,6 +68,7 @@ describe("rampTowardTarget — dead-zone recovery", () => {
         minVentPosition: 0,
         maxVentPosition: 100,
         deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "both",
       }),
     ).toBe(50);
   });
@@ -79,6 +83,7 @@ describe("rampTowardTarget — dead-zone recovery", () => {
         minVentPosition: 0,
         maxVentPosition: 100,
         deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "both",
       }),
     ).toBe(50);
   });
@@ -96,6 +101,7 @@ describe("rampTowardTarget — dead-zone recovery", () => {
       minVentPosition: 0,
       maxVentPosition: 100,
       deadZoneRecoveryJumpPct: 50,
+      deadZoneRecoveryDirection: "both",
     });
     expect(afterJump).toBe(50);
 
@@ -107,6 +113,7 @@ describe("rampTowardTarget — dead-zone recovery", () => {
       minVentPosition: 0,
       maxVentPosition: 100,
       deadZoneRecoveryJumpPct: 50,
+      deadZoneRecoveryDirection: "both",
     });
     // Back on the ordinary ramp now that origin (50) is no longer at an
     // extreme — one normal step back down toward 15, not another jump.
@@ -123,6 +130,7 @@ describe("rampTowardTarget — dead-zone recovery", () => {
         minVentPosition: 0,
         maxVentPosition: 100,
         deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "both",
       }),
     ).toBe(0);
   });
@@ -137,7 +145,96 @@ describe("rampTowardTarget — dead-zone recovery", () => {
         minVentPosition: 0,
         maxVentPosition: 40,
         deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "both",
       }),
     ).toBe(40);
+  });
+});
+
+describe("rampTowardTarget — dead-zone recovery direction gating", () => {
+  // Added after real-world use surfaced a real asymmetry: closing quickly
+  // from a fully-open rest has been observed to occasionally carry a vent
+  // almost fully shut, well past the jump's own landing value — a
+  // different, still-uncharacterized failure mode from the opening side.
+  // See dead_zone_recovery_direction's own comment (systemSettings.ts).
+  it("'open' jumps when leaving fully-closed, but ramps normally when leaving fully-open", () => {
+    expect(
+      rampTowardTarget({
+        desiredPosition: 80,
+        lastCommandedTarget: 0,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        minVentPosition: 0,
+        maxVentPosition: 100,
+        deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "open",
+      }),
+    ).toBe(50);
+    expect(
+      rampTowardTarget({
+        desiredPosition: 20,
+        lastCommandedTarget: 100,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        minVentPosition: 0,
+        maxVentPosition: 100,
+        deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "open",
+      }),
+    ).toBe(90); // ordinary one-step ramp, not the jump
+  });
+
+  it("'close' jumps when leaving fully-open, but ramps normally when leaving fully-closed", () => {
+    expect(
+      rampTowardTarget({
+        desiredPosition: 20,
+        lastCommandedTarget: 100,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        minVentPosition: 0,
+        maxVentPosition: 100,
+        deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "close",
+      }),
+    ).toBe(50);
+    expect(
+      rampTowardTarget({
+        desiredPosition: 80,
+        lastCommandedTarget: 0,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        minVentPosition: 0,
+        maxVentPosition: 100,
+        deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "close",
+      }),
+    ).toBe(10); // ordinary one-step ramp, not the jump
+  });
+
+  it("'both' jumps in either direction", () => {
+    expect(
+      rampTowardTarget({
+        desiredPosition: 80,
+        lastCommandedTarget: 0,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        minVentPosition: 0,
+        maxVentPosition: 100,
+        deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "both",
+      }),
+    ).toBe(50);
+    expect(
+      rampTowardTarget({
+        desiredPosition: 20,
+        lastCommandedTarget: 100,
+        modulationStepPct: 10,
+        maxStepsPerTick: 1,
+        minVentPosition: 0,
+        maxVentPosition: 100,
+        deadZoneRecoveryJumpPct: 50,
+        deadZoneRecoveryDirection: "both",
+      }),
+    ).toBe(50);
   });
 });

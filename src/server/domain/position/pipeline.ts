@@ -21,7 +21,10 @@ import {
   type ContentionResult,
   type ContentionBucket,
 } from "~/server/domain/position/step3Contention";
-import { rampTowardTarget } from "~/server/domain/position/step2Ramp";
+import {
+  rampTowardTarget,
+  type DeadZoneRecoveryDirection,
+} from "~/server/domain/position/step2Ramp";
 import { clampToPressureFloor } from "~/server/domain/pressure/pressureSafeguard";
 import { clampToZoneRange } from "~/server/domain/position/clamp";
 
@@ -178,6 +181,10 @@ export function computeZoneCommands(params: {
     // unchanged from today.
     discretePositionStepPct: 25 | 50 | 100 | null;
     maxStepsPerTick: number;
+    // Global only — no per-zone override, unlike deadZoneRecoveryJumpPct
+    // itself. See dead_zone_recovery_direction's own comment
+    // (systemSettings.ts).
+    deadZoneRecoveryDirection: DeadZoneRecoveryDirection;
     classificationStabilizationMinutes: number;
     sleepQuietAnchorEnabled: boolean;
     reanchorIntervalMinutes: number;
@@ -563,6 +570,7 @@ export function computeZoneCommands(params: {
       deadZoneRecoveryJumpPct:
         zone.deadZoneRecoveryJumpPct ??
         effectivePositionStepPct * params.settings.maxStepsPerTick,
+      deadZoneRecoveryDirection: params.settings.deadZoneRecoveryDirection,
     });
   }
 

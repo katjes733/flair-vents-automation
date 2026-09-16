@@ -117,6 +117,20 @@ export const systemSettingsConfigSchema = z.object({
     .max(100)
     .nullable()
     .default(50),
+  // Which direction(s) the jump above actually applies to — global only,
+  // no per-zone override, unlike the jump percentage itself. Added after
+  // real-world use surfaced a real asymmetry the original "always both
+  // directions" design didn't anticipate: closing quickly from a
+  // fully-open rest (backlash reversing the other way) has been observed
+  // to occasionally carry a vent almost fully shut, well past the jump's
+  // own landing value — a different, still-uncharacterized failure mode
+  // from the opening side, which hasn't shown the same problem. Defaults
+  // to "open" only, deliberately narrower than what first shipped, until
+  // the closing side is better understood; "close" and "both" exist so
+  // this can be tuned without a code change once it is.
+  dead_zone_recovery_direction: z
+    .enum(["open", "close", "both"])
+    .default("open"),
   min_step_delta_pct: z.number().positive().default(15),
   // Quiet actuation: while a zone's currently-active schedule event has
   // Sleep Mode (assume_occupied) set for it, this threshold replaces
