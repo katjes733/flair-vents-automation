@@ -496,6 +496,118 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
   });
 });
 
+// Regression coverage for a real, confirmed overnight incident: a satisfied
+// bedroom zone in an active Sleep Mode window got yanked open toward
+// fanOnlyIdleBaselinePosition every time the blower ran a brief FAN_ONLY
+// stretch between compressor cycles — ten separate cycles in one night,
+// each producing several genuine motor movements — because this whole
+// FAN_ONLY branch used to run (and `continue`) before sleep_quiet_anchor's
+// own logic ever got a chance to apply. A Sleep-Mode zone now falls
+// through to the exact same anchor-aware path IDLE already used for this
+// reason (see that describe block's own comment) — FAN_ONLY becomes just
+// another idle gap for that zone, not its own separate open-for-
+// circulation state.
+describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
+  it("opens a demanding zone proportionally during FAN_ONLY while Sleep Mode is active, instead of resting at the FAN_ONLY baseline", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        fanOnlyIdleBaselinePosition: 40,
+        sleepModeActive: true,
+        calibratedTemp: asAbsoluteTemp(25), // well above setpoint(21) -> demanding
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "FAN_ONLY",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("demanding");
+    expect(result.commandedPositions["z1"]).toBeGreaterThan(40);
+  });
+
+  it("closes a satisfied zone proportionally during FAN_ONLY while Sleep Mode is active, instead of resting at the FAN_ONLY baseline", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        fanOnlyIdleBaselinePosition: 100,
+        sleepModeActive: true,
+        minVentPosition: 0,
+        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "FAN_ONLY",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("satisfied");
+    expect(result.commandedPositions["z1"]).toBeLessThan(100);
+  });
+
+  it("still rests at the FAN_ONLY baseline when Sleep Mode is not active — today's daytime circulation behavior is unchanged", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 100,
+        fanOnlyIdleBaselinePosition: 60,
+        sleepModeActive: false,
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "FAN_ONLY",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z1"]).toBe(30); // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5)
+  });
+
+  it("holds the sleep-quiet anchor flat through a FAN_ONLY stretch — the actual fix: FAN_ONLY no longer bypasses it", () => {
+    // Identical fixture to the sleep-quiet-anchor describe block's own
+    // "holds the anchored position flat" test, except state is FAN_ONLY
+    // here instead of COOLING_CALL — before this fix, FAN_ONLY never
+    // reached the anchor at all and this would have instead computed
+    // fanOnlyIdleBaselinePosition (100 by default), not the frozen 40.
+    const result = computeZoneCommands({
+      state: "FAN_ONLY",
+      zones: [
+        zone({
+          calibratedTemp: asAbsoluteTemp(19), // colder than the anchor tick's own 19.5
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+          sleepModeActive: true,
+          priorAnchorPositionPct: 40,
+          priorAnchorSinceMs: 1000,
+        }),
+      ],
+      nowMs: 1000 + 5 * 60000,
+      settings: {
+        ...settings,
+        sleepQuietAnchorEnabled: true,
+        reanchorIntervalMinutes: 60,
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(40);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: 40,
+      sinceMs: 1000,
+    });
+  });
+});
+
 // Regression coverage for a real gap found live: a satisfied zone was
 // getting shoved back open to idle_baseline_position every time the
 // compressor cycled to IDLE, then had to re-close from scratch next
