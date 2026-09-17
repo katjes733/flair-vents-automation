@@ -2251,6 +2251,18 @@ export async function runTick(
       if (evaluation.action.kind === "force_open") {
         finalPositions[zone.id] = 100;
       } else if (evaluation.action.kind === "recalibration_finished") {
+        // Same fix as vent misalignment's own recalibration_finished
+        // branch (see its comment and ADR-0004's update): snap straight
+        // back to the zone's true unramped target this tick instead of
+        // leaving pipelineResult.commandedPositions in place — that's
+        // already rate-limited by rampTowardTarget, whose own anchor was
+        // pinned at the forced-open extreme for the entire cycle just
+        // finished, so it would otherwise only step one
+        // modulation_step_pct closer to the real target this tick.
+        finalPositions[zone.id] =
+          pipelineResult.rawDesiredPositions[zone.id] ??
+          pipelineResult.commandedPositions[zone.id] ??
+          finalPositions[zone.id];
         logDemandStallRecalibration(log, {
           air_handler_id: airHandler.id,
           zone_id: zone.id,

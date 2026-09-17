@@ -91,16 +91,15 @@ export function evaluateDemandStall(params: {
 }): DemandStallEvaluation {
   const { prior } = params;
 
-  const trackingActive =
-    params.callActive && params.classification === "demanding";
-  if (!trackingActive) {
-    return {
-      next: EMPTY_DEMAND_STALL_STATE,
-      action: { kind: "none" },
-      stalled: false,
-    };
-  }
-
+  // An in-progress force-open cycle must run to completion regardless of
+  // whether tracking conditions still hold this tick — checked first,
+  // before trackingActive below, mirroring evaluateVentMisalignment's own
+  // ordering. This matters more here than there: forcing the vent open
+  // is exactly what's expected to make the room start improving, which
+  // can flip classification away from "demanding" mid-cycle — checking
+  // trackingActive first would abandon the cycle the instant it started
+  // working, silently dropping stalledSinceMs/lastRecalibratedAtMs with
+  // it (see the !trackingActive branch below).
   if (prior.recalibratingSinceMs !== null) {
     const waitedMs = params.nowMs - prior.recalibratingSinceMs;
     const timedOut = waitedMs >= params.maxOpenWaitMs;
@@ -130,6 +129,33 @@ export function evaluateDemandStall(params: {
       next: prior,
       action: { kind: "force_open" },
       stalled: prior.stalledSinceMs !== null,
+    };
+  }
+
+  const trackingActive =
+    params.callActive && params.classification === "demanding";
+  if (!trackingActive) {
+    // Preserves lastRecalibratedAtMs through the reset — a real,
+    // confirmed live bug: this zone's own ordinary demanding/satisfied
+    // cycling flips trackingActive false roughly every 15-20 minutes,
+    // and returning the raw EMPTY_DEMAND_STALL_STATE here (which zeroes
+    // lastRecalibratedAtMs too) erased cooldownMs's own gating almost
+    // immediately after every single completed cycle — a configured
+    // 4-hour cooldown was never actually in effect, since the very next
+    // idle/satisfied gap wiped it before it could block anything. See
+    // evaluateVentMisalignment's own equivalent reset for the same fix
+    // already in place there. stalledSinceMs is NOT preserved — a zone
+    // that's no longer demanding at all isn't a driving-zone eligibility
+    // candidate anyway, so letting `stalled` clear here is harmless and
+    // matches the original design intent (reset the instant tracking
+    // breaks, same shape as vent misalignment's own window).
+    return {
+      next: {
+        ...EMPTY_DEMAND_STALL_STATE,
+        lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
+      },
+      action: { kind: "none" },
+      stalled: false,
     };
   }
 
