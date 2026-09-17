@@ -121,6 +121,18 @@ export interface ZoneRuntimeState {
   // cycle — "manual" for an explicit maintenance trigger via the
   // dashboard, "auto" for the detector's own temp-drift window.
   vent_misalignment_recalibration_trigger: "auto" | "manual" | null;
+  // Which hardware extreme (0 or 100) that cycle is forcing the vent
+  // toward — chosen relative to wherever the vent sat when the cycle
+  // started (whichever extreme is farther away), not always 100. Null
+  // whenever vent_misalignment_recalibrating_since is also null.
+  vent_misalignment_target_extreme_pct: 0 | 100 | null;
+  // Set the instant a person requests a manual recalibration, cleared by
+  // the server the moment the next tick actually starts the cycle (at
+  // which point vent_misalignment_recalibrating_since takes over). The
+  // dashboard's "recalibrating" indicator/disabled-button state must
+  // check both fields — a request can sit here for up to one tick
+  // interval before recalibrating_since goes non-null.
+  vent_manual_recalibration_requested_at: string | null;
   // Demand stall detection — see demand_stall_detection_enabled's own
   // comment (systemSettings.ts) and evaluateDemandStall (demandStall.ts)
   // for the mirror-image failure this tracks: a demanding zone whose

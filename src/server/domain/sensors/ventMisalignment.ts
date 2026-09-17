@@ -14,6 +14,17 @@ export interface VentMisalignmentState {
   windowStartTempC: number | null;
   recalibratingSinceMs: number | null;
   recalibrationTrigger: VentMisalignmentTrigger | null;
+  // Which hardware extreme (0 or 100) this cycle is forcing the vent
+  // toward — chosen once, when the cycle starts, as whichever extreme is
+  // *farther* from the vent's own position at that moment: a vent already
+  // near 80% is forced to 0, not nudged the remaining 20 points to 100 —
+  // the point is a full-range, decisive movement that actually exercises
+  // the vent's suspect direction, not a token further nudge the same way
+  // it was already leaning. Fixed for the whole cycle (see
+  // farthestExtremeFrom's own comment for why it can't be recomputed
+  // live once the cycle is already forcing the vent toward it). Null
+  // whenever recalibratingSinceMs is also null.
+  targetExtremePct: 0 | 100 | null;
   lastRecalibratedAtMs: number | null;
 }
 
@@ -22,17 +33,43 @@ export const EMPTY_VENT_MISALIGNMENT_STATE: VentMisalignmentState = {
   windowStartTempC: null,
   recalibratingSinceMs: null,
   recalibrationTrigger: null,
+  targetExtremePct: null,
   lastRecalibratedAtMs: null,
 };
 
 export type VentMisalignmentAction =
   | { kind: "none" }
-  | { kind: "force_open"; triggeredBy: VentMisalignmentTrigger }
+  | {
+      kind: "force_open";
+      triggeredBy: VentMisalignmentTrigger;
+      targetPct: 0 | 100;
+    }
   | {
       kind: "recalibration_finished";
       outcome: "opened" | "timed_out";
       triggeredBy: VentMisalignmentTrigger;
     };
+
+// The one, hardware-truth extreme farther from `currentPositionPct` —
+// deliberately ignores the zone's own configured min/max policy (the
+// existing automatic cycle already forces literal 100 regardless of
+// max_vent_position; this generalizes the same "diagnostic override
+// exceeds normal position policy" precedent to both directions), since
+// clearing physical motor stiction needs the vent's real full range, not
+// whatever comfort-policy window it's normally kept within. A vent sitting
+// exactly at the midpoint (50%) is treated as "closer to open" — an
+// arbitrary but harmless tie-break, since either direction is an equally
+// valid, equally decisive test from dead center.
+function farthestExtremeFrom(currentPositionPct: number): 0 | 100 {
+  return currentPositionPct >= 50 ? 0 : 100;
+}
+
+// Symmetric tolerance around whichever extreme this cycle is forcing
+// toward — mirrors the existing >=90 threshold the original (open-only)
+// design used, just generalized to the 0% side too.
+function isNearExtreme(reportedPct: number, extremePct: 0 | 100): boolean {
+  return extremePct === 100 ? reportedPct >= 90 : reportedPct <= 10;
+}
 
 export interface VentMisalignmentEvaluation {
   next: VentMisalignmentState;
@@ -111,7 +148,14 @@ export function evaluateVentMisalignment(params: {
   callActive: boolean;
   classification: ZoneClassification | "inactive";
   targetAtClosedExtreme: boolean;
-  allVentsReportedOpenEnough: boolean;
+  // The zone's own computed target this tick, before any force-open
+  // override — what farthestExtremeFrom picks a direction relative to.
+  // For the automatic path this is always ≈0 (targetAtClosedExtreme is
+  // already a precondition below), so it always resolves to 100 there,
+  // unchanged from the original open-only design; it only actually
+  // matters for a manual trigger, which can start from anywhere.
+  currentPositionPct: number;
+  ventReportedPositionsPct: readonly number[];
   calibratedTempC: number | null;
   prior: VentMisalignmentState;
   tempThresholdC: number;
@@ -125,18 +169,28 @@ export function evaluateVentMisalignment(params: {
     const waitedMs = params.nowMs - prior.recalibratingSinceMs;
     const timedOut = waitedMs >= params.maxOpenWaitMs;
     const triggeredBy = prior.recalibrationTrigger ?? "auto";
-    if (params.allVentsReportedOpenEnough || timedOut) {
+    // A cycle already in progress from before this direction-aware fix
+    // was deployed carries no targetExtremePct at all (an older,
+    // open-only build never persisted one) — default it to 100 to match
+    // that build's own hardcoded behavior, rather than losing track of
+    // an in-flight cycle entirely.
+    const targetExtremePct = prior.targetExtremePct ?? 100;
+    const allAtExtreme = params.ventReportedPositionsPct.every((pct) =>
+      isNearExtreme(pct, targetExtremePct),
+    );
+    if (allAtExtreme || timedOut) {
       return {
         next: {
           windowSinceMs: null,
           windowStartTempC: null,
           recalibratingSinceMs: null,
           recalibrationTrigger: null,
+          targetExtremePct: null,
           lastRecalibratedAtMs: params.nowMs,
         },
         action: {
           kind: "recalibration_finished",
-          outcome: params.allVentsReportedOpenEnough ? "opened" : "timed_out",
+          outcome: allAtExtreme ? "opened" : "timed_out",
           triggeredBy,
         },
         suspected: false,
@@ -144,21 +198,27 @@ export function evaluateVentMisalignment(params: {
     }
     return {
       next: prior,
-      action: { kind: "force_open", triggeredBy },
+      action: { kind: "force_open", triggeredBy, targetPct: targetExtremePct },
       suspected: true,
     };
   }
 
   if (params.manualTriggerRequested) {
+    const targetExtremePct = farthestExtremeFrom(params.currentPositionPct);
     return {
       next: {
         windowSinceMs: null,
         windowStartTempC: null,
         recalibratingSinceMs: params.nowMs,
         recalibrationTrigger: "manual",
+        targetExtremePct,
         lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
       },
-      action: { kind: "force_open", triggeredBy: "manual" },
+      action: {
+        kind: "force_open",
+        triggeredBy: "manual",
+        targetPct: targetExtremePct,
+      },
       suspected: true,
     };
   }
@@ -207,6 +267,7 @@ export function evaluateVentMisalignment(params: {
         windowStartTempC: params.calibratedTempC,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
       },
       action: { kind: "none" },
@@ -228,15 +289,21 @@ export function evaluateVentMisalignment(params: {
     return { next: prior, action: { kind: "none" }, suspected: false };
   }
 
+  const targetExtremePct = farthestExtremeFrom(params.currentPositionPct);
   return {
     next: {
       windowSinceMs: prior.windowSinceMs,
       windowStartTempC: prior.windowStartTempC,
       recalibratingSinceMs: params.nowMs,
       recalibrationTrigger: "auto",
+      targetExtremePct,
       lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
     },
-    action: { kind: "force_open", triggeredBy: "auto" },
+    action: {
+      kind: "force_open",
+      triggeredBy: "auto",
+      targetPct: targetExtremePct,
+    },
     suspected: true,
   };
 }

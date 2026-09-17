@@ -115,6 +115,11 @@ export interface ZoneRuntimeState {
   // happens to already be in progress when the request arrives, so it's
   // picked up as soon as that one finishes rather than silently dropped.
   vent_manual_recalibration_requested_at: string | null;
+  // Which hardware extreme (0 or 100) the in-progress (or most recently
+  // finished) cycle is forcing the vent toward — see
+  // evaluateVentMisalignment's farthestExtremeFrom comment. Null whenever
+  // recalibrating_since is also null.
+  vent_misalignment_target_extreme_pct: 0 | 100 | null;
   // Demand stall detection (see demand_stall_detection_enabled) — the
   // mirror-image failure to vent misalignment above: a *demanding* zone
   // whose vent Flair confirms reaching a real, non-floor commanded
@@ -167,6 +172,7 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   vent_misalignment_last_recalibrated_at: null,
   vent_misalignment_recalibration_history: [],
   vent_manual_recalibration_requested_at: null,
+  vent_misalignment_target_extreme_pct: null,
   demand_stall_window_since: null,
   demand_stall_window_start_temp: null,
   demand_stall_recalibrating_since: null,

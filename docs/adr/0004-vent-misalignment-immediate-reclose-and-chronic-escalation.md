@@ -79,3 +79,42 @@ trigger says explicitly that a successful cycle only proves the motor
 responds, not that the underlying leak is fixed — the same false-confidence
 gap the automatic detector's own history exposed, now made explicit for a
 human pressing the button too.
+
+## Update: force-open target is direction-aware, and the manual request needs its own UI feedback
+
+Live click-through on the real Martin Office zone surfaced two gaps this
+ADR's original design didn't anticipate.
+
+**The force-open target was hardcoded to 100%,** regardless of the vent's
+own position when the cycle started. A vent already sitting at 80% got
+nudged the remaining 20 points to 100% instead of the decisive full-range
+movement the mechanism is meant to perform; the user's own stated
+expectation (confirmed as the correct spec) is that an 80% vent should
+flip to 0% and back, a 20% vent to 100% and back — whichever extreme is
+*farther* from wherever the vent currently sits, not always the same one.
+Fixed by adding `targetExtremePct` (0 or 100) to `VentMisalignmentState`,
+chosen once when a cycle starts via `farthestExtremeFrom(currentPositionPct)`
+and held fixed for that cycle's whole open-wait, with the completion check
+(`isNearExtreme`) generalized to whichever extreme the cycle is actually
+forcing toward rather than always checking for "reported open." A cycle
+already in flight from before this fix shipped carries no persisted
+`targetExtremePct` at all; it defaults to 100 (the old build's own
+hardcoded behavior) rather than losing track of the in-flight cycle.
+
+**The dashboard didn't reflect a manual request until the next tick
+picked it up.** `vent_manual_recalibration_requested_at` is set
+server-side the instant a person confirms the trigger dialog, but the
+progress indicator and disabled button were keyed only on
+`vent_misalignment_recalibrating_since`, which stays null until the tick
+loop actually starts the cycle — up to one control-tick interval later.
+The confirm dialog's own immediate post-submit refetch (`onChanged`)
+already pulls the updated `vent_manual_recalibration_requested_at`
+instantly; the dashboard just wasn't reading it. `ZoneCard` now treats
+"request recorded but not yet ticked" as its own pending sub-state (a
+distinct "waiting for the next control tick" label), so the button
+disables and the progress indicator appears the moment the request is
+confirmed, not once a tick happens to land.
+
+Both are treated as amendments to this same decision, not new ones: same
+mechanisms (force-open/wait cycle, manual trigger), just discovered to
+need a direction and an earlier UI signal than first shipped.

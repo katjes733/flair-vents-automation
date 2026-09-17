@@ -3753,12 +3753,61 @@ describe("runTick — vent misalignment auto-recalibration", () => {
     );
 
     const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
-    expect(z1.vents[0]?.commanded_position_pct).toBe(100);
+    // Direction-aware targeting: this zone is badly overheated relative
+    // to its cool setpoint, so the pipeline's own computed target this
+    // tick is already near the open extreme — the farthest extreme from
+    // there is 0, not 100. See farthestExtremeFrom's own comment.
+    expect(z1.vents[0]?.commanded_position_pct).toBe(0);
     const after = persisted.get("z1")!;
     expect(after.vent_misalignment_recalibrating_since).not.toBeNull();
     expect(after.vent_misalignment_recalibration_trigger).toBe("manual");
+    expect(after.vent_misalignment_target_extreme_pct).toBe(0);
     // Consumed — cleared so it doesn't re-trigger a second cycle later.
     expect(after.vent_manual_recalibration_requested_at).toBeNull();
+  });
+
+  // The user's own exact expectation, exercised end-to-end through a real
+  // tick: a vent already sitting near 80% (its own computed target this
+  // tick, before any override) must flip to 0%, not get nudged to 100%.
+  it("forces toward the closer extreme on a manual trigger, direction-aware relative to the vent's own current target", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_temp_threshold_c: 0.56,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const requestedState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_manual_recalibration_requested_at: new Date(
+        NOW - 1000,
+      ).toISOString(),
+    };
+    // Barely above setpoint under a cooling call — the pipeline's own
+    // computed target this tick lands comfortably above the midpoint
+    // (closer to open than closed), without being the fully-demanding,
+    // pinned-at-100 case the other manual-trigger test already covers.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 21.3,
+        ductC: 14,
+        percentOpen: 80,
+      },
+    ]);
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1", state: requestedState })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.vents[0]?.commanded_position_pct).toBe(0);
+    const after = persisted.get("z1")!;
+    expect(after.vent_misalignment_target_extreme_pct).toBe(0);
   });
 
   it("alerts once a zone crosses the chronic-recalibration threshold, regardless of vent_misalignment_alert_enabled", async () => {
