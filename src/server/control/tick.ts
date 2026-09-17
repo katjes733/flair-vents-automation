@@ -2129,16 +2129,23 @@ export async function runTick(
           }
         }
       } else if (evaluation.action.kind === "recalibration_finished") {
-        // Snap straight back to whatever the pipeline itself already
-        // computed this tick (its normal target, e.g. 0 for a satisfied,
-        // closed zone) instead of leaving the forced-100 override in
-        // place for the ordinary ramp to slowly walk down over several
-        // minutes — a real, confirmed cost: an uncorrected ramp-down held
-        // the vent substantially open for ~10 more minutes after every
-        // cycle, actively cooling an already-overcooled room the whole
-        // time. See evaluateVentMisalignment's own comment.
+        // Snap straight back to the zone's own *unramped* target this
+        // tick, not pipelineResult.commandedPositions — that's already
+        // rate-limited by rampTowardTarget, whose own anchor
+        // (lastCommandedTarget, i.e. last tick's persisted
+        // last_target_position) was itself pinned at the forced-open
+        // extreme for the entire cycle just finished. Using the ramped
+        // value here would only step ~modulationStepPct closer to the
+        // real target this tick, then the same distance again next tick,
+        // reproducing the exact multi-tick ramp-down this override exists
+        // to prevent — a real, confirmed live regression: an "immediate"
+        // reclose observed instead stepping down in ordinary ramp-sized
+        // increments. See PipelineResult.rawDesiredPositions's own
+        // comment and this fix's ADR-0004 update.
         finalPositions[zone.id] =
-          pipelineResult.commandedPositions[zone.id] ?? finalPositions[zone.id];
+          pipelineResult.rawDesiredPositions[zone.id] ??
+          pipelineResult.commandedPositions[zone.id] ??
+          finalPositions[zone.id];
         logVentMisalignmentRecalibration(log, {
           air_handler_id: airHandler.id,
           zone_id: zone.id,
