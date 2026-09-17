@@ -22,6 +22,8 @@ import { asAbsoluteTemp, toDisplayAbsolute } from "~/shared/types/temperature";
 import { formatPct } from "~/client/util/formatPct";
 import { formatDispatchStatus } from "~/client/util/formatDispatchStatus";
 import ZoneOverrideDialog from "~/client/components/dashboard/ZoneOverrideDialog";
+import VentRecalibrationTriggerDialog from "~/client/components/dashboard/VentRecalibrationTriggerDialog";
+import VentMisalignmentClearWarningDialog from "~/client/components/dashboard/VentMisalignmentClearWarningDialog";
 import { useCanWrite } from "~/client/permissions/usePermission";
 
 interface ZoneCardProps {
@@ -80,8 +82,18 @@ export default function ZoneCard({
   const canEdit = useCanWrite("dashboard.zone.edit");
   const canCreateOverride = useCanWrite("dashboard.zone.override.create");
   const canRevokeOverride = useCanWrite("dashboard.zone.override.revoke");
+  const canTriggerRecalibration = useCanWrite(
+    "dashboard.zone.ventRecalibration.trigger",
+  );
+  const canClearMisalignmentWarning = useCanWrite(
+    "dashboard.zone.ventRecalibration.clearWarning",
+  );
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
+  const [recalibrationDialogOpen, setRecalibrationDialogOpen] = useState(false);
+  const [clearWarningDialogOpen, setClearWarningDialogOpen] = useState(false);
   const isControllable = zone.ventHardwareType === "flair_smart_vent";
+  const isRecalibrating =
+    zone.state.vent_misalignment_recalibrating_since !== null;
 
   const classification = tickRecord?.classification;
   // A zone can still be classified "demanding" for a few ticks after the
@@ -201,6 +213,22 @@ export default function ZoneCard({
                 }}
               />
             )}
+            {zone.ventMisalignmentChronic && (
+              <Chip
+                label="Vent may be leaking"
+                size="small"
+                onClick={
+                  canClearMisalignmentWarning
+                    ? () => setClearWarningDialogOpen(true)
+                    : undefined
+                }
+                sx={{
+                  bgcolor: theme.palette.status.chronicMisalignment,
+                  color: "#fff",
+                  cursor: canClearMisalignmentWarning ? "pointer" : "default",
+                }}
+              />
+            )}
           </Box>
         </Box>
 
@@ -280,6 +308,17 @@ export default function ZoneCard({
           </Box>
         )}
 
+        {isControllable && isRecalibrating && (
+          <Box sx={{ mt: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              {zone.state.vent_misalignment_recalibration_trigger === "manual"
+                ? "Recalibrating (manually requested) — usually resolves within a couple of minutes"
+                : "Recalibrating — vent may be misaligned, usually resolves within a couple of minutes"}
+            </Typography>
+            <LinearProgress sx={{ mt: 0.5 }} />
+          </Box>
+        )}
+
         <DiagnosticOnly>
           <Box sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: "divider" }}>
             <Typography
@@ -337,6 +376,15 @@ export default function ZoneCard({
                 Set manual override
               </Button>
             ))}
+          {isControllable && (
+            <Button
+              size="small"
+              disabled={!canTriggerRecalibration || isRecalibrating}
+              onClick={() => setRecalibrationDialogOpen(true)}
+            >
+              Unstick vent
+            </Button>
+          )}
         </Box>
       </CardContent>
 
@@ -346,6 +394,21 @@ export default function ZoneCard({
         zoneName={zone.name}
         onClose={() => setOverrideDialogOpen(false)}
         onCreated={onChanged}
+      />
+      <VentRecalibrationTriggerDialog
+        open={recalibrationDialogOpen}
+        zoneId={zone.id}
+        zoneName={zone.name}
+        zoneChronic={zone.ventMisalignmentChronic}
+        onClose={() => setRecalibrationDialogOpen(false)}
+        onTriggered={onChanged}
+      />
+      <VentMisalignmentClearWarningDialog
+        open={clearWarningDialogOpen}
+        zoneId={zone.id}
+        zoneName={zone.name}
+        onClose={() => setClearWarningDialogOpen(false)}
+        onCleared={onChanged}
       />
     </Card>
   );

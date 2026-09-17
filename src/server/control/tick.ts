@@ -44,6 +44,7 @@ import { classifyStaleness } from "~/server/domain/sensors/staleness";
 import {
   evaluateVentMisalignment,
   updateRecalibrationHistory,
+  isChronicallyMisaligned,
   type VentMisalignmentState,
 } from "~/server/domain/sensors/ventMisalignment";
 import {
@@ -2000,11 +2001,21 @@ export async function runTick(
     VentMisalignmentState
   >();
   const ventMisalignmentSuspectedByZoneId = new Map<string, boolean>();
+  // Cleared the instant a manually-requested cycle actually starts this
+  // tick — see vent_manual_recalibration_requested_at's own comment
+  // (shared/types/zone.ts). Left set (persisted unchanged below) whenever
+  // a *different* cycle happens to already be in progress, so the request
+  // is picked up as soon as that one finishes rather than silently lost.
+  const ventMisalignmentManualRequestConsumedByZoneId = new Map<
+    string,
+    boolean
+  >();
   // "Quick view" rolling 24h count (see updateRecalibrationHistory's own
   // comment) — a fixed window, deliberately independent of whatever
-  // vent_misalignment_recalibration_cooldown_hours happens to be
+  // vent_misalignment_recalibration_debounce_minutes happens to be
   // configured to; this answers "is this actively happening to this zone
-  // right now," not "has the cooldown reset yet."
+  // right now," and is also the entire input to chronic-escalation
+  // detection just below.
   const VENT_MISALIGNMENT_HISTORY_WINDOW_MS = 24 * 3600000;
   const ventMisalignmentHistoryByZoneId = new Map<string, number[]>();
   if (
@@ -2023,10 +2034,14 @@ export async function runTick(
         recalibratingSinceMs: parseIsoOrNull(
           zone.state.vent_misalignment_recalibrating_since,
         ),
+        recalibrationTrigger:
+          zone.state.vent_misalignment_recalibration_trigger,
         lastRecalibratedAtMs: parseIsoOrNull(
           zone.state.vent_misalignment_last_recalibrated_at,
         ),
       };
+      const manualTriggerRequested =
+        zone.state.vent_manual_recalibration_requested_at !== null;
       const evaluation = evaluateVentMisalignment({
         nowMs: startedAtMs,
         hvacState: effectiveCallState,
@@ -2043,13 +2058,20 @@ export async function runTick(
         calibratedTempC: readings.get(zone.id)!.room.calibratedTemp,
         prior,
         tempThresholdC: ctx.settings.vent_misalignment_temp_threshold_c,
-        cooldownMs:
-          ctx.settings.vent_misalignment_recalibration_cooldown_hours * 3600000,
+        debounceMs:
+          ctx.settings.vent_misalignment_recalibration_debounce_minutes * 60000,
         maxOpenWaitMs:
           ctx.settings.vent_misalignment_max_open_wait_minutes * 60000,
+        manualTriggerRequested,
       });
       ventMisalignmentNextStateByZoneId.set(zone.id, evaluation.next);
       ventMisalignmentSuspectedByZoneId.set(zone.id, evaluation.suspected);
+      ventMisalignmentManualRequestConsumedByZoneId.set(
+        zone.id,
+        manualTriggerRequested &&
+          prior.recalibratingSinceMs === null &&
+          evaluation.next.recalibrationTrigger === "manual",
+      );
       ventMisalignmentHistoryByZoneId.set(
         zone.id,
         updateRecalibrationHistory({
@@ -2058,8 +2080,12 @@ export async function runTick(
           ).map((iso) => new Date(iso).getTime()),
           nowMs: startedAtMs,
           windowMs: VENT_MISALIGNMENT_HISTORY_WINDOW_MS,
+          // Manually-triggered completions never count — a maintenance
+          // check someone ran on purpose isn't evidence toward chronic
+          // escalation. See isChronicallyMisaligned's own comment.
           justCompletedMs:
-            evaluation.action.kind === "recalibration_finished"
+            evaluation.action.kind === "recalibration_finished" &&
+            evaluation.action.triggeredBy === "auto"
               ? startedAtMs
               : null,
         }),
@@ -2085,8 +2111,12 @@ export async function runTick(
               (readings.get(zone.id)!.room.calibratedTemp ?? 0) -
               (prior.windowStartTempC ?? 0),
             threshold_c: ctx.settings.vent_misalignment_temp_threshold_c,
+            triggered_by: evaluation.action.triggeredBy,
           });
-          if (ctx.settings.vent_misalignment_alert_enabled) {
+          if (
+            ctx.settings.vent_misalignment_alert_enabled &&
+            evaluation.action.triggeredBy === "auto"
+          ) {
             await deps.alerting.alertOnce({
               key: `alert:ventMisalignment:${zone.id}`,
               subject: `${zone.name}'s vent may be misaligned`,
@@ -2097,12 +2127,47 @@ export async function runTick(
           }
         }
       } else if (evaluation.action.kind === "recalibration_finished") {
+        // Snap straight back to whatever the pipeline itself already
+        // computed this tick (its normal target, e.g. 0 for a satisfied,
+        // closed zone) instead of leaving the forced-100 override in
+        // place for the ordinary ramp to slowly walk down over several
+        // minutes — a real, confirmed cost: an uncorrected ramp-down held
+        // the vent substantially open for ~10 more minutes after every
+        // cycle, actively cooling an already-overcooled room the whole
+        // time. See evaluateVentMisalignment's own comment.
+        finalPositions[zone.id] =
+          pipelineResult.commandedPositions[zone.id] ?? finalPositions[zone.id];
         logVentMisalignmentRecalibration(log, {
           air_handler_id: airHandler.id,
           zone_id: zone.id,
           outcome: evaluation.action.outcome,
           waited_ms: startedAtMs - (prior.recalibratingSinceMs ?? startedAtMs),
+          triggered_by: evaluation.action.triggeredBy,
         });
+      }
+
+      // Chronic escalation — see vent_misalignment_chronic_threshold_count's
+      // own comment (systemSettings.ts). Deliberately unconditional (not
+      // gated on vent_misalignment_alert_enabled): a zone that keeps
+      // re-triggering despite repeated "successful" recalibrations is a
+      // materially more serious signal than any single occurrence.
+      const chronicAlertKey = `alert:ventMisalignmentChronic:${zone.id}`;
+      const chronic = isChronicallyMisaligned({
+        recalibrationHistoryMs: ventMisalignmentHistoryByZoneId.get(zone.id)!,
+        nowMs: startedAtMs,
+        windowMs: ctx.settings.vent_misalignment_chronic_window_hours * 3600000,
+        thresholdCount: ctx.settings.vent_misalignment_chronic_threshold_count,
+      });
+      if (chronic) {
+        await deps.alerting.alertOnce({
+          key: chronicAlertKey,
+          subject: `${zone.name}'s vent keeps recalibrating — likely needs physical attention`,
+          text: `${zone.name} has recalibrated ${ctx.settings.vent_misalignment_chronic_threshold_count}+ times within ${ctx.settings.vent_misalignment_chronic_window_hours}h. Every attempt confirms the vent's motor moves when commanded, but the room keeps needing another cycle — this looks like a physical sealing problem recalibration can't fix by itself, not a one-off. It's still being commanded normally, but is flagged in the dashboard until someone manually clears it.`,
+          rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+          nowMs: startedAtMs,
+        });
+      } else {
+        await deps.alerting.clearAlert(chronicAlertKey);
       }
     }
   }
@@ -2414,12 +2479,18 @@ export async function runTick(
               vent_misalignment_recalibrating_since: toIsoOrNull(
                 next.recalibratingSinceMs,
               ),
+              vent_misalignment_recalibration_trigger:
+                next.recalibrationTrigger,
               vent_misalignment_last_recalibrated_at: toIsoOrNull(
                 next.lastRecalibratedAtMs,
               ),
               vent_misalignment_recalibration_history: (
                 ventMisalignmentHistoryByZoneId.get(zone.id) ?? []
               ).map((ms) => toIso(ms)),
+              vent_manual_recalibration_requested_at:
+                ventMisalignmentManualRequestConsumedByZoneId.get(zone.id)
+                  ? null
+                  : zone.state.vent_manual_recalibration_requested_at,
             };
           })()
         : {
@@ -2429,10 +2500,14 @@ export async function runTick(
               zone.state.vent_misalignment_window_start_temp,
             vent_misalignment_recalibrating_since:
               zone.state.vent_misalignment_recalibrating_since,
+            vent_misalignment_recalibration_trigger:
+              zone.state.vent_misalignment_recalibration_trigger,
             vent_misalignment_last_recalibrated_at:
               zone.state.vent_misalignment_last_recalibrated_at,
             vent_misalignment_recalibration_history:
               zone.state.vent_misalignment_recalibration_history,
+            vent_manual_recalibration_requested_at:
+              zone.state.vent_manual_recalibration_requested_at,
           }),
       // Same absent-means-unchanged fallback as vent misalignment above —
       // absent from demandStallNextStateByZoneId means the feature is

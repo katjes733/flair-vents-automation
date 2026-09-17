@@ -58,12 +58,15 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       occupied: false,
       occupancy_pending_flip_since: null,
       vent_misalignment_recalibration_history: [],
+      vent_misalignment_recalibrating_since: null,
+      vent_misalignment_recalibration_trigger: null,
       demand_stall_window_since: null,
       demand_stall_window_start_temp: null,
       demand_stall_recalibrating_since: null,
       demand_stall_last_recalibrated_at: null,
       demand_stalled_since: null,
     },
+    ventMisalignmentChronic: false,
     ...overrides,
   };
 }
@@ -586,6 +589,87 @@ describe("ZoneCard", () => {
       });
       expect(screen.getByText("Satisfied")).toBeInTheDocument();
       expect(screen.queryByText("Almost there")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("vent misalignment", () => {
+    it("shows no chronic badge or recalibrating indicator by default", () => {
+      renderCard();
+      expect(screen.queryByText("Vent may be leaking")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Recalibrating/)).not.toBeInTheDocument();
+    });
+
+    it("shows the chronic badge when the zone is flagged, clickable for an admin", () => {
+      renderCard({ zone: makeZone({ ventMisalignmentChronic: true }) });
+      expect(screen.getByText("Vent may be leaking")).toBeInTheDocument();
+      // Clicking opens the clear-warning confirm dialog.
+      fireEvent.click(screen.getByText("Vent may be leaking"));
+      expect(
+        screen.getByText("Clear Bedroom's vent warning?"),
+      ).toBeInTheDocument();
+    });
+
+    it("makes the chronic badge non-interactive for a write (non-admin) profile", () => {
+      useSession.mockReturnValue({ user: { profile: "write", role: "owner" } });
+      renderCard({ zone: makeZone({ ventMisalignmentChronic: true }) });
+      fireEvent.click(screen.getByText("Vent may be leaking"));
+      expect(
+        screen.queryByText("Clear Bedroom's vent warning?"),
+      ).not.toBeInTheDocument();
+      useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
+    });
+
+    it("shows a recalibrating progress indicator while a cycle is in progress, naming the trigger", () => {
+      renderCard({
+        zone: makeZone({
+          state: {
+            ...makeZone().state,
+            vent_misalignment_recalibrating_since: new Date().toISOString(),
+            vent_misalignment_recalibration_trigger: "manual",
+          },
+        }),
+      });
+      expect(
+        screen.getByText(/Recalibrating \(manually requested\)/),
+      ).toBeInTheDocument();
+    });
+
+    it("enables the Unstick vent button for an admin, opening the trigger dialog", () => {
+      renderCard();
+      const button = screen.getByRole("button", { name: "Unstick vent" });
+      expect(button).not.toBeDisabled();
+      fireEvent.click(button);
+      expect(screen.getByText("Unstick Bedroom's vent?")).toBeInTheDocument();
+    });
+
+    it("disables Unstick vent for a write (non-admin) profile", () => {
+      useSession.mockReturnValue({ user: { profile: "write", role: "owner" } });
+      renderCard();
+      expect(
+        screen.getByRole("button", { name: "Unstick vent" }),
+      ).toBeDisabled();
+      useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
+    });
+
+    it("disables Unstick vent while a cycle is already in progress, even for an admin", () => {
+      renderCard({
+        zone: makeZone({
+          state: {
+            ...makeZone().state,
+            vent_misalignment_recalibrating_since: new Date().toISOString(),
+          },
+        }),
+      });
+      expect(
+        screen.getByRole("button", { name: "Unstick vent" }),
+      ).toBeDisabled();
+    });
+
+    it("hides Unstick vent for a non-controllable zone", () => {
+      renderCard({ zone: makeZone({ ventHardwareType: "no_vent" }) });
+      expect(
+        screen.queryByRole("button", { name: "Unstick vent" }),
+      ).not.toBeInTheDocument();
     });
   });
 });

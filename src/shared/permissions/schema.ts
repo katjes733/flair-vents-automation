@@ -29,6 +29,15 @@ export interface ActionSchema {
         create?: AccessLevel;
         revoke?: AccessLevel;
       };
+      ventRecalibration?: {
+        // Manual vent-misalignment recalibration trigger + clearing its
+        // chronic warning — admin-only (see ADMIN_PROFILE's own comment):
+        // this forces a real, physical vent movement, unlike every other
+        // dashboard.zone.* action.
+        access?: AccessLevel;
+        trigger?: AccessLevel;
+        clearWarning?: AccessLevel;
+      };
     };
     controlDisarm?: {
       // GlobalStatusBar — whole-installation kill switch

@@ -116,12 +116,14 @@ function buildRealCatalogue(): Map<string, Set<string>> {
     current_temp_c: 20,
     temp_delta_c: -1,
     threshold_c: 0.56,
+    triggered_by: "auto",
   });
   logEvents.logVentMisalignmentRecalibration(log, {
     air_handler_id: "ah-1",
     zone_id: "z-1",
     outcome: "opened",
     waited_ms: 120000,
+    triggered_by: "auto",
   });
   logEvents.logThermalSpikeDetected(log, {
     air_handler_id: "ah-1",

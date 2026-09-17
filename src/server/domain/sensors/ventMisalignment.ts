@@ -1,9 +1,19 @@
 import type { HvacCallState, ZoneClassification } from "~/server/domain/types";
 
+// Which source started the currently-running (or most recently finished)
+// cycle — a manual trigger is an explicit maintenance action, not the
+// detector noticing a problem, so it's tracked distinctly: surfaced in the
+// log/history so a person reviewing recalibration history can tell "I did
+// that on purpose" apart from a real detection, and excluded from chronic
+// escalation for the same reason (see isChronicallyMisaligned's own
+// comment).
+export type VentMisalignmentTrigger = "auto" | "manual";
+
 export interface VentMisalignmentState {
   windowSinceMs: number | null;
   windowStartTempC: number | null;
   recalibratingSinceMs: number | null;
+  recalibrationTrigger: VentMisalignmentTrigger | null;
   lastRecalibratedAtMs: number | null;
 }
 
@@ -11,13 +21,18 @@ export const EMPTY_VENT_MISALIGNMENT_STATE: VentMisalignmentState = {
   windowSinceMs: null,
   windowStartTempC: null,
   recalibratingSinceMs: null,
+  recalibrationTrigger: null,
   lastRecalibratedAtMs: null,
 };
 
 export type VentMisalignmentAction =
   | { kind: "none" }
-  | { kind: "force_open" }
-  | { kind: "recalibration_finished"; outcome: "opened" | "timed_out" };
+  | { kind: "force_open"; triggeredBy: VentMisalignmentTrigger }
+  | {
+      kind: "recalibration_finished";
+      outcome: "opened" | "timed_out";
+      triggeredBy: VentMisalignmentTrigger;
+    };
 
 export interface VentMisalignmentEvaluation {
   next: VentMisalignmentState;
@@ -66,11 +81,25 @@ export interface VentMisalignmentEvaluation {
  * occasional deliberate open/close is cheaper than a vent silently stuck
  * open all night. `force_open` is returned every tick the cycle is still
  * waiting for the vent to actually report itself open; the caller is
- * responsible for actually commanding 100% while that's the action.
- * `maxOpenWaitMs` bounds how long that wait can run — a vent with a
- * genuinely stuck/disconnected motor shouldn't hold its zone open
- * indefinitely — and either a real open or a timeout starts
- * `cooldownMs`, so a persistently-faulty vent isn't retried every tick.
+ * responsible for actually commanding 100% while that's the action, and
+ * for snapping straight back to the pipeline's own natural target the
+ * instant `recalibration_finished` fires rather than letting the ordinary
+ * ramp walk back down over several minutes — a real, confirmed cost: an
+ * uncorrected ramp-down held the vent substantially open for ~10 more
+ * minutes after every cycle, actively cooling an already-overcooled room
+ * the whole time. `maxOpenWaitMs` bounds how long the open-wait can run —
+ * a vent with a genuinely stuck/disconnected motor shouldn't hold its zone
+ * open indefinitely — and either a real open or a timeout starts
+ * `debounceMs`, a short settle period (not a long cooldown — see its own
+ * comment in systemSettings.ts) before detection can re-open a window.
+ *
+ * `manualTriggerRequested` starts the exact same force-open/wait cycle on
+ * demand — a deliberate maintenance action (verify a vent someone
+ * physically inspected actually recloses cleanly), not the detector
+ * itself noticing a problem — so it bypasses the debounce and the
+ * tracking-window/temp-threshold conditions entirely; the only thing that
+ * blocks it is a cycle already in progress (checked first, regardless of
+ * origin).
  */
 export function evaluateVentMisalignment(params: {
   nowMs: number;
@@ -86,36 +115,58 @@ export function evaluateVentMisalignment(params: {
   calibratedTempC: number | null;
   prior: VentMisalignmentState;
   tempThresholdC: number;
-  cooldownMs: number;
+  debounceMs: number;
   maxOpenWaitMs: number;
+  manualTriggerRequested: boolean;
 }): VentMisalignmentEvaluation {
   const { prior } = params;
 
   if (prior.recalibratingSinceMs !== null) {
     const waitedMs = params.nowMs - prior.recalibratingSinceMs;
     const timedOut = waitedMs >= params.maxOpenWaitMs;
+    const triggeredBy = prior.recalibrationTrigger ?? "auto";
     if (params.allVentsReportedOpenEnough || timedOut) {
       return {
         next: {
           windowSinceMs: null,
           windowStartTempC: null,
           recalibratingSinceMs: null,
+          recalibrationTrigger: null,
           lastRecalibratedAtMs: params.nowMs,
         },
         action: {
           kind: "recalibration_finished",
           outcome: params.allVentsReportedOpenEnough ? "opened" : "timed_out",
+          triggeredBy,
         },
         suspected: false,
       };
     }
-    return { next: prior, action: { kind: "force_open" }, suspected: true };
+    return {
+      next: prior,
+      action: { kind: "force_open", triggeredBy },
+      suspected: true,
+    };
   }
 
-  const inCooldown =
+  if (params.manualTriggerRequested) {
+    return {
+      next: {
+        windowSinceMs: null,
+        windowStartTempC: null,
+        recalibratingSinceMs: params.nowMs,
+        recalibrationTrigger: "manual",
+        lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
+      },
+      action: { kind: "force_open", triggeredBy: "manual" },
+      suspected: true,
+    };
+  }
+
+  const inDebounce =
     prior.lastRecalibratedAtMs !== null &&
-    params.nowMs - prior.lastRecalibratedAtMs < params.cooldownMs;
-  if (inCooldown) {
+    params.nowMs - prior.lastRecalibratedAtMs < params.debounceMs;
+  if (inDebounce) {
     return {
       next: {
         ...EMPTY_VENT_MISALIGNMENT_STATE,
@@ -155,6 +206,7 @@ export function evaluateVentMisalignment(params: {
         windowSinceMs: params.nowMs,
         windowStartTempC: params.calibratedTempC,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
       },
       action: { kind: "none" },
@@ -181,11 +233,42 @@ export function evaluateVentMisalignment(params: {
       windowSinceMs: prior.windowSinceMs,
       windowStartTempC: prior.windowStartTempC,
       recalibratingSinceMs: params.nowMs,
+      recalibrationTrigger: "auto",
       lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
     },
-    action: { kind: "force_open" },
+    action: { kind: "force_open", triggeredBy: "auto" },
     suspected: true,
   };
+}
+
+/**
+ * Chronic escalation: every recorded recalibration outcome can read
+ * "opened" (proof the motor moves when commanded, not proof it actually
+ * seals afterward) and the same zone still needs another cycle a few
+ * hours later — real, confirmed live across three zones on one air
+ * handler over 2.5 days, each recalibrating roughly once every debounce
+ * period, indefinitely. `thresholdCount` or more completed recalibrations
+ * within `windowMs` is treated as strong evidence of a persistent physical
+ * problem recalibration can't fix by cycling it, not a one-off. A derived
+ * value, not its own persisted state — recomputed from
+ * `recalibrationHistoryMs` every time, so the manual "clear warning"
+ * action is nothing more than clearing that history; there's nothing else
+ * to keep in sync. Manually-triggered cycles are deliberately excluded
+ * from the history this counts against (see the caller, which only
+ * records an `auto`-triggered completion) — a maintenance check someone
+ * ran on purpose isn't evidence of anything by itself.
+ */
+export function isChronicallyMisaligned(params: {
+  recalibrationHistoryMs: readonly number[];
+  nowMs: number;
+  windowMs: number;
+  thresholdCount: number;
+}): boolean {
+  const cutoffMs = params.nowMs - params.windowMs;
+  const recentCount = params.recalibrationHistoryMs.filter(
+    (ms) => ms > cutoffMs,
+  ).length;
+  return recentCount >= params.thresholdCount;
 }
 
 /**

@@ -88,6 +88,37 @@ describe("getElementState", () => {
     );
   });
 
+  // Regression coverage: dashboard.zone.ventRecalibration is the one
+  // dashboard.zone.* leaf that's admin-only, unlike every sibling under
+  // dashboard.zone (create/edit/delete/override), which WRITE_PROFILE
+  // already grants in full — this forces a real, physical vent movement,
+  // so it's held to the same bar as installationAdmin rather than
+  // ordinary dashboard actions.
+  it("WRITE_PROFILE has no access to ventRecalibration, even though it has full access to every other dashboard.zone action", () => {
+    expect(
+      getElementState("write", "dashboard.zone.ventRecalibration.trigger"),
+    ).toBe("none");
+    expect(
+      getElementState("write", "dashboard.zone.ventRecalibration.clearWarning"),
+    ).toBe("none");
+    expect(getElementState("write", "dashboard.zone.override.create")).toBe(
+      "write",
+    );
+  });
+
+  it("ADMIN_PROFILE grants full access to ventRecalibration, on top of everything WRITE_PROFILE already grants", () => {
+    expect(
+      getElementState("admin", "dashboard.zone.ventRecalibration.trigger"),
+    ).toBe("write");
+    expect(
+      getElementState("admin", "dashboard.zone.ventRecalibration.clearWarning"),
+    ).toBe("write");
+    expect(getElementState("admin", "dashboard.zone.create")).toBe("write");
+    expect(getElementState("admin", "dashboard.zone.override.create")).toBe(
+      "write",
+    );
+  });
+
   it("every profile grants full access to managing one's own passkeys", () => {
     expect(getElementState("read", "account.access")).toBe("write");
     expect(getElementState("write", "account.access")).toBe("write");

@@ -2,13 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   evaluateVentMisalignment,
   updateRecalibrationHistory,
+  isChronicallyMisaligned,
   EMPTY_VENT_MISALIGNMENT_STATE,
   type VentMisalignmentState,
 } from "~/server/domain/sensors/ventMisalignment";
 
 const NOW = 1_000_000;
 const THRESHOLD_C = 0.56;
-const COOLDOWN_MS = 24 * 3600000;
+const DEBOUNCE_MS = 3 * 60000;
 const MAX_OPEN_WAIT_MS = 10 * 60000;
 
 function base(
@@ -24,8 +25,9 @@ function base(
     calibratedTempC: 21,
     prior: EMPTY_VENT_MISALIGNMENT_STATE,
     tempThresholdC: THRESHOLD_C,
-    cooldownMs: COOLDOWN_MS,
+    debounceMs: DEBOUNCE_MS,
     maxOpenWaitMs: MAX_OPEN_WAIT_MS,
+    manualTriggerRequested: false,
     ...overrides,
   };
 }
@@ -38,6 +40,7 @@ describe("evaluateVentMisalignment", () => {
         windowSinceMs: NOW,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: null,
       });
       expect(result.action).toEqual({ kind: "none" });
@@ -55,6 +58,7 @@ describe("evaluateVentMisalignment", () => {
         windowSinceMs: NOW - 600_000,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -69,6 +73,7 @@ describe("evaluateVentMisalignment", () => {
         windowSinceMs: NOW - 600_000,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -86,6 +91,7 @@ describe("evaluateVentMisalignment", () => {
         windowSinceMs: NOW - 600_000,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -100,6 +106,7 @@ describe("evaluateVentMisalignment", () => {
         windowSinceMs: NOW - 600_000,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -116,6 +123,7 @@ describe("evaluateVentMisalignment", () => {
       windowSinceMs: NOW - 1_800_000,
       windowStartTempC: 21,
       recalibratingSinceMs: null,
+      recalibrationTrigger: null,
       lastRecalibratedAtMs: null,
     };
 
@@ -123,11 +131,15 @@ describe("evaluateVentMisalignment", () => {
       const result = evaluateVentMisalignment(
         base({ prior, calibratedTempC: 21 - THRESHOLD_C - 0.01 }),
       );
-      expect(result.action).toEqual({ kind: "force_open" });
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "auto",
+      });
       expect(result.suspected).toBe(true);
       expect(result.next).toEqual({
         ...prior,
         recalibratingSinceMs: NOW,
+        recalibrationTrigger: "auto",
       });
     });
 
@@ -145,6 +157,7 @@ describe("evaluateVentMisalignment", () => {
       windowSinceMs: NOW - 1_800_000,
       windowStartTempC: 19,
       recalibratingSinceMs: null,
+      recalibrationTrigger: null,
       lastRecalibratedAtMs: null,
     };
 
@@ -156,7 +169,10 @@ describe("evaluateVentMisalignment", () => {
           calibratedTempC: 19 + THRESHOLD_C + 0.01,
         }),
       );
-      expect(result.action).toEqual({ kind: "force_open" });
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "auto",
+      });
       expect(result.suspected).toBe(true);
     });
 
@@ -173,6 +189,7 @@ describe("evaluateVentMisalignment", () => {
       windowSinceMs: NOW - 1_800_000,
       windowStartTempC: 21,
       recalibratingSinceMs: NOW - 120_000,
+      recalibrationTrigger: "auto",
       lastRecalibratedAtMs: null,
     };
 
@@ -183,7 +200,10 @@ describe("evaluateVentMisalignment", () => {
           allVentsReportedOpenEnough: false,
         }),
       );
-      expect(result.action).toEqual({ kind: "force_open" });
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "auto",
+      });
       expect(result.suspected).toBe(true);
       expect(result.next).toEqual(recalibrating);
     });
@@ -200,11 +220,32 @@ describe("evaluateVentMisalignment", () => {
           allVentsReportedOpenEnough: false,
         }),
       );
-      expect(result.action).toEqual({ kind: "force_open" });
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "auto",
+      });
       expect(result.next).toEqual(recalibrating);
     });
 
-    it("finishes as 'opened' once the vent actually reports itself open, clearing all state and starting the cooldown", () => {
+    // A pending manual request must never interrupt an already-running
+    // cycle, regardless of trigger — the "already recalibrating" check
+    // always takes priority.
+    it("ignores a manual trigger request while a cycle is already in progress", () => {
+      const result = evaluateVentMisalignment(
+        base({
+          prior: recalibrating,
+          allVentsReportedOpenEnough: false,
+          manualTriggerRequested: true,
+        }),
+      );
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "auto",
+      });
+      expect(result.next).toEqual(recalibrating);
+    });
+
+    it("finishes as 'opened' once the vent actually reports itself open, clearing all state and starting the debounce — reporting whichever trigger started the cycle", () => {
       const result = evaluateVentMisalignment(
         base({
           prior: recalibrating,
@@ -214,17 +255,19 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({
         kind: "recalibration_finished",
         outcome: "opened",
+        triggeredBy: "auto",
       });
       expect(result.suspected).toBe(false);
       expect(result.next).toEqual({
         windowSinceMs: null,
         windowStartTempC: null,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: NOW,
       });
     });
 
-    it("times out and finishes as 'timed_out' if the vent never reports itself open in time, still starting the cooldown", () => {
+    it("times out and finishes as 'timed_out' if the vent never reports itself open in time, still starting the debounce", () => {
       const stuckSinceStart: VentMisalignmentState = {
         ...recalibrating,
         recalibratingSinceMs: NOW - MAX_OPEN_WAIT_MS,
@@ -235,23 +278,68 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({
         kind: "recalibration_finished",
         outcome: "timed_out",
+        triggeredBy: "auto",
       });
       expect(result.next).toEqual({
         windowSinceMs: null,
         windowStartTempC: null,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: NOW,
       });
     });
   });
 
-  describe("cooldown", () => {
-    it("takes no action and clears any window while a recent recalibration is still on cooldown", () => {
+  describe("manual trigger", () => {
+    it("starts a cycle immediately on request, bypassing the debounce and tracking-window conditions entirely", () => {
+      // None of the ordinary tracking conditions hold (not satisfied, not
+      // at the closed extreme, not even callActive) — a manual trigger
+      // doesn't care, unlike the automatic path.
+      const result = evaluateVentMisalignment(
+        base({
+          manualTriggerRequested: true,
+          classification: "demanding",
+          targetAtClosedExtreme: false,
+          callActive: false,
+        }),
+      );
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "manual",
+      });
+      expect(result.suspected).toBe(true);
+      expect(result.next).toEqual({
+        windowSinceMs: null,
+        windowStartTempC: null,
+        recalibratingSinceMs: NOW,
+        recalibrationTrigger: "manual",
+        lastRecalibratedAtMs: null,
+      });
+    });
+
+    it("starts a cycle on request even while a debounce from a prior cycle would otherwise block detection", () => {
+      const prior: VentMisalignmentState = {
+        ...EMPTY_VENT_MISALIGNMENT_STATE,
+        lastRecalibratedAtMs: NOW - 60_000, // 1 minute ago, well under the debounce
+      };
+      const result = evaluateVentMisalignment(
+        base({ prior, manualTriggerRequested: true }),
+      );
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "manual",
+      });
+    });
+  });
+
+  describe("debounce", () => {
+    it("takes no action and clears any window while a recent recalibration is still within the debounce", () => {
       const prior: VentMisalignmentState = {
         windowSinceMs: NOW - 600_000,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
-        lastRecalibratedAtMs: NOW - 60_000, // 1 minute ago, well under 24h
+        recalibrationTrigger: null,
+        lastRecalibratedAtMs: NOW - 60_000, // 1 minute ago, under the 3-min debounce
       };
       const result = evaluateVentMisalignment(
         base({ prior, calibratedTempC: 19 }), // would otherwise flag
@@ -263,18 +351,20 @@ describe("evaluateVentMisalignment", () => {
       });
     });
 
-    it("resumes tracking once the cooldown has fully elapsed", () => {
+    it("resumes tracking once the debounce has fully elapsed", () => {
       const prior: VentMisalignmentState = {
         windowSinceMs: null,
         windowStartTempC: null,
         recalibratingSinceMs: null,
-        lastRecalibratedAtMs: NOW - COOLDOWN_MS,
+        recalibrationTrigger: null,
+        lastRecalibratedAtMs: NOW - DEBOUNCE_MS,
       };
       const result = evaluateVentMisalignment(base({ prior }));
       expect(result.next).toEqual({
         windowSinceMs: NOW,
         windowStartTempC: 21,
         recalibratingSinceMs: null,
+        recalibrationTrigger: null,
         lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
       });
     });
@@ -330,5 +420,60 @@ describe("updateRecalibrationHistory", () => {
         justCompletedMs: NOW,
       }),
     ).toEqual([stillInside, NOW]);
+  });
+});
+
+describe("isChronicallyMisaligned", () => {
+  const WINDOW_MS = 2 * 3600000;
+  const THRESHOLD_COUNT = 3;
+
+  it("is false when fewer than the threshold count fall within the window", () => {
+    expect(
+      isChronicallyMisaligned({
+        recalibrationHistoryMs: [NOW - 3600000, NOW - 1_800_000],
+        nowMs: NOW,
+        windowMs: WINDOW_MS,
+        thresholdCount: THRESHOLD_COUNT,
+      }),
+    ).toBe(false);
+  });
+
+  it("is true once the threshold count falls within the window", () => {
+    expect(
+      isChronicallyMisaligned({
+        recalibrationHistoryMs: [NOW - 3600000, NOW - 1_800_000, NOW - 600_000],
+        nowMs: NOW,
+        windowMs: WINDOW_MS,
+        thresholdCount: THRESHOLD_COUNT,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not count entries outside the window even if the raw history is longer", () => {
+    // Three total entries, but only two fall inside the 2h window — the
+    // third is 3h old, spread out rather than clustered.
+    expect(
+      isChronicallyMisaligned({
+        recalibrationHistoryMs: [
+          NOW - 3 * 3600000,
+          NOW - 1_800_000,
+          NOW - 600_000,
+        ],
+        nowMs: NOW,
+        windowMs: WINDOW_MS,
+        thresholdCount: THRESHOLD_COUNT,
+      }),
+    ).toBe(false);
+  });
+
+  it("is false on an empty history", () => {
+    expect(
+      isChronicallyMisaligned({
+        recalibrationHistoryMs: [],
+        nowMs: NOW,
+        windowMs: WINDOW_MS,
+        thresholdCount: THRESHOLD_COUNT,
+      }),
+    ).toBe(false);
   });
 });

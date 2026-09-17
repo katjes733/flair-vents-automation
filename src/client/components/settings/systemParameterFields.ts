@@ -493,12 +493,12 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "advanced",
       },
       {
-        path: "vent_misalignment_recalibration_cooldown_hours",
-        baseLabel: "Vent misalignment recalibration cooldown",
-        kind: "hours",
+        path: "vent_misalignment_recalibration_debounce_minutes",
+        baseLabel: "Vent misalignment recalibration debounce",
+        kind: "minutes",
         min: 0,
         description:
-          "How long to wait after a recalibration cycle finishes (opened or timed out) before starting a new detection window for the same zone — prevents repeatedly cycling a vent that's genuinely, persistently misaligned.",
+          "How long to wait after a recalibration cycle finishes (opened or timed out) before starting a new detection window for the same zone — just long enough to let the just-reclosed vent's own reading settle, not a long cooldown. See chronic escalation below for what actually protects against repeatedly cycling a persistently-faulty vent.",
         tier: "advanced",
       },
       {
@@ -507,7 +507,7 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         kind: "minutes",
         min: 0,
         description:
-          "How long a forced-open recalibration will wait for the vent to actually report itself open before giving up and treating the cycle as timed out (still starting the cooldown either way).",
+          "How long a forced-open recalibration will wait for the vent to actually report itself open before giving up and treating the cycle as timed out (still starting the debounce either way).",
         tier: "advanced",
       },
       {
@@ -519,7 +519,25 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           { value: "false", label: "Disabled" },
         ],
         description:
-          "Send an email each time a vent misalignment is suspected. Off by default — auto-recalibration handles it without intervention, and this is common enough on real hardware that alerting on it would just be noise. History is always visible on the zone's Telemetry page regardless of this setting.",
+          "Send an email each time a vent misalignment is suspected. Off by default — auto-recalibration handles it without intervention, and this is common enough on real hardware that alerting on it would just be noise. History is always visible on the zone's Telemetry page regardless of this setting. Chronic escalation below always alerts regardless of this flag.",
+        tier: "advanced",
+      },
+      {
+        path: "vent_misalignment_chronic_threshold_count",
+        baseLabel: "Vent misalignment chronic threshold",
+        kind: "int",
+        min: 1,
+        description:
+          "How many completed recalibrations (either outcome) within the chronic window below mark a zone as chronically misaligned — flagged clearly in the dashboard and always emailed, since repeated recalibrations that each report success but still recur is strong evidence of a physical sealing problem, not a one-off. Still commanded normally; there's no automated way to physically fix a vent, only to notice and flag it.",
+        tier: "advanced",
+      },
+      {
+        path: "vent_misalignment_chronic_window_hours",
+        baseLabel: "Vent misalignment chronic window",
+        kind: "hours",
+        min: 0,
+        description:
+          "The rolling window the chronic threshold above counts recalibrations within.",
         tier: "advanced",
       },
       {

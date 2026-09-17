@@ -194,27 +194,60 @@ export const systemSettingsConfigSchema = z.object({
   // well past ordinary sensor noise (~0.3-0.5°C observed elsewhere in this
   // codebase).
   vent_misalignment_temp_threshold_c: z.number().positive().default(0.56),
-  // How long a zone must stay clear of a completed (or abandoned, see
-  // vent_misalignment_max_open_wait_minutes) recalibration before
-  // detection can flag it again — a vent with a genuine, persistent
-  // hardware fault shouldn't get cycled open and shut every time its
-  // temp window re-triggers. PLACEHOLDER pending real-world tuning.
-  vent_misalignment_recalibration_cooldown_hours: z
+  // A real, confirmed gap found live: the original 4-24h cooldown here
+  // meant a genuinely-leaking vent (not a stuck-estimate, one the fix
+  // itself doesn't actually resolve — see recalibration's own "flip back
+  // to target instead of a slow ramp" comment below) went completely
+  // unmonitored between cycles, sometimes for most of a day, silently
+  // overcooling the room the whole time. Renamed and shortened to a
+  // debounce instead of a cooldown: now only long enough to let the
+  // just-reclosed vent's own temperature reading settle before the
+  // detection window can re-open, not a "stop watching" period — the
+  // chronic-escalation settings below (not a long cooldown) are what
+  // actually protects against cycling a persistently-faulty vent forever.
+  // PLACEHOLDER pending real-world tuning.
+  vent_misalignment_recalibration_debounce_minutes: z
     .number()
     .positive()
-    .default(24),
+    .default(3),
   // Safety timeout on the "opening" half of the home cycle — if the vent
   // never reports itself open (a genuinely stuck/disconnected motor, not
   // just a misreporting one), this stops the cycle from holding the zone
-  // fully open indefinitely; the cooldown above still applies afterward,
-  // so a truly broken vent isn't retried every tick either.
+  // fully open indefinitely; the debounce above still applies afterward.
   vent_misalignment_max_open_wait_minutes: z.number().positive().default(10),
   // Independent of the main feature flag — this is a common, expected,
   // self-correcting situation (see the feature's own comment above), so it
   // reports into the tick decision/telemetry like any other zone-level
   // flag but does not also warrant an email by default; flip this on only
-  // if you want that email too.
+  // if you want that email too. Chronic escalation (below) is deliberately
+  // NOT gated behind this flag — a zone that keeps re-triggering despite
+  // repeated "successful" recalibrations is a materially more serious
+  // signal than a single occurrence, and always alerts regardless.
   vent_misalignment_alert_enabled: z.boolean().default(false),
+  // Chronic escalation: every recorded recalibration outcome can read
+  // "opened" (the vent visibly moves when commanded — proof the motor
+  // works, not proof it actually seals) and the same zone still needs
+  // another cycle a few hours later — real, confirmed live across three
+  // zones on one air handler over 2.5 days, each recalibrating roughly
+  // once every cooldown/debounce period, indefinitely. That repetition is
+  // itself the signal: a vent this is happening to repeatedly almost
+  // certainly has a physical sealing problem recalibration can't fix by
+  // cycling it, not a one-off estimate drift. `thresholdCount` or more
+  // completed recalibrations (either outcome) within
+  // `chronic_window_hours` marks the zone chronic — flagged clearly in the
+  // dashboard and always emailed (see vent_misalignment_alert_enabled's
+  // own comment), but still commanded normally: there's no way yet for a
+  // person to manually clear a "locked out" zone, so degrading its control
+  // would just make comfort worse with no compensating benefit. Clears
+  // only when a person manually acknowledges it (there's no automatic
+  // self-healing check for "is the physical vent actually fixed now") or
+  // its own rolling window ages the qualifying occurrences out.
+  vent_misalignment_chronic_threshold_count: z
+    .number()
+    .int()
+    .positive()
+    .default(3),
+  vent_misalignment_chronic_window_hours: z.number().positive().default(2),
   // Demand stall detection — the mirror-image failure to vent
   // misalignment above: a *demanding* zone whose vent Flair confirms
   // reaching a real, meaningfully-open commanded position, but whose room

@@ -97,11 +97,26 @@ export const WRITE_PROFILE: ActionSchema = {
   // installationAdmin: still omitted — still "none" for Write
 };
 
-// Admin = Write plus the one admin-only domain. Composing via spread is
-// fine here since it's authoring convenience, not a semantic dependency a
-// future custom profile would need to replicate.
+// Admin = Write plus the one admin-only domain, plus one admin-only leaf
+// nested inside dashboard.zone (ventRecalibration — see its own comment,
+// schema.ts). Composing via spread is fine here since it's authoring
+// convenience, not a semantic dependency a future custom profile would
+// need to replicate; dashboard.zone itself has to be spread explicitly
+// (not just the top-level object) so ventRecalibration is added alongside
+// WRITE_PROFILE's existing zone leaves rather than replacing them.
 export const ADMIN_PROFILE: ActionSchema = {
   ...WRITE_PROFILE,
+  dashboard: {
+    ...WRITE_PROFILE.dashboard,
+    zone: {
+      ...WRITE_PROFILE.dashboard!.zone,
+      ventRecalibration: {
+        access: "write",
+        trigger: "write",
+        clearWarning: "write",
+      },
+    },
+  },
   installationAdmin: {
     access: "write",
     inviteMember: "write",
