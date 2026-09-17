@@ -204,6 +204,7 @@ export interface VentMisalignmentSuspectedFields {
   current_temp_c: number;
   temp_delta_c: number;
   threshold_c: number;
+  triggered_by: "auto" | "manual";
 }
 export function logVentMisalignmentSuspected(
   log: Logger,
@@ -220,6 +221,7 @@ export interface VentMisalignmentRecalibrationFields {
   zone_id: string;
   outcome: "opened" | "timed_out";
   waited_ms: number;
+  triggered_by: "auto" | "manual";
 }
 export function logVentMisalignmentRecalibration(
   log: Logger,

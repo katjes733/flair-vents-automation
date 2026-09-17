@@ -347,7 +347,25 @@ export function computeZoneCommands(params: {
     // fanOnlyIdleBaselinePosition's own comment), since FAN_ONLY's whole
     // purpose is circulating air house-wide, not conserving conditioned
     // air a satisfied zone doesn't need.
-    if (!callActive && params.state === "FAN_ONLY") {
+    //
+    // Sleep Mode is the one exception. A real, confirmed overnight
+    // incident: a satisfied bedroom zone got yanked open toward 100%
+    // every time the blower ran a brief FAN_ONLY stretch between
+    // compressor cycles (ten separate cycles in one night, each producing
+    // several genuine motor movements) — this branch runs, and `continue`s,
+    // before sleep_quiet_anchor's own logic even exists further down in
+    // this function, so an actively-sleeping zone had no way to hold
+    // still through it regardless of sleep_quiet_anchor_enabled. A
+    // sleeping room's own quiet, comfort-focused resting position takes
+    // priority over house-wide circulation during Sleep Mode, so an
+    // actively-sleeping zone instead falls through to the same
+    // anchor-aware path IDLE already uses (see that fix's own comment
+    // just below) — FAN_ONLY becomes just another idle gap for that zone,
+    // not its own separate open-for-circulation state. Checked directly
+    // here, not gated on sleep_quiet_anchor_enabled — even without the
+    // anchor's own extra hold, ramping smoothly toward the comfort floor
+    // beats being forced open, exactly as IDLE already established.
+    if (!callActive && params.state === "FAN_ONLY" && !zone.sleepModeActive) {
       const rawFanOnly = classifyZone({
         hasTemperatureSensor: zone.hasTemperatureSensor,
         state: ARBITRARY_IDLE_CALL_STATE, // classification is diagnostic only during FAN_ONLY

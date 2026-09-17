@@ -92,16 +92,29 @@ export interface ZoneRuntimeState {
   vent_misalignment_window_since: string | null;
   vent_misalignment_window_start_temp: number | null;
   vent_misalignment_recalibrating_since: string | null;
+  // Which source started the in-progress (or most recently finished)
+  // cycle — "manual" for an explicit maintenance trigger, "auto" for the
+  // detector's own temp-drift window. Null whenever recalibrating_since is
+  // also null. See VentMisalignmentTrigger's own comment.
+  vent_misalignment_recalibration_trigger: "auto" | "manual" | null;
   vent_misalignment_last_recalibrated_at: string | null;
   // A rolling "quick view" audit trail, not a lifetime total — one ISO
-  // timestamp per completed recalibration cycle (either outcome), pruned
-  // to the trailing 24h on every tick the feature runs. Deeper analysis
-  // (which zone, what time of day, how long each cycle's own open took)
-  // is expected to come from the structured Loki events instead of this
-  // list, which exists only to answer "is this actively happening to
-  // this zone right now" at a glance. See updateRecalibrationHistory's
-  // own comment.
+  // timestamp per completed *auto*-triggered recalibration cycle (either
+  // outcome; a manually-triggered one is deliberately never added here —
+  // see isChronicallyMisaligned's own comment), pruned to the trailing 24h
+  // on every tick the feature runs. Deeper analysis (which zone, what time
+  // of day, how long each cycle's own open took) is expected to come from
+  // the structured Loki events instead of this list, which exists to
+  // answer "is this actively happening to this zone right now" at a
+  // glance, and is also the entire input to chronic-escalation detection.
   vent_misalignment_recalibration_history: string[];
+  // Set by a person requesting a manual recalibration (see
+  // dashboard.zone.ventRecalibration.trigger) — an ISO timestamp of the
+  // request, cleared by the tick loop the instant it's actually consumed
+  // (starts a fresh recalibratingSinceMs). Left set if a *different* cycle
+  // happens to already be in progress when the request arrives, so it's
+  // picked up as soon as that one finishes rather than silently dropped.
+  vent_manual_recalibration_requested_at: string | null;
   // Demand stall detection (see demand_stall_detection_enabled) — the
   // mirror-image failure to vent misalignment above: a *demanding* zone
   // whose vent Flair confirms reaching a real, non-floor commanded
@@ -150,8 +163,10 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   vent_misalignment_window_since: null,
   vent_misalignment_window_start_temp: null,
   vent_misalignment_recalibrating_since: null,
+  vent_misalignment_recalibration_trigger: null,
   vent_misalignment_last_recalibrated_at: null,
   vent_misalignment_recalibration_history: [],
+  vent_manual_recalibration_requested_at: null,
   demand_stall_window_since: null,
   demand_stall_window_start_temp: null,
   demand_stall_recalibrating_since: null,

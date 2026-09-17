@@ -3704,6 +3704,10 @@ describe("runTick — vent misalignment auto-recalibration", () => {
 
     const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
     expect(z1.vent_misalignment_suspected).toBe(false);
+    // The actual fix: snaps straight back to the pipeline's own natural
+    // target this same tick instead of leaving the forced-100 override in
+    // place for the ordinary ramp to walk down over several more minutes.
+    expect(z1.vents[0]?.commanded_position_pct).not.toBe(100);
     const after = persisted.get("z1")!;
     expect(after.vent_misalignment_recalibrating_since).toBeNull();
     expect(after.vent_misalignment_window_since).toBeNull();
@@ -3712,6 +3716,93 @@ describe("runTick — vent misalignment auto-recalibration", () => {
     expect(after.vent_misalignment_recalibration_history).toEqual([
       new Date(NOW).toISOString(),
     ]);
+  });
+
+  it("starts a cycle immediately on a manual trigger request, bypassing every tracking condition, and clears the request once consumed", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_temp_threshold_c: 0.56,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const requestedState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_manual_recalibration_requested_at: new Date(
+        NOW - 1000,
+      ).toISOString(),
+    };
+    // Nowhere near satisfied/closed/tracking a call — none of the
+    // ordinary tracking conditions hold, unlike every other test in this
+    // block. A manual trigger doesn't care.
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 30,
+        ductC: 14,
+        percentOpen: 0,
+      },
+    ]);
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1", state: requestedState })],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    expect(z1.vents[0]?.commanded_position_pct).toBe(100);
+    const after = persisted.get("z1")!;
+    expect(after.vent_misalignment_recalibrating_since).not.toBeNull();
+    expect(after.vent_misalignment_recalibration_trigger).toBe("manual");
+    // Consumed — cleared so it doesn't re-trigger a second cycle later.
+    expect(after.vent_manual_recalibration_requested_at).toBeNull();
+  });
+
+  it("alerts once a zone crosses the chronic-recalibration threshold, regardless of vent_misalignment_alert_enabled", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_alert_enabled: false, // deliberately off
+      vent_misalignment_chronic_threshold_count: 3,
+      vent_misalignment_chronic_window_hours: 2,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const chronicState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_misalignment_recalibration_history: [
+        new Date(NOW - 3600000).toISOString(),
+        new Date(NOW - 1_800_000).toISOString(),
+        new Date(NOW - 600_000).toISOString(),
+      ],
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 21,
+        ductC: 14,
+        percentOpen: 0,
+      },
+    ]);
+    const deps = makeDeps(client, persisted, NOW);
+    await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [makeZone({ id: "z1", flairRoomId: "room-1", state: chronicState })],
+      ctx,
+      deps,
+    );
+
+    const alerting = deps.alerting as ReturnType<
+      typeof createInMemoryAlertingClient
+    >;
+    expect(alerting.getSentKeys().has("alert:ventMisalignmentChronic:z1")).toBe(
+      true,
+    );
   });
 
   it("prunes recalibration history entries older than 24h while appending a newly-finished one", async () => {

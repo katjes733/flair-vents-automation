@@ -113,6 +113,14 @@ export interface ZoneRuntimeState {
   // undefined, since the server backfills every zone's state against
   // EMPTY_ZONE_RUNTIME_STATE before responding.
   vent_misalignment_recalibration_history: string[];
+  // Non-null exactly while a recalibration cycle (either trigger) is
+  // actively holding the vent open, waiting for it to report so — the
+  // basis for the dashboard's "recalibrating" progress indicator.
+  vent_misalignment_recalibrating_since: string | null;
+  // Which source started that in-progress (or most recently finished)
+  // cycle — "manual" for an explicit maintenance trigger via the
+  // dashboard, "auto" for the detector's own temp-drift window.
+  vent_misalignment_recalibration_trigger: "auto" | "manual" | null;
   // Demand stall detection — see demand_stall_detection_enabled's own
   // comment (systemSettings.ts) and evaluateDemandStall (demandStall.ts)
   // for the mirror-image failure this tracks: a demanding zone whose
@@ -153,6 +161,13 @@ export interface Zone {
   ventHardwareType: VentHardwareType;
   config: ZoneConfig;
   state: ZoneRuntimeState;
+  // Server-computed (not part of state's own jsonb blob, and not
+  // persisted anywhere) — see vent_misalignment_chronic_threshold_count's
+  // own comment (systemSettings.ts). Derived fresh from
+  // state.vent_misalignment_recalibration_history against the current
+  // system settings every time a zone is served, so it's correct even
+  // without a recent tick decision and needs nothing kept in sync.
+  ventMisalignmentChronic: boolean;
 }
 
 export interface CreateZoneRequest {
@@ -205,4 +220,22 @@ export async function updateZone(
 
 export async function deleteZone(id: string): Promise<void> {
   await httpClient.delete(`/zones/${id}`);
+}
+
+// Requests a manual vent recalibration (full open, then straight back to
+// target once it reports open) — fire-and-forget: the control tick loop
+// (not this request) actually runs the cycle, typically starting within
+// 60s and resolving within another minute or two. The dashboard reflects
+// progress via its existing poll, not a response from this call.
+export async function triggerVentRecalibration(zoneId: string): Promise<void> {
+  await httpClient.post(`/vent-recalibration/${zoneId}/trigger`);
+}
+
+// Clears a zone's "chronically misaligned" warning — resets its
+// recalibration history, so the badge disappears until enough new
+// recalibrations recur to re-flag it.
+export async function clearVentMisalignmentWarning(
+  zoneId: string,
+): Promise<void> {
+  await httpClient.post(`/vent-recalibration/${zoneId}/clear-warning`);
 }

@@ -29,6 +29,11 @@ vi.mock("~/server/util/routes/zone", () => ({
   getZoneById,
 }));
 
+const { getSystemSettings } = vi.hoisted(() => ({
+  getSystemSettings: vi.fn(),
+}));
+vi.mock("~/server/util/routes/systemSettings", () => ({ getSystemSettings }));
+
 const {
   createZoneForInstallation,
   updateZoneWithValidation,
@@ -60,14 +65,30 @@ beforeEach(() => {
   createZoneForInstallation.mockReset();
   updateZoneWithValidation.mockReset();
   deleteZoneWithValidation.mockReset();
+  getSystemSettings.mockReset().mockResolvedValue({
+    vent_misalignment_chronic_window_hours: 2,
+    vent_misalignment_chronic_threshold_count: 3,
+  });
 });
+
+const EMPTY_STATE_FOR_TEST = {
+  vent_misalignment_recalibration_history: [] as string[],
+};
 
 describe("GET /api/v1/zones", () => {
   it("lists every zone for the caller's own installation", async () => {
-    getZonesForInstallation.mockResolvedValue([{ id: "z1" }]);
+    getZonesForInstallation.mockResolvedValue([
+      { id: "z1", state: EMPTY_STATE_FOR_TEST },
+    ]);
     const res = await request(buildApp()).get("/api/v1/zones");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ id: "z1" }]);
+    expect(res.body).toEqual([
+      {
+        id: "z1",
+        state: EMPTY_STATE_FOR_TEST,
+        ventMisalignmentChronic: false,
+      },
+    ]);
     expect(getZonesForInstallation).toHaveBeenCalledWith("inst-1");
   });
 });
@@ -90,10 +111,19 @@ describe("GET /api/v1/zones/:id", () => {
   });
 
   it("returns the zone when found and owned", async () => {
-    getZoneById.mockResolvedValue({ id: "z1", installationId: "inst-1" });
+    getZoneById.mockResolvedValue({
+      id: "z1",
+      installationId: "inst-1",
+      state: EMPTY_STATE_FOR_TEST,
+    });
     const res = await request(buildApp()).get("/api/v1/zones/z1");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: "z1", installationId: "inst-1" });
+    expect(res.body).toEqual({
+      id: "z1",
+      installationId: "inst-1",
+      state: EMPTY_STATE_FOR_TEST,
+      ventMisalignmentChronic: false,
+    });
   });
 });
 

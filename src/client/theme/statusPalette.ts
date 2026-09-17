@@ -9,6 +9,14 @@ export interface StatusPalette {
   away: string;
   emergency: string;
   occupied: string;
+  // A vent that keeps re-triggering misalignment recalibration despite
+  // every attempt reporting success — see
+  // vent_misalignment_chronic_threshold_count's own comment
+  // (systemSettings.ts). Deliberately its own hue, not reused from
+  // degradedVent (a different failure — hardware unresponsive to
+  // commands, not a physical sealing problem) or emergency (reserved for
+  // an active whole-system fail-safe).
+  chronicMisalignment: string;
 }
 
 // One fixed status vocabulary, defined once here rather than each
@@ -44,6 +52,7 @@ export const lightStatusPalette: StatusPalette = {
   // comment for why a lighter/more pastel teal fails against dark mode's
   // primary (#90caf9) and was rejected in favor of this more saturated one.
   occupied: "#00897b",
+  chronicMisalignment: "#bf360c",
 };
 
 export const darkStatusPalette: StatusPalette = {
@@ -57,4 +66,5 @@ export const darkStatusPalette: StatusPalette = {
   away: "#7986cb",
   emergency: "#ff5252",
   occupied: "#26a69a",
+  chronicMisalignment: "#ff8a65",
 };

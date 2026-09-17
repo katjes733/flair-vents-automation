@@ -13,19 +13,54 @@ import {
   getZonesForInstallation,
   getZoneById,
 } from "~/server/util/routes/zone";
+import { getSystemSettings } from "~/server/util/routes/systemSettings";
+import { isChronicallyMisaligned } from "~/server/domain/sensors/ventMisalignment";
 import {
   createZoneForInstallation,
   updateZoneWithValidation,
   deleteZoneWithValidation,
 } from "~/server/util/services/zoneService";
+import type { ZoneData } from "~/server/util/routes/zone";
+import type { SystemSettingsConfig } from "~/shared/schemas/systemSettings";
 
 export const router = express.Router();
 
 router.use(resolveActorMiddleware);
 
+// Server-computed, never persisted — see
+// vent_misalignment_chronic_threshold_count's own comment
+// (systemSettings.ts). Attached fresh every time a zone is served so it's
+// correct even without a recent tick decision, with nothing to keep in
+// sync beyond the same recalibration history the tick loop already
+// maintains.
+function withVentMisalignmentChronic(
+  zone: ZoneData,
+  settings: SystemSettingsConfig,
+  nowMs: number,
+) {
+  return {
+    ...zone,
+    ventMisalignmentChronic: isChronicallyMisaligned({
+      recalibrationHistoryMs:
+        zone.state.vent_misalignment_recalibration_history.map((iso) =>
+          new Date(iso).getTime(),
+        ),
+      nowMs,
+      windowMs: settings.vent_misalignment_chronic_window_hours * 3600000,
+      thresholdCount: settings.vent_misalignment_chronic_threshold_count,
+    }),
+  };
+}
+
 router.get("/", async (req, res) => {
-  const zones = await getZonesForInstallation(req.actor!.installationId);
-  res.status(200).json(zones);
+  const [zones, settings] = await Promise.all([
+    getZonesForInstallation(req.actor!.installationId),
+    getSystemSettings(req.actor!.installationId),
+  ]);
+  const nowMs = Date.now();
+  res
+    .status(200)
+    .json(zones.map((z) => withVentMisalignmentChronic(z, settings, nowMs)));
 });
 
 router.get("/:id", async (req, res) => {
@@ -36,7 +71,8 @@ router.get("/:id", async (req, res) => {
   if (!zone || zone.installationId !== req.actor!.installationId) {
     throw new HttpError(`Zone ${req.params.id} not found.`, 404);
   }
-  res.status(200).json(zone);
+  const settings = await getSystemSettings(req.actor!.installationId);
+  res.status(200).json(withVentMisalignmentChronic(zone, settings, Date.now()));
 });
 
 router.post(
