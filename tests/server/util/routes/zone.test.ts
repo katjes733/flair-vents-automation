@@ -85,6 +85,7 @@ describe("updateZoneState", () => {
       vent_misalignment_last_recalibrated_at: null,
       vent_misalignment_recalibration_history: [],
       vent_manual_recalibration_requested_at: null,
+      vent_misalignment_target_extreme_pct: null,
       demand_stall_window_since: null,
       demand_stall_window_start_temp: null,
       demand_stall_recalibrating_since: null,

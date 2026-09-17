@@ -21,7 +21,12 @@ function base(
     callActive: true,
     classification: "satisfied" as const,
     targetAtClosedExtreme: true,
-    allVentsReportedOpenEnough: false,
+    // 0 (fully closed) mirrors the automatic path's own precondition
+    // (targetAtClosedExtreme) — farthestExtremeFrom(0) always resolves to
+    // 100, matching every pre-existing test's original open-only
+    // expectation unaffected by direction-awareness.
+    currentPositionPct: 0,
+    ventReportedPositionsPct: [] as number[],
     calibratedTempC: 21,
     prior: EMPTY_VENT_MISALIGNMENT_STATE,
     tempThresholdC: THRESHOLD_C,
@@ -41,6 +46,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: null,
       });
       expect(result.action).toEqual({ kind: "none" });
@@ -59,6 +65,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -74,6 +81,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -92,6 +100,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -107,6 +116,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: null,
       };
       const result = evaluateVentMisalignment(
@@ -124,6 +134,7 @@ describe("evaluateVentMisalignment", () => {
       windowStartTempC: 21,
       recalibratingSinceMs: null,
       recalibrationTrigger: null,
+      targetExtremePct: null,
       lastRecalibratedAtMs: null,
     };
 
@@ -134,12 +145,14 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "auto",
+        targetPct: 100,
       });
       expect(result.suspected).toBe(true);
       expect(result.next).toEqual({
         ...prior,
         recalibratingSinceMs: NOW,
         recalibrationTrigger: "auto",
+        targetExtremePct: 100,
       });
     });
 
@@ -158,6 +171,7 @@ describe("evaluateVentMisalignment", () => {
       windowStartTempC: 19,
       recalibratingSinceMs: null,
       recalibrationTrigger: null,
+      targetExtremePct: null,
       lastRecalibratedAtMs: null,
     };
 
@@ -172,6 +186,7 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "auto",
+        targetPct: 100,
       });
       expect(result.suspected).toBe(true);
     });
@@ -190,6 +205,7 @@ describe("evaluateVentMisalignment", () => {
       windowStartTempC: 21,
       recalibratingSinceMs: NOW - 120_000,
       recalibrationTrigger: "auto",
+      targetExtremePct: 100,
       lastRecalibratedAtMs: null,
     };
 
@@ -197,12 +213,13 @@ describe("evaluateVentMisalignment", () => {
       const result = evaluateVentMisalignment(
         base({
           prior: recalibrating,
-          allVentsReportedOpenEnough: false,
+          ventReportedPositionsPct: [50],
         }),
       );
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "auto",
+        targetPct: 100,
       });
       expect(result.suspected).toBe(true);
       expect(result.next).toEqual(recalibrating);
@@ -217,12 +234,13 @@ describe("evaluateVentMisalignment", () => {
         base({
           prior: recalibrating,
           callActive: false,
-          allVentsReportedOpenEnough: false,
+          ventReportedPositionsPct: [50],
         }),
       );
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "auto",
+        targetPct: 100,
       });
       expect(result.next).toEqual(recalibrating);
     });
@@ -234,13 +252,14 @@ describe("evaluateVentMisalignment", () => {
       const result = evaluateVentMisalignment(
         base({
           prior: recalibrating,
-          allVentsReportedOpenEnough: false,
+          ventReportedPositionsPct: [50],
           manualTriggerRequested: true,
         }),
       );
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "auto",
+        targetPct: 100,
       });
       expect(result.next).toEqual(recalibrating);
     });
@@ -249,7 +268,7 @@ describe("evaluateVentMisalignment", () => {
       const result = evaluateVentMisalignment(
         base({
           prior: recalibrating,
-          allVentsReportedOpenEnough: true,
+          ventReportedPositionsPct: [95],
         }),
       );
       expect(result.action).toEqual({
@@ -263,7 +282,50 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: null,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: NOW,
+      });
+    });
+
+    // Migration safety: a cycle already in progress from before this
+    // direction-aware fix was deployed carries no targetExtremePct at all
+    // (an older, open-only build never persisted one) — must default to
+    // 100 (that build's own hardcoded behavior) rather than losing track
+    // of the in-flight cycle.
+    it("defaults an in-progress cycle with no persisted targetExtremePct to the open extreme", () => {
+      const legacyRecalibrating: VentMisalignmentState = {
+        ...recalibrating,
+        targetExtremePct: null,
+      };
+      const result = evaluateVentMisalignment(
+        base({ prior: legacyRecalibrating, ventReportedPositionsPct: [50] }),
+      );
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "auto",
+        targetPct: 100,
+      });
+    });
+
+    // Direction-aware completion check: a cycle forcing toward 0 (a vent
+    // that started near 80%) must finish once the vent reports itself
+    // near *0*, not near 100 — the old open-only check would have missed
+    // this entirely.
+    it("finishes as 'opened' against the closed extreme when that's the cycle's own target", () => {
+      const closingCycle: VentMisalignmentState = {
+        ...recalibrating,
+        targetExtremePct: 0,
+      };
+      const result = evaluateVentMisalignment(
+        base({
+          prior: closingCycle,
+          ventReportedPositionsPct: [5],
+        }),
+      );
+      expect(result.action).toEqual({
+        kind: "recalibration_finished",
+        outcome: "opened",
+        triggeredBy: "auto",
       });
     });
 
@@ -273,7 +335,7 @@ describe("evaluateVentMisalignment", () => {
         recalibratingSinceMs: NOW - MAX_OPEN_WAIT_MS,
       };
       const result = evaluateVentMisalignment(
-        base({ prior: stuckSinceStart, allVentsReportedOpenEnough: false }),
+        base({ prior: stuckSinceStart, ventReportedPositionsPct: [50] }),
       );
       expect(result.action).toEqual({
         kind: "recalibration_finished",
@@ -285,6 +347,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: null,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: NOW,
       });
     });
@@ -306,6 +369,7 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "manual",
+        targetPct: 100,
       });
       expect(result.suspected).toBe(true);
       expect(result.next).toEqual({
@@ -313,6 +377,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: null,
         recalibratingSinceMs: NOW,
         recalibrationTrigger: "manual",
+        targetExtremePct: 100,
         lastRecalibratedAtMs: null,
       });
     });
@@ -328,7 +393,43 @@ describe("evaluateVentMisalignment", () => {
       expect(result.action).toEqual({
         kind: "force_open",
         triggeredBy: "manual",
+        targetPct: 100,
       });
+    });
+
+    // The user's own exact expectation: a vent already sitting at 80%
+    // should flip to 0% (the actually-far extreme) and back, not get
+    // nudged the remaining 20 points to 100%.
+    it("forces toward the closed extreme when the vent is currently closer to open", () => {
+      const result = evaluateVentMisalignment(
+        base({ manualTriggerRequested: true, currentPositionPct: 80 }),
+      );
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "manual",
+        targetPct: 0,
+      });
+      expect(result.next.targetExtremePct).toBe(0);
+    });
+
+    // Mirror-image case: a vent at 20% should flip to 100%, not creep to 0.
+    it("forces toward the open extreme when the vent is currently closer to closed", () => {
+      const result = evaluateVentMisalignment(
+        base({ manualTriggerRequested: true, currentPositionPct: 20 }),
+      );
+      expect(result.action).toEqual({
+        kind: "force_open",
+        triggeredBy: "manual",
+        targetPct: 100,
+      });
+      expect(result.next.targetExtremePct).toBe(100);
+    });
+
+    it("treats a vent sitting exactly at the midpoint as closer to open, forcing toward 0", () => {
+      const result = evaluateVentMisalignment(
+        base({ manualTriggerRequested: true, currentPositionPct: 50 }),
+      );
+      expect(result.action).toMatchObject({ targetPct: 0 });
     });
   });
 
@@ -339,6 +440,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: NOW - 60_000, // 1 minute ago, under the 3-min debounce
       };
       const result = evaluateVentMisalignment(
@@ -357,6 +459,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: null,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: NOW - DEBOUNCE_MS,
       };
       const result = evaluateVentMisalignment(base({ prior }));
@@ -365,6 +468,7 @@ describe("evaluateVentMisalignment", () => {
         windowStartTempC: 21,
         recalibratingSinceMs: null,
         recalibrationTrigger: null,
+        targetExtremePct: null,
         lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
       });
     });

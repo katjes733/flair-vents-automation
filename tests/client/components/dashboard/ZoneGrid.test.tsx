@@ -63,6 +63,8 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       vent_misalignment_recalibration_history: [],
       vent_misalignment_recalibrating_since: null,
       vent_misalignment_recalibration_trigger: null,
+      vent_misalignment_target_extreme_pct: null,
+      vent_manual_recalibration_requested_at: null,
       demand_stall_window_since: null,
       demand_stall_window_start_temp: null,
       demand_stall_recalibrating_since: null,

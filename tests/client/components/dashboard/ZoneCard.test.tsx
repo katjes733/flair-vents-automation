@@ -60,6 +60,8 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       vent_misalignment_recalibration_history: [],
       vent_misalignment_recalibrating_since: null,
       vent_misalignment_recalibration_trigger: null,
+      vent_misalignment_target_extreme_pct: null,
+      vent_manual_recalibration_requested_at: null,
       demand_stall_window_since: null,
       demand_stall_window_start_temp: null,
       demand_stall_recalibrating_since: null,
@@ -632,6 +634,32 @@ describe("ZoneCard", () => {
       expect(
         screen.getByText(/Recalibrating \(manually requested\)/),
       ).toBeInTheDocument();
+    });
+
+    // Regression coverage: a manual request is recorded server-side (and
+    // reflected by the immediate post-submit refetch) before the tick
+    // loop actually starts the cycle, up to one control-tick interval
+    // later. The dashboard must show the progress indicator and disable
+    // the button from that request instant, not only once
+    // recalibrating_since itself goes non-null.
+    it("shows a pending indicator and disables the button once a manual request is recorded but not yet picked up by a tick", () => {
+      renderCard({
+        zone: makeZone({
+          state: {
+            ...makeZone().state,
+            vent_manual_recalibration_requested_at: new Date().toISOString(),
+            vent_misalignment_recalibrating_since: null,
+          },
+        }),
+      });
+      expect(
+        screen.getByText(
+          /Recalibration requested — waiting for the next control tick/,
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Unstick vent" }),
+      ).toBeDisabled();
     });
 
     it("enables the Unstick vent button for an admin, opening the trigger dialog", () => {

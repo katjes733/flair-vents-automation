@@ -92,8 +92,19 @@ export default function ZoneCard({
   const [recalibrationDialogOpen, setRecalibrationDialogOpen] = useState(false);
   const [clearWarningDialogOpen, setClearWarningDialogOpen] = useState(false);
   const isControllable = zone.ventHardwareType === "flair_smart_vent";
-  const isRecalibrating =
+  // A manual request is recorded server-side the instant it's submitted,
+  // but the tick loop doesn't actually pick it up (setting
+  // recalibrating_since) until its next run — up to one control-tick
+  // interval later. Without also checking the request flag, the progress
+  // indicator and disabled button wouldn't appear until that first tick
+  // landed, leaving a real gap where the confirm dialog just closes with
+  // no visible feedback that anything happened.
+  const isRecalibratingPending =
+    zone.state.vent_manual_recalibration_requested_at !== null &&
+    zone.state.vent_misalignment_recalibrating_since === null;
+  const isRecalibratingActive =
     zone.state.vent_misalignment_recalibrating_since !== null;
+  const isRecalibrating = isRecalibratingPending || isRecalibratingActive;
 
   const classification = tickRecord?.classification;
   // A zone can still be classified "demanding" for a few ticks after the
@@ -311,9 +322,12 @@ export default function ZoneCard({
         {isControllable && isRecalibrating && (
           <Box sx={{ mt: 1 }}>
             <Typography variant="caption" color="text.secondary">
-              {zone.state.vent_misalignment_recalibration_trigger === "manual"
-                ? "Recalibrating (manually requested) — usually resolves within a couple of minutes"
-                : "Recalibrating — vent may be misaligned, usually resolves within a couple of minutes"}
+              {isRecalibratingPending
+                ? "Recalibration requested — waiting for the next control tick"
+                : zone.state.vent_misalignment_recalibration_trigger ===
+                    "manual"
+                  ? "Recalibrating (manually requested) — usually resolves within a couple of minutes"
+                  : "Recalibrating — vent may be misaligned, usually resolves within a couple of minutes"}
             </Typography>
             <LinearProgress sx={{ mt: 0.5 }} />
           </Box>

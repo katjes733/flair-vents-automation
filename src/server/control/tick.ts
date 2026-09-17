@@ -2036,6 +2036,7 @@ export async function runTick(
         ),
         recalibrationTrigger:
           zone.state.vent_misalignment_recalibration_trigger,
+        targetExtremePct: zone.state.vent_misalignment_target_extreme_pct,
         lastRecalibratedAtMs: parseIsoOrNull(
           zone.state.vent_misalignment_last_recalibrated_at,
         ),
@@ -2052,8 +2053,9 @@ export async function runTick(
           zone.config.min_vent_position,
           zone.config.max_vent_position,
         ),
-        allVentsReportedOpenEnough: ventReadings.every(
-          (v) => (v.reportedPositionPct ?? 0) >= 90,
+        currentPositionPct: finalPositions[zone.id],
+        ventReportedPositionsPct: ventReadings.map(
+          (v) => v.reportedPositionPct ?? 0,
         ),
         calibratedTempC: readings.get(zone.id)!.room.calibratedTemp,
         prior,
@@ -2092,7 +2094,7 @@ export async function runTick(
       );
 
       if (evaluation.action.kind === "force_open") {
-        finalPositions[zone.id] = 100;
+        finalPositions[zone.id] = evaluation.action.targetPct;
         // Only log once, on the tick detection actually fires — every
         // subsequent tick of the same wait carries the same
         // recalibratingSinceMs forward unchanged (evaluation.next ===
@@ -2481,6 +2483,7 @@ export async function runTick(
               ),
               vent_misalignment_recalibration_trigger:
                 next.recalibrationTrigger,
+              vent_misalignment_target_extreme_pct: next.targetExtremePct,
               vent_misalignment_last_recalibrated_at: toIsoOrNull(
                 next.lastRecalibratedAtMs,
               ),
@@ -2502,6 +2505,8 @@ export async function runTick(
               zone.state.vent_misalignment_recalibrating_since,
             vent_misalignment_recalibration_trigger:
               zone.state.vent_misalignment_recalibration_trigger,
+            vent_misalignment_target_extreme_pct:
+              zone.state.vent_misalignment_target_extreme_pct,
             vent_misalignment_last_recalibrated_at:
               zone.state.vent_misalignment_last_recalibrated_at,
             vent_misalignment_recalibration_history:
