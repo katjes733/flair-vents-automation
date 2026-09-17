@@ -3718,6 +3718,72 @@ describe("runTick — vent misalignment auto-recalibration", () => {
     ]);
   });
 
+  // Regression test for a real, confirmed live bug: a manual "Unstick
+  // vent" on Martin Office force-opened to 100% as expected, but then
+  // never snapped back — it started stepping down in ordinary
+  // modulation_step_pct-sized increments instead. Root cause: the
+  // force-open branch persists last_target_position as the forced
+  // extreme on every tick of the cycle (see its own comment), so by the
+  // time recalibration_finished fires, rampTowardTarget's own anchor
+  // (lastCommandedTarget) is pinned at that extreme — using
+  // pipelineResult.commandedPositions (the ramped output) for the
+  // "immediate" snap-back was actually still rate-limited by that stale
+  // anchor, reproducing the exact multi-tick ramp-down the fix was meant
+  // to prevent. This fixture reproduces that poisoned anchor explicitly
+  // (unlike the sibling "finishes the cycle" test above, whose
+  // EMPTY_ZONE_RUNTIME_STATE-derived fixture leaves last_target_position
+  // null, which happens to make rampTowardTarget a no-op and so never
+  // actually exercised this bug).
+  it("snaps back to the true unramped target, not a single rate-limited step, even when the ramp's own anchor was left pinned at the forced extreme all cycle", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({
+      vent_misalignment_auto_recalibration_enabled: true,
+      vent_misalignment_temp_threshold_c: 0.56,
+    });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const recalibratingState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      vent_misalignment_window_since: new Date(NOW - 1_800_000).toISOString(),
+      vent_misalignment_window_start_temp: 20,
+      vent_misalignment_recalibrating_since: new Date(
+        NOW - 120_000,
+      ).toISOString(),
+      vent_misalignment_target_extreme_pct: 100,
+      last_target_position: 100,
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 19, // well under the 21°C cool setpoint — satisfied, closing
+        ductC: 14,
+        percentOpen: 95,
+      },
+    ]);
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [
+        makeZone({
+          id: "z1",
+          flairRoomId: "room-1",
+          state: recalibratingState,
+        }),
+      ],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    // Default modulation_step_pct is 10 — a single rate-limited step down
+    // from the poisoned anchor (100) would land at exactly 90. The real
+    // fix lands well below that, at the zone's actual satisfied/closing
+    // target.
+    expect(z1.vents[0]?.commanded_position_pct).not.toBe(90);
+    expect(z1.vents[0]?.commanded_position_pct).toBeLessThan(50);
+  });
+
   it("starts a cycle immediately on a manual trigger request, bypassing every tracking condition, and clears the request once consumed", async () => {
     const client = new FakeFlairClient();
     const persisted = new Map<string, ZoneRuntimeState>();

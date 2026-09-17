@@ -91,6 +91,20 @@ export interface PipelineZoneInput {
 
 export interface PipelineResult {
   commandedPositions: Record<string, number>;
+  // The same per-zone target Step 2 ramps *toward* — Step 1/3's own
+  // output (post quiet-anchor/capacity-sharing, still clamped to the
+  // zone's own min/max), before rampTowardTarget's rate limiting and
+  // before the final pressure-floor clamp. Only present for a zone that
+  // actually ran through Step 1/3 this tick (a flair_smart_vent with a
+  // resolved setpoint and a live reading) — absent for manual-position,
+  // no_vent, manual_fixed_vent, inactive, or stale-reading zones, none of
+  // which ramp in the first place. Exists so a caller can bypass the
+  // ramp entirely for one tick when it's already known the ramp's own
+  // rate-limit anchor is stale (see the vent-misalignment recalibration
+  // "snap back immediately" caller in control/tick.ts, and its own ADR-0004
+  // update) — using commandedPositions there would silently reintroduce a
+  // multi-tick ramp-down, not the immediate snap the caller actually wants.
+  rawDesiredPositions: Record<string, number>;
   classifications: Record<string, ZoneClassification | "inactive">;
   // The updated hysteresis-dwell state per zone, for the caller to persist
   // back to zone.state.classification_pending_value/_since — absent for a
@@ -568,12 +582,14 @@ export function computeZoneCommands(params: {
   // baseline) toward its Step-3 output; manual-position/no_vent/manual_fixed
   // zones already have a final position and skip ramping entirely.
   const zoneById = new Map(params.zones.map((z) => [z.zoneId, z]));
+  const rawDesiredPositions: Record<string, number> = {};
   for (const [zoneId, position] of [
     ...Object.entries(step3Positions),
     ...Object.entries(nonDemandingSmartVent),
   ]) {
     const zone = zoneById.get(zoneId);
     if (!zone) continue;
+    rawDesiredPositions[zoneId] = position;
     commandedPositions[zoneId] = rampTowardTarget({
       desiredPosition: position,
       lastCommandedTarget: zone.lastCommandedTarget,
@@ -635,6 +651,7 @@ export function computeZoneCommands(params: {
 
   return {
     commandedPositions,
+    rawDesiredPositions,
     classifications,
     classificationPending,
     sleepQuietAnchors,

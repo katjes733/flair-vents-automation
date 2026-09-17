@@ -118,3 +118,44 @@ confirmed, not once a tick happens to land.
 Both are treated as amendments to this same decision, not new ones: same
 mechanisms (force-open/wait cycle, manual trigger), just discovered to
 need a direction and an earlier UI signal than first shipped.
+
+## Update: the "immediate reclose" snap was still rate-limited by a poisoned ramp anchor
+
+A second live test (Martin Office, manual unstick from ~10–20%) surfaced
+that "immediate reclose" wasn't actually immediate: the vent correctly
+force-opened to 100%, but instead of snapping straight back it started
+stepping down in ordinary `modulation_step_pct`-sized increments (10% by
+default) — exactly the slow ramp-down this ADR's original "Immediate
+reclose" decision was written to eliminate.
+
+Root cause: `recalibration_finished`'s snap-back used
+`pipelineResult.commandedPositions[zone.id]` — but that value is Step 2's
+*ramped* output, and Step 2's own rate limiter (`rampTowardTarget`,
+`step2Ramp.ts`) anchors its step size on `lastCommandedTarget`, sourced
+from the zone's persisted `last_target_position`. Every tick of the
+force-open cycle just finished had persisted `last_target_position` as
+the forced extreme (100, or 0) — the anchor `rampTowardTarget` needs to
+know "where we actually are," which genuinely was 100. So on the tick the
+cycle ends, the pipeline's fresh ramp calculation starts from that
+poisoned anchor and only steps one `modulation_step_pct` toward the real
+target — not the "pipeline's own natural target" this ADR's original text
+assumed `commandedPositions` would already be. That stepped-down value
+then gets persisted as the new anchor, and the next tick ramps another
+step from there: the identical decay pattern, just recurring one layer
+deeper than the original fix reached.
+
+Fixed by exposing the pre-ramp value: `PipelineResult` gained
+`rawDesiredPositions` (Step 1/3's own output, still clamped to the zone's
+min/max, captured in `pipeline.ts` immediately before the Step 2 loop
+applies `rampTowardTarget`). The snap-back now reads
+`rawDesiredPositions[zone.id]` instead of `commandedPositions[zone.id]` —
+truly unramped, landing on the real target in one tick regardless of
+where the anchor was left. This deliberately also bypasses the final
+pressure-floor clamp for that one tick, the same way the force-open phase
+itself already ignores the zone's own min/max and the floor (see
+`evaluateVentMisalignment`'s own comment) — an already-accepted trade-off
+for a diagnostic override that self-corrects on the very next ordinary
+tick.
+
+Same decision, same root problem (a ramp-then-log tail this ADR exists to
+kill) — just one layer the original fix hadn't reached yet.
