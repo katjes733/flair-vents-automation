@@ -594,7 +594,7 @@ describe("runTick — FAN_ONLY/IDLE baselines", () => {
     expect(
       decision.zones.find((z) => z.zone_id === "z-unocc")?.vents[0]
         ?.commanded_position_pct,
-    ).toBe(50); // idle_baseline_position(100) * unoccupied_idle_factor(0.5)
+    ).toBe(30); // fan_only_idle_baseline_position(50) * unoccupied_idle_factor(0.5) = 25, quantized (modulation_step_pct=10) to 30
     expect(
       decision.zones.find((z) => z.zone_id === "z-occ")?.vents[0]
         ?.commanded_position_pct,

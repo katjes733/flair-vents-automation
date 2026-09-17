@@ -48,8 +48,17 @@ export const systemSettingsConfigSchema = z.object({
   // "satisfied, keep it mostly closed" default makes no sense here — a
   // closed vent during FAN_ONLY doesn't save anything (there's no
   // conditioned air to conserve), it just fails to circulate that room.
-  // Defaulted to 100, the opposite of the comfort-case default.
-  fan_only_idle_baseline_position: z.number().min(0).max(100).default(100),
+  // Defaulted to 50, not the full opposite-extreme 100 this used to be —
+  // achieving real house-wide mixing doesn't require every vent maxed,
+  // especially with several zones opening simultaneously, and 100 has a
+  // real cost of its own: reaching it from wherever a vent currently sits
+  // is a larger, louder motor sweep and more moved air than reaching a
+  // partial value, which matters directly for a Sleep-Mode zone now
+  // circulating through this same baseline during FAN_ONLY (see
+  // sleep_quiet_anchor_enabled's own comment and ADR-0003's update) — the
+  // whole point there is quiet, and maxing every vent out undercuts that
+  // even though the position itself isn't "wrong."
+  fan_only_idle_baseline_position: z.number().min(0).max(100).default(50),
 
   // --- Step 2 / ramp & dispatch ---
   // The spec's own stated defaults, kept despite the deadlock they'd create

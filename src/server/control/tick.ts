@@ -1316,6 +1316,7 @@ export async function runTick(
       sleepModeActive: sleepModeActiveByZone.get(zone.id) ?? false,
       priorAnchorPositionPct: zone.state.sleep_quiet_anchor_position,
       priorAnchorSinceMs: parseIsoOrNull(zone.state.sleep_quiet_anchor_since),
+      priorAnchorIsFanOnly: zone.state.sleep_quiet_anchor_is_fan_only,
       otherZoneStruggling: [...strugglingZoneIds].some((id) => id !== zone.id),
       capacitySharingExempt: zone.config.capacity_sharing_exempt,
     };
@@ -2486,6 +2487,8 @@ export async function runTick(
         ?.sinceMs
         ? toIso(pipelineResult.sleepQuietAnchors[zone.id]!.sinceMs!)
         : null,
+      sleep_quiet_anchor_is_fan_only:
+        pipelineResult.sleepQuietAnchors[zone.id]?.isFanOnly ?? null,
       // Falls back to the zone's own already-persisted value — absent
       // from ventMisalignmentNextStateByZoneId means the feature is off,
       // disarmed, or this zone was skipped this tick (not controllable /

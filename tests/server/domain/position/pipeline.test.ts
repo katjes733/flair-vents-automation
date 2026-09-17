@@ -42,6 +42,7 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     sleepModeActive: false,
     priorAnchorPositionPct: null,
     priorAnchorSinceMs: null,
+    priorAnchorIsFanOnly: null,
     otherZoneStruggling: false,
     capacitySharingExempt: false,
     ...overrides,
@@ -496,17 +497,26 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
   });
 });
 
-// Regression coverage for a real, confirmed overnight incident: a satisfied
-// bedroom zone in an active Sleep Mode window got yanked open toward
-// fanOnlyIdleBaselinePosition every time the blower ran a brief FAN_ONLY
-// stretch between compressor cycles — ten separate cycles in one night,
-// each producing several genuine motor movements — because this whole
-// FAN_ONLY branch used to run (and `continue`) before sleep_quiet_anchor's
-// own logic ever got a chance to apply. A Sleep-Mode zone now falls
-// through to the exact same anchor-aware path IDLE already used for this
-// reason (see that describe block's own comment) — FAN_ONLY becomes just
-// another idle gap for that zone, not its own separate open-for-
-// circulation state.
+// Regression coverage for two real, confirmed overnight incidents against
+// the same decision, both documented in ADR-0003 (original + its update).
+//
+// Original incident: a satisfied bedroom zone in an active Sleep Mode
+// window got yanked open toward fanOnlyIdleBaselinePosition every time the
+// blower ran a brief FAN_ONLY stretch between compressor cycles — ten
+// separate cycles in one night — because this whole FAN_ONLY branch used
+// to run (and `continue`) before sleep_quiet_anchor's own logic ever got a
+// chance to apply. Fixed by falling through to the same anchor-aware path
+// IDLE already used.
+//
+// That fix over-corrected, though: it anchored a Sleep-Mode zone in
+// genuine FAN_ONLY to the *comfort* curve's own step1 output (same as an
+// ordinary idle/call gap), which trends toward minVentPosition — so a
+// sleeping room stopped getting yanked open, but also never actually
+// circulated air during FAN_ONLY at all, just held closed. Fixed again:
+// a non-demanding Sleep-Mode zone during genuine FAN_ONLY now anchors to
+// the fanOnlyIdleBaselinePosition-derived target instead — still held
+// flat for the same anti-noise reason, just circulating rather than
+// closed. Demanding is unaffected either way, by design (see below).
 describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
   it("opens a demanding zone proportionally during FAN_ONLY while Sleep Mode is active, instead of resting at the FAN_ONLY baseline", () => {
     const zones = [
@@ -521,22 +531,31 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       state: "FAN_ONLY",
       zones,
       nowMs: 0,
-      settings,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
       capLps: 10000,
       floorLps: 0,
     });
     expect(result.classifications["z1"]).toBe("demanding");
     expect(result.commandedPositions["z1"]).toBeGreaterThan(40);
+    // Demanding never anchors at all, in FAN_ONLY or otherwise — the
+    // safety net for a night the AC genuinely can't keep up must always
+    // run the full ramp, not get capped at a circulation baseline.
+    expect(result.sleepQuietAnchors["z1"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+      isFanOnly: null,
+    });
   });
 
-  it("closes a satisfied zone proportionally during FAN_ONLY while Sleep Mode is active, instead of resting at the FAN_ONLY baseline", () => {
+  it("rests at the (occupancy-scaled) FAN_ONLY baseline for a satisfied zone during FAN_ONLY while Sleep Mode is active — the update's own fix", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        fanOnlyIdleBaselinePosition: 100,
+        fanOnlyIdleBaselinePosition: 60,
         sleepModeActive: true,
+        occupied: false,
         minVentPosition: 0,
-        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
+        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied
         demandTolerance: asTempDelta(0.5),
         overshootTolerance: asTempDelta(0.5),
       }),
@@ -550,7 +569,10 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       floorLps: 0,
     });
     expect(result.classifications["z1"]).toBe("satisfied");
-    expect(result.commandedPositions["z1"]).toBeLessThan(100);
+    // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5) — the
+    // same target the ordinary (non-sleep) FAN_ONLY branch would compute,
+    // not a proportionally-closing comfort-curve value.
+    expect(result.commandedPositions["z1"]).toBe(30);
   });
 
   it("still rests at the FAN_ONLY baseline when Sleep Mode is not active — today's daytime circulation behavior is unchanged", () => {
@@ -573,37 +595,155 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
     expect(result.commandedPositions["z1"]).toBe(30); // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5)
   });
 
-  it("holds the sleep-quiet anchor flat through a FAN_ONLY stretch — the actual fix: FAN_ONLY no longer bypasses it", () => {
-    // Identical fixture to the sleep-quiet-anchor describe block's own
-    // "holds the anchored position flat" test, except state is FAN_ONLY
-    // here instead of COOLING_CALL — before this fix, FAN_ONLY never
-    // reached the anchor at all and this would have instead computed
-    // fanOnlyIdleBaselinePosition (100 by default), not the frozen 40.
-    const result = computeZoneCommands({
-      state: "FAN_ONLY",
-      zones: [
-        zone({
-          calibratedTemp: asAbsoluteTemp(19), // colder than the anchor tick's own 19.5
-          demandTolerance: asTempDelta(0.5),
-          overshootTolerance: asTempDelta(0.5),
-          sleepModeActive: true,
-          priorAnchorPositionPct: 40,
-          priorAnchorSinceMs: 1000,
-        }),
-      ],
-      nowMs: 1000 + 5 * 60000,
-      settings: {
-        ...settings,
-        sleepQuietAnchorEnabled: true,
-        reanchorIntervalMinutes: 60,
-      },
-      capLps: 10000,
-      floorLps: 0,
+  // A real FAN_ONLY stretch is typically only a few minutes — far shorter
+  // than reanchorIntervalMinutes (default 60) — so the interval-based
+  // reanchor alone would almost never fire during one. Entering/leaving
+  // FAN_ONLY must force its own reanchor, or a sleeping zone would keep
+  // holding whichever target it last anchored to under the *other* mode
+  // for the entire brief window.
+  describe("mode-transition reanchor", () => {
+    it("reanchors to the FAN_ONLY target immediately on entering FAN_ONLY, replacing a held comfort-curve anchor", () => {
+      const result = computeZoneCommands({
+        state: "FAN_ONLY",
+        zones: [
+          zone({
+            fanOnlyIdleBaselinePosition: 80,
+            occupied: false,
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(19),
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            // A comfort-curve anchor already held from before FAN_ONLY
+            // started — explicitly recorded as such (isFanOnly: false).
+            priorAnchorPositionPct: 40,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: false,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000, // well inside the 60-min reanchor interval
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      // fanOnlyIdleBaselinePosition(80) * unoccupiedIdleFactor(0.5) = 40 —
+      // deliberately picked to coincide with the old anchor's own value,
+      // so a passing commandedPositions assertion alone couldn't hide a
+      // failure to actually reanchor; the isFanOnly/sinceMs check below
+      // is what actually proves a fresh capture happened.
+      expect(result.commandedPositions["z"]).toBe(40);
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: 40,
+        sinceMs: 1000 + 5 * 60000,
+        isFanOnly: true,
+      });
     });
-    expect(result.commandedPositions["z"]).toBe(40);
-    expect(result.sleepQuietAnchors["z"]).toEqual({
-      positionPct: 40,
-      sinceMs: 1000,
+
+    it("holds the FAN_ONLY anchor flat across ticks within the same continuing FAN_ONLY stretch", () => {
+      const result = computeZoneCommands({
+        state: "FAN_ONLY",
+        zones: [
+          zone({
+            fanOnlyIdleBaselinePosition: 80,
+            occupied: false,
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(10), // would compute very differently if unanchored
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            priorAnchorPositionPct: 40,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: true,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000,
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      expect(result.commandedPositions["z"]).toBe(40);
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: 40,
+        sinceMs: 1000,
+        isFanOnly: true,
+      });
+    });
+
+    it("reanchors back to the comfort-curve target immediately on leaving FAN_ONLY, replacing a held FAN_ONLY anchor", () => {
+      const result = computeZoneCommands({
+        state: "COOLING_CALL",
+        zones: [
+          zone({
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(19.5),
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            priorAnchorPositionPct: 80,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: true,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000,
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      // Same known-quantity satisfied fixture as the sleep-quiet-anchor
+      // describe block below (deviation=-1.5, closeRatio≈0.599 against
+      // effectiveBand=1.67) — desiredPosition ≈ 40.12, quantized to 40.
+      expect(result.commandedPositions["z"]).toBe(40);
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: expect.closeTo(40.12, 1),
+        sinceMs: 1000 + 5 * 60000,
+        isFanOnly: false,
+      });
+    });
+
+    // Backward compatibility: an anchor already in progress from before
+    // this fix shipped carries no persisted isFanOnly at all (null) — must
+    // not force a reanchor just because the mode is unknown, or every such
+    // zone would reanchor on its very next tick after deploy regardless of
+    // whether anything actually changed.
+    it("does not force a reanchor when the held anchor's own mode is unknown (predates this fix)", () => {
+      const result = computeZoneCommands({
+        state: "FAN_ONLY",
+        zones: [
+          zone({
+            fanOnlyIdleBaselinePosition: 80,
+            occupied: false,
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(19),
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            priorAnchorPositionPct: 40,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: null,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000,
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: 40,
+        sinceMs: 1000,
+        isFanOnly: null,
+      });
     });
   });
 });
@@ -857,6 +997,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
           calibratedTemp: asAbsoluteTemp(19),
           priorAnchorPositionPct: 40,
           priorAnchorSinceMs: 1000,
+          priorAnchorIsFanOnly: false,
         }),
       ],
       nowMs: 1000 + 5 * 60000, // 5 min later — well inside the 60-min interval
@@ -872,6 +1013,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: 40,
       sinceMs: 1000,
+      isFanOnly: false,
     });
   });
 
@@ -921,6 +1063,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: null,
       sinceMs: null,
+      isFanOnly: null,
     });
   });
 
@@ -937,6 +1080,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: null,
       sinceMs: null,
+      isFanOnly: null,
     });
   });
 
@@ -953,6 +1097,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: null,
       sinceMs: null,
+      isFanOnly: null,
     });
   });
 });

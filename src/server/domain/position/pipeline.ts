@@ -81,6 +81,19 @@ export interface PipelineZoneInput {
   sleepModeActive: boolean;
   priorAnchorPositionPct: number | null;
   priorAnchorSinceMs: number | null;
+  // Which "mode" the currently-held anchor (if any) was captured under —
+  // true for a FAN_ONLY circulation target, false for the ordinary
+  // comfort-curve target, null whenever no anchor is currently held
+  // (mirrors priorAnchorPositionPct/priorAnchorSinceMs's own null
+  // convention). See the anchor logic's own comment for why this needs
+  // tracking at all: a real FAN_ONLY stretch is typically only a few
+  // minutes (confirmed live, ADR-0003), far shorter than
+  // reanchorIntervalMinutes (default 60), so without an explicit
+  // mode-transition trigger a brief FAN_ONLY window would almost always
+  // finish before the interval-based reanchor ever fired, leaving a
+  // sleeping zone's vent stuck holding whatever comfort-curve position it
+  // last anchored to — never actually circulating.
+  priorAnchorIsFanOnly: boolean | null;
   // Capacity sharing inputs — see capacity_sharing_enabled's own comment in
   // systemSettings.ts. otherZoneStruggling is computed by the caller from
   // *other* zones' persisted demand-tracking state (never this zone's
@@ -122,7 +135,11 @@ export interface PipelineResult {
   // or the feature disabled).
   sleepQuietAnchors: Record<
     string,
-    { positionPct: number | null; sinceMs: number | null }
+    {
+      positionPct: number | null;
+      sinceMs: number | null;
+      isFanOnly: boolean | null;
+    }
   >;
   contention: ContentionResult | null;
   pressureFloorClamped: boolean;
@@ -476,19 +493,53 @@ export function computeZoneCommands(params: {
     });
 
     // Sleep-mode quiet anchor: a satisfied zone in an active Sleep Mode
-    // window holds flat at the position that last actually achieved
-    // comfort instead of re-running the overshoot ramp above every tick —
-    // see sleep_quiet_anchor_enabled's own comment (systemSettings.ts) for
-    // the real, confirmed overnight noise problem this fixes. Re-anchors
-    // on a demanding->satisfied transition, or once
+    // window holds flat at a target instead of re-running the overshoot
+    // ramp above every tick — see sleep_quiet_anchor_enabled's own comment
+    // (systemSettings.ts) for the real, confirmed overnight noise problem
+    // this fixes. Re-anchors on a demanding->satisfied transition, once
     // reanchorIntervalMinutes has elapsed since the current anchor was
-    // captured — either way, always from *this tick's own* step1 output,
-    // never a stale carried-forward ramp calculation. Demanding is
-    // completely unaffected regardless of sleep mode, by design: it's the
-    // safety net for a night the AC genuinely can't keep up.
-    let effectiveDesiredPosition = step1.desiredPosition;
+    // captured, or the instant this zone's FAN_ONLY-vs-not context changes
+    // (see inFanOnlyDuringSleep below) — always from *this tick's own*
+    // freshly-computed target, never a stale carried-forward ramp
+    // calculation. Demanding is completely unaffected regardless of sleep
+    // mode, by design: it's the safety net for a night the AC genuinely
+    // can't keep up.
+    //
+    // The target itself depends on *why* this zone is non-demanding: a
+    // real, confirmed gap (see ADR-0003's update) — a Sleep-Mode zone
+    // reaching here during genuine FAN_ONLY (blower circulating
+    // unconditioned air, no active call) used to still anchor to the
+    // ordinary comfort curve's step1 output, which trends toward
+    // minVentPosition the longer a zone stays satisfied — so a sleeping
+    // room never actually circulated, it just held closed. Excludes
+    // demanding on purpose (mirroring isDemanding's own gate just below):
+    // demanding stays the safety net for a night the AC genuinely can't
+    // keep up, regardless of what state produced it, so it must always
+    // use the full comfort-curve ramp, never the circulation baseline.
+    // Applies regardless of sleepQuietAnchorEnabled, same as the FAN_ONLY
+    // routing decision above it (see that branch's own comment) — the
+    // freeze is an optional refinement on top, not a precondition for
+    // circulating at all.
+    const inFanOnlyDuringSleep =
+      !isDemanding &&
+      !callActive &&
+      params.state === "FAN_ONLY" &&
+      zone.sleepModeActive;
+    const anchorTarget = inFanOnlyDuringSleep
+      ? effectiveIdleBaseline({
+          idleBaselinePosition: zone.fanOnlyIdleBaselinePosition,
+          minVentPosition: zone.minVentPosition,
+          maxVentPosition: zone.maxVentPosition,
+          occupied: zone.occupied,
+          staleOccupancy: zone.staleOccupancy,
+          callActive: false,
+          unoccupiedIdleFactor: params.settings.unoccupiedIdleFactor,
+        })
+      : step1.desiredPosition;
+    let effectiveDesiredPosition = anchorTarget;
     let anchorPositionPct = zone.priorAnchorPositionPct;
     let anchorSinceMs = zone.priorAnchorSinceMs;
+    let anchorIsFanOnly: boolean | null = zone.priorAnchorIsFanOnly;
     if (
       params.settings.sleepQuietAnchorEnabled &&
       !isDemanding &&
@@ -497,20 +548,32 @@ export function computeZoneCommands(params: {
       const reanchorDue =
         anchorPositionPct === null ||
         anchorSinceMs === null ||
+        // Only forces a reanchor when the mode is *known* to have
+        // changed — an anchor already in progress from before this fix
+        // shipped carries no persisted isFanOnly at all (null), and
+        // treating that as "different from the current mode" would force
+        // every such zone to reanchor on its very next tick regardless of
+        // whether anything actually changed. See
+        // evaluateVentMisalignment's own targetExtremePct migration
+        // comment for the same backward-compatibility shape.
+        (anchorIsFanOnly !== null &&
+          anchorIsFanOnly !== inFanOnlyDuringSleep) ||
         params.nowMs - anchorSinceMs >=
           params.settings.reanchorIntervalMinutes * 60000;
       if (reanchorDue) {
-        anchorPositionPct = step1.desiredPosition;
+        anchorPositionPct = anchorTarget;
         anchorSinceMs = params.nowMs;
+        anchorIsFanOnly = inFanOnlyDuringSleep;
       }
       // reanchorDue's own condition guarantees anchorPositionPct is
       // non-null by this point (either it already was, or the block above
-      // just set it) — the `?? step1.desiredPosition` is a type-safe
-      // fallback that should never actually trigger.
-      effectiveDesiredPosition = anchorPositionPct ?? step1.desiredPosition;
+      // just set it) — the `?? anchorTarget` is a type-safe fallback that
+      // should never actually trigger.
+      effectiveDesiredPosition = anchorPositionPct ?? anchorTarget;
     } else {
       anchorPositionPct = null;
       anchorSinceMs = null;
+      anchorIsFanOnly = null;
 
       // Capacity sharing: a comfortable zone gives up its own unclaimed
       // headroom — down to its own configured floor, full authority, not
@@ -537,6 +600,7 @@ export function computeZoneCommands(params: {
     sleepQuietAnchors[zone.zoneId] = {
       positionPct: anchorPositionPct,
       sinceMs: anchorSinceMs,
+      isFanOnly: anchorIsFanOnly,
     };
 
     // A satisfied zone closes proportionally toward its floor (see

@@ -52,3 +52,58 @@ original whole-house-circulation behavior is unchanged — a real, accepted
 trade-off: a sleeping room's own quiet, comfort-focused resting position
 outweighs house-wide circulation during Sleep Mode specifically, not
 generally.
+
+## Update: Sleep Mode zones were never circulating at all during FAN_ONLY
+
+The original decision above over-corrected. Routing a Sleep-Mode zone
+through the same path `IDLE` uses meant it anchored to the *comfort*
+curve's own output (`computeDesiredPosition`, trending toward
+`min_vent_position` the longer a zone stays satisfied) for a genuine
+FAN_ONLY stretch too — so the yanked-open-every-cycle problem was fixed,
+but the zone stopped circulating air during FAN_ONLY at all, just held
+closed. The intent was never "a sleeping room shouldn't circulate," only
+"a sleeping room shouldn't be jolted by it" — confirmed directly with the
+person sleeping in the room: sleep zones should fully circulate, just
+quietly.
+
+**Decision.** `pipeline.ts`'s anchor logic now tracks *why* a non-demanding
+Sleep-Mode zone reached it: `inFanOnlyDuringSleep` (true only while
+`!callActive && state === "FAN_ONLY" && !isDemanding && zone.sleepModeActive`)
+switches the anchor's target from the comfort curve to the same
+`fanOnlyIdleBaselinePosition`-derived value the ordinary (non-sleep)
+FAN_ONLY branch already computes — still held flat for the same
+anti-noise reason, just circulating instead of closed. Demanding is
+untouched either way, per the original decision's own safety-net
+reasoning.
+
+This target-selection applies *regardless of* `sleep_quiet_anchor_enabled`,
+mirroring the original decision's own precedent (the FAN_ONLY-routing
+choice above isn't gated on it either) — the freeze is an optional
+refinement on top of "which target," not a precondition for circulating
+at all.
+
+A real FAN_ONLY stretch is typically only a few minutes — far shorter than
+`sleep_quiet_reanchor_interval_minutes` (default 60) — so the existing
+interval-based reanchor alone would almost never fire during one, leaving
+a zone stuck holding whichever target it last anchored to under the
+*other* mode for the entire window. A new persisted field,
+`sleep_quiet_anchor_is_fan_only` (mirrors `sleep_quiet_anchor_position`/
+`_since`'s own shape), tracks which mode produced the currently-held
+anchor and forces an immediate reanchor the instant it no longer matches
+the current tick's mode — entering or leaving FAN_ONLY reanchors right
+away, in either direction. An anchor already in progress from before this
+fix shipped carries no persisted value for this new field (`null`) — that
+is deliberately treated as "unknown, don't force a reanchor," not as "the
+mode differs," so upgrading doesn't force every currently-anchored zone to
+jump on its very next tick regardless of whether anything actually
+changed.
+
+**Related, smaller decision made alongside this one:** `fan_only_idle_baseline_position`'s
+own default dropped from 100 to 50 (see its own comment,
+systemSettings.ts). Real house-wide circulation doesn't need every vent
+maxed — especially with several zones opening at once — and reaching 100
+from wherever a vent sits is a larger, louder motor sweep than reaching a
+partial value, which now matters directly here: a Sleep-Mode zone
+circulating through this same baseline should do so quietly, not with a
+full-range sweep that reintroduces the very noise this ADR exists to
+prevent.

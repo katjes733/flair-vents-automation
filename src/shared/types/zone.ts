@@ -77,6 +77,17 @@ export interface ZoneRuntimeState {
   // demanding, Sleep Mode isn't active, or the feature is disabled.
   sleep_quiet_anchor_position: number | null;
   sleep_quiet_anchor_since: string | null;
+  // Which target the anchor above was captured against — true for the
+  // FAN_ONLY circulation baseline, false for the ordinary comfort curve,
+  // null whenever no anchor is currently held (mirrors the two fields
+  // above's own null convention). A real FAN_ONLY stretch is typically
+  // only a few minutes, far shorter than
+  // sleep_quiet_reanchor_interval_minutes — without tracking which mode
+  // produced the current anchor, entering or leaving a brief FAN_ONLY
+  // window wouldn't force a fresh capture, leaving a sleeping zone's vent
+  // stuck holding whatever the *other* mode last anchored to. See
+  // pipeline.ts's own inFanOnlyDuringSleep comment.
+  sleep_quiet_anchor_is_fan_only: boolean | null;
   // Vent misalignment auto-recalibration (see
   // vent_misalignment_auto_recalibration_enabled) — the window fields
   // anchor a *single continuous* stretch of "reported 0%, satisfied,
@@ -165,6 +176,7 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   occupied_since: null,
   sleep_quiet_anchor_position: null,
   sleep_quiet_anchor_since: null,
+  sleep_quiet_anchor_is_fan_only: null,
   vent_misalignment_window_since: null,
   vent_misalignment_window_start_temp: null,
   vent_misalignment_recalibrating_since: null,
