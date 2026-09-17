@@ -78,6 +78,70 @@ describe("evaluateDemandStall", () => {
       expect(result.next).toEqual(EMPTY_DEMAND_STALL_STATE);
     });
 
+    // Regression test for a real, confirmed live bug: this zone's own
+    // ordinary demanding/satisfied cycling flips trackingActive false
+    // roughly every 15-20 minutes, and the reset used to wipe
+    // lastRecalibratedAtMs too (via the raw EMPTY_DEMAND_STALL_STATE) —
+    // erasing cooldownMs's own gating almost immediately after every
+    // completed cycle, so a configured multi-hour cooldown was never
+    // actually in effect. stalledSinceMs is still cleared, deliberately —
+    // a zone no longer demanding at all isn't a driving-zone eligibility
+    // candidate anyway.
+    it("preserves lastRecalibratedAtMs (the cooldown gate) through the reset, unlike stalledSinceMs", () => {
+      const prior: DemandStallState = {
+        windowSinceMs: NOW - 900_000,
+        windowStartTempC: 21,
+        recalibratingSinceMs: null,
+        lastRecalibratedAtMs: NOW - 60_000,
+        stalledSinceMs: NOW - 300_000,
+      };
+      const result = evaluateDemandStall(
+        base({ prior, classification: "satisfied" }),
+      );
+      expect(result.next).toEqual({
+        ...EMPTY_DEMAND_STALL_STATE,
+        lastRecalibratedAtMs: prior.lastRecalibratedAtMs,
+      });
+      expect(result.stalled).toBe(false);
+    });
+
+    // End-to-end sequence proving the cooldown fix actually holds across
+    // a realistic idle gap, not just within one call: a cycle finishes,
+    // the zone briefly goes idle (preserving the cooldown per the test
+    // above), then re-enters demanding and immediately fails its very
+    // first detection window again — this must be blocked by the
+    // still-live cooldown, not treated as a fresh, ungated stall.
+    it("still gates a fresh force-open by the cooldown across an intervening idle gap", () => {
+      const justFinished: DemandStallState = {
+        windowSinceMs: null,
+        windowStartTempC: null,
+        recalibratingSinceMs: null,
+        lastRecalibratedAtMs: NOW,
+        stalledSinceMs: NOW,
+      };
+      const idleGap = evaluateDemandStall(
+        base({
+          prior: justFinished,
+          nowMs: NOW + 60_000,
+          callActive: false,
+        }),
+      );
+      expect(idleGap.next.lastRecalibratedAtMs).toBe(NOW);
+
+      const reopenedWindow = evaluateDemandStall(
+        base({ prior: idleGap.next, nowMs: NOW + 120_000 }),
+      );
+      const failsAgain = evaluateDemandStall(
+        base({
+          prior: reopenedWindow.next,
+          nowMs: NOW + 120_000 + DETECTION_MS,
+          calibratedTempC: 21, // no improvement
+        }),
+      );
+      expect(failsAgain.action).toEqual({ kind: "none" });
+      expect(failsAgain.stalled).toBe(true);
+    });
+
     it("takes no action before the detection window has elapsed, even with zero improvement", () => {
       const prior: DemandStallState = {
         windowSinceMs: NOW - (DETECTION_MS - 1),
@@ -177,6 +241,39 @@ describe("evaluateDemandStall", () => {
     it("keeps forcing the vent open while still waiting and under the timeout", () => {
       const result = evaluateDemandStall(
         base({ prior: recalibrating, allVentsReportedOpenEnough: false }),
+      );
+      expect(result.action).toEqual({ kind: "force_open" });
+      expect(result.stalled).toBe(true);
+      expect(result.next).toEqual(recalibrating);
+    });
+
+    // Regression test for a real, confirmed live bug: forcing the vent
+    // open is exactly what's expected to make the room start improving,
+    // which can flip classification away from "demanding" (or end the
+    // call) mid-cycle — trackingActive used to be checked BEFORE this
+    // in-progress-cycle check, so the cycle got silently abandoned (and
+    // stalledSinceMs/lastRecalibratedAtMs wiped) the instant it started
+    // working. Mirrors evaluateVentMisalignment's own ordering/guarantee.
+    it("keeps forcing the vent open mid-cycle even if classification changes away from demanding", () => {
+      const result = evaluateDemandStall(
+        base({
+          prior: recalibrating,
+          classification: "satisfied",
+          allVentsReportedOpenEnough: false,
+        }),
+      );
+      expect(result.action).toEqual({ kind: "force_open" });
+      expect(result.stalled).toBe(true);
+      expect(result.next).toEqual(recalibrating);
+    });
+
+    it("keeps forcing the vent open mid-cycle even if the call becomes inactive", () => {
+      const result = evaluateDemandStall(
+        base({
+          prior: recalibrating,
+          callActive: false,
+          allVentsReportedOpenEnough: false,
+        }),
       );
       expect(result.action).toEqual({ kind: "force_open" });
       expect(result.stalled).toBe(true);

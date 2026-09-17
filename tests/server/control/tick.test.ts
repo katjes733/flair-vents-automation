@@ -4169,6 +4169,66 @@ describe("runTick — demand stall detection & mitigation", () => {
     expect(z1.demand_stalled).toBe(false);
     expect(persisted.get("z1")?.demand_stalled_since).toBeNull();
   });
+
+  // Regression test mirroring the vent-misalignment fix (see its own
+  // "snaps back to the true unramped target" test and ADR-0004's
+  // update): demand stall shares the identical force-open mechanism, and
+  // never got the immediate-reclose fix at all — a real, confirmed live
+  // bug where it fires every ~1-1.5 hours on a zone with a slow (but
+  // genuinely working) duct, then leaves the ordinary ramp to crawl back
+  // down 10%/tick from the poisoned last_target_position anchor left by
+  // the force-open cycle.
+  it("snaps back to the true unramped target on recalibration_finished, not a single rate-limited step", async () => {
+    const client = new FakeFlairClient();
+    const persisted = new Map<string, ZoneRuntimeState>();
+    const ctx = makeCtx({ demand_stall_detection_enabled: true });
+    ctx.schedules = ALWAYS_ON_SCHEDULE;
+
+    const recalibratingState: ZoneRuntimeState = {
+      ...EMPTY_ZONE_RUNTIME_STATE,
+      demand_stall_window_since: new Date(NOW - 12 * 60000).toISOString(),
+      demand_stall_window_start_temp: 23,
+      demand_stall_recalibrating_since: new Date(NOW - 120_000).toISOString(),
+      demand_stalled_since: new Date(NOW - 120_000).toISOString(),
+      last_target_position: 100,
+    };
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 21.3, // close to the 21°C setpoint — a modest true target
+        ductC: 20,
+        percentOpen: 95, // the vent has now actually reported opening
+      },
+    ]);
+    // idle_baseline_position: 0 (not this file's usual 100) so the
+    // demanding branch's own proportional math actually produces a
+    // modest intermediate value for a small deviation — with the usual
+    // 100 baseline, "demanding" always saturates at 100 regardless of
+    // deviation, which would make a poisoned-anchor ramp step (also 100
+    // -> 90) indistinguishable from the real, fixed target.
+    const zone = makeZone({
+      id: "z1",
+      flairRoomId: "room-1",
+      state: recalibratingState,
+    });
+    zone.config = resolveZoneConfig({
+      ...zone.config,
+      idle_baseline_position: 0,
+    });
+    const decision = await runTick(
+      makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),
+      [zone],
+      ctx,
+      makeDeps(client, persisted, NOW),
+    );
+
+    const z1 = decision.zones.find((z) => z.zone_id === "z1")!;
+    // Default modulation_step_pct is 10 — a single rate-limited step down
+    // from the poisoned anchor (100) would land at exactly 90.
+    expect(z1.vents[0]?.commanded_position_pct).not.toBe(90);
+    expect(z1.vents[0]?.commanded_position_pct).toBeLessThan(50);
+  });
 });
 
 describe("runTick — capacity sharing", () => {
