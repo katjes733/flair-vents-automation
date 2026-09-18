@@ -22,6 +22,7 @@ function base(
     overshootTolerance: null,
     occupied: false,
     spiking: false,
+    callActive: true,
     settings: {
       proportionalBandWidthC: asTempDelta(1.67),
       maxPositionPct: 100,
@@ -433,6 +434,75 @@ describe("computeDesiredPosition", () => {
       );
       expect(unboosted.desiredPosition).toBeGreaterThan(0);
       expect(boosted.desiredPosition).toBeLessThan(unboosted.desiredPosition);
+    });
+  });
+
+  describe("holding flat while satisfied during genuine idle (callActive: false)", () => {
+    it("holds exactly at idle baseline regardless of overshoot, instead of closing toward min_vent_position", () => {
+      const result = computeDesiredPosition(
+        base({
+          callActive: false,
+          idleBaselinePosition: 50,
+          minVentPosition: 5,
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+          // Same deviation as "fully closes to min_vent_position once far
+          // enough past comfortable" above — with callActive the same
+          // input saturates all the way down to min_vent_position (5); the
+          // only difference here is callActive: false.
+          calibratedTemp: asAbsoluteTemp(15),
+        }),
+      );
+      expect(result.desiredPosition).toBe(50);
+    });
+
+    it("holds flat for an occupied zone too — occupancy plays no role once callActive is false", () => {
+      const result = computeDesiredPosition(
+        base({
+          callActive: false,
+          idleBaselinePosition: 50,
+          minVentPosition: 0,
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+          calibratedTemp: asAbsoluteTemp(15),
+          occupied: true,
+        }),
+      );
+      expect(result.desiredPosition).toBe(50);
+    });
+
+    it("the exact same overshoot closes proportionally when callActive is true, but holds flat when false", () => {
+      const overshotInput = {
+        idleBaselinePosition: 100,
+        minVentPosition: 0,
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
+        calibratedTemp: asAbsoluteTemp(20),
+      };
+      const whileCallActive = computeDesiredPosition(
+        base({ ...overshotInput, callActive: true }),
+      );
+      const whileGenuinelyIdle = computeDesiredPosition(
+        base({ ...overshotInput, callActive: false }),
+      );
+      expect(whileCallActive.desiredPosition).toBeLessThan(100);
+      expect(whileGenuinelyIdle.desiredPosition).toBe(100);
+    });
+
+    it("leaves the demanding branch completely unaffected by callActive: false", () => {
+      const result = computeDesiredPosition(
+        base({
+          callActive: false,
+          demanding: true,
+          idleBaselinePosition: 0,
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+          // deviation = 22-21 = 1, well past the demand tolerance — should
+          // ramp open exactly as it would with callActive: true.
+          calibratedTemp: asAbsoluteTemp(22),
+        }),
+      );
+      expect(result.desiredPosition).toBeGreaterThan(0);
     });
   });
 });

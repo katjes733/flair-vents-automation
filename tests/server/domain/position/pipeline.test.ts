@@ -767,7 +767,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
 // arbitrary-but-harmless cooling-direction default the classification
 // label already used, so a zone's position doesn't reset just because
 // nothing happens to be calling for cooling at this exact instant.
-describe("computeZoneCommands — IDLE runs the same proportional math as an active call", () => {
+describe("computeZoneCommands — IDLE's demanding branch ramps like an active call; satisfied holds flat", () => {
   it("opens a demanding zone proportionally instead of resting flat at idle baseline", () => {
     const zones = [
       zone({
@@ -788,13 +788,20 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(result.commandedPositions["z1"]).toBeGreaterThan(60);
   });
 
-  it("closes a satisfied zone proportionally instead of resting flat at idle baseline", () => {
+  // See ADR-0010: unlike the demanding branch above, a satisfied zone no
+  // longer closes proportionally with overshoot during genuine idle — the
+  // whole justification for closing further ("every percent open is real
+  // conditioned air diverted from a zone that needs it right now") only
+  // holds while a call is actually active. During genuine idle there's
+  // nothing to divert, so the zone holds flat at its no-call baseline
+  // regardless of how far past comfortable it's drifted.
+  it("holds flat at the no-call baseline instead of closing proportionally, even well past the comfort boundary", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        satisfiedBaselinePosition: 100,
+        noCallActiveBaselinePosition: 60,
         minVentPosition: 0,
-        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
+        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, well past overshoot band
         demandTolerance: asTempDelta(0.5),
         overshootTolerance: asTempDelta(0.5),
       }),
@@ -808,18 +815,20 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
       floorLps: 0,
     });
     expect(result.classifications["z1"]).toBe("satisfied");
-    expect(result.commandedPositions["z1"]).toBeLessThan(100);
+    expect(result.commandedPositions["z1"]).toBe(60);
   });
 
-  // Only holds when satisfiedBaselinePosition and noCallActiveBaselinePosition
-  // happen to match (both 100 here, via the zone() builder's own
-  // defaults) — see the "idle baseline reuse for genuine IDLE" describe
-  // block below for what changes once they diverge, which is the entire
-  // point of no_call_active_baseline_position's widened scope.
-  it("computes the identical position for a satisfied zone whether the call is genuinely active or the compressor just cycled to idle", () => {
+  // The direct contrast that motivated ADR-0010: given identical overshoot,
+  // a satisfied zone's position now genuinely differs between an active
+  // call (closes proportionally, conserving air for a demanding sibling)
+  // and genuine idle (holds flat, since there's nothing to conserve for and
+  // closing further only works against no_call_active_baseline_position's
+  // own standing-pressure-headroom purpose).
+  it("a satisfied zone's position differs between an active call and genuine idle, given real overshoot", () => {
     const satisfiedZone = {
       zoneId: "z1",
       satisfiedBaselinePosition: 100,
+      noCallActiveBaselinePosition: 100,
       minVentPosition: 0,
       calibratedTemp: asAbsoluteTemp(18),
       demandTolerance: asTempDelta(0.5),
@@ -841,9 +850,8 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
       capLps: 10000,
       floorLps: 0,
     });
-    expect(duringIdle.commandedPositions["z1"]).toBe(
-      duringCall.commandedPositions["z1"],
-    );
+    expect(duringCall.commandedPositions["z1"]).toBeLessThan(100);
+    expect(duringIdle.commandedPositions["z1"]).toBe(100);
   });
 });
 
@@ -1469,7 +1477,12 @@ describe("computeZoneCommands — fast transition (call start/end)", () => {
           zoneId: "z",
           lastCommandedTarget: 90,
           minVentPosition: 0,
-          calibratedTemp: asAbsoluteTemp(10), // well below setpoint -> satisfied, closes toward the floor
+          // A satisfied zone holds flat at noCallActiveBaselinePosition
+          // during genuine idle regardless of overshoot (ADR-0010) — set
+          // to 0 here so this scenario still exercises a real drop, same
+          // as it would for any zone whose no-call baseline is low.
+          noCallActiveBaselinePosition: 0,
+          calibratedTemp: asAbsoluteTemp(10),
           demandTolerance: asTempDelta(0.5),
           overshootTolerance: asTempDelta(0.5),
         }),
@@ -1479,9 +1492,71 @@ describe("computeZoneCommands — fast transition (call start/end)", () => {
       capLps: 10000,
       floorLps: 0,
     });
-    // origin 90, target saturates toward minVentPosition(0) — maxDelta 50
+    // origin 90, target is the flat no-call baseline(0) — maxDelta 50
     // means landing at 40, not the ordinary single-step 80.
     expect(result.commandedPositions["z"]).toBe(40);
+  });
+
+  // The scenario that motivated ADR-0010 in the first place: a zone closed
+  // down during an active call reopening toward a *higher* no-call
+  // baseline once the call genuinely ends — not just a satisfied zone
+  // closing further. Confirms fast transition applies symmetrically
+  // regardless of which direction the no-call baseline sits relative to
+  // where the zone already was.
+  it("lets a satisfied zone jump up to a higher no-call baseline in one tick when a call just ended", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          minVentPosition: 0,
+          noCallActiveBaselinePosition: 50,
+          calibratedTemp: asAbsoluteTemp(10), // well below setpoint -> satisfied
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // origin 10, target 50 (the flat no-call baseline, ADR-0010) — maxDelta
+    // 50 easily covers the 40-point gap, landing exactly on 50 in one
+    // tick instead of the ordinary single-step 20.
+    expect(result.commandedPositions["z"]).toBe(50);
+  });
+
+  // The direct contrast: without fast transition, the exact same call-end
+  // scenario is bounded to one ordinary step, confirming Step 2's rate
+  // limit alone (not an instant snap) governs how quickly a satisfied
+  // zone actually reaches its no-call baseline when the feature is off —
+  // see ADR-0010's own consequences section.
+  it("without fast transition, the same call-end scenario only takes one ordinary step toward the no-call baseline", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          minVentPosition: 0,
+          noCallActiveBaselinePosition: 50,
+          calibratedTemp: asAbsoluteTemp(10),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...fastSettings, fastTransitionEnabled: false },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // origin 10, target 50, ordinary maxDelta 10 -> lands on 20, nowhere
+    // near the full 50.
+    expect(result.commandedPositions["z"]).toBe(20);
   });
 
   it("does nothing while the feature is disabled — the kill switch fully reverts to the ordinary ramp", () => {
@@ -1625,6 +1700,10 @@ describe("computeZoneCommands — fast transition (call start/end)", () => {
           lastCommandedTarget: 90,
           minVentPosition: 0,
           flowRateLps: 100,
+          // Holds flat at the no-call baseline during genuine idle
+          // (ADR-0010) — set to 0 so this scenario still fast-closes, same
+          // as any zone with a low no-call baseline would.
+          noCallActiveBaselinePosition: 0,
           calibratedTemp: asAbsoluteTemp(10),
           demandTolerance: asTempDelta(0.5),
           overshootTolerance: asTempDelta(0.5),
@@ -1635,6 +1714,7 @@ describe("computeZoneCommands — fast transition (call start/end)", () => {
           lastCommandedTarget: 90,
           minVentPosition: 0,
           flowRateLps: 100,
+          noCallActiveBaselinePosition: 0,
           calibratedTemp: asAbsoluteTemp(10),
           demandTolerance: asTempDelta(0.5),
           overshootTolerance: asTempDelta(0.5),
