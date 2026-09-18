@@ -29,6 +29,7 @@ import {
 import {
   ARBITRARY_IDLE_CALL_STATE,
   type HvacCallState,
+  type HvacState,
 } from "~/server/domain/types";
 import {
   deriveHvacState,
@@ -1324,6 +1325,10 @@ export async function runTick(
 
   const pipelineResult = computeZoneCommands({
     state: hvac.state,
+    // Trusted — always either null (see AirHandlerRuntimeState's own
+    // default) or a value this same tick.ts persisted as hvac.state on a
+    // prior run (Step 4 below persists `lastHvacState: hvac.state`).
+    previousState: priorRuntime.lastHvacState as HvacState | null,
     zones: pipelineInputs,
     nowMs: startedAtMs,
     settings: {
@@ -1349,6 +1354,8 @@ export async function runTick(
       reanchorIntervalMinutes:
         ctx.settings.sleep_quiet_reanchor_interval_minutes,
       capacitySharingEnabled: ctx.settings.capacity_sharing_enabled,
+      fastTransitionEnabled: ctx.settings.fast_transition_enabled,
+      fastTransitionStepPct: ctx.settings.fast_transition_step_pct,
     },
     capLps,
     floorLps,

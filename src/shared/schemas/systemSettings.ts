@@ -154,6 +154,57 @@ export const systemSettingsConfigSchema = z.object({
   dead_zone_recovery_direction: z
     .enum(["open", "close", "both"])
     .default("open"),
+  // A real, observed annoyance this fixes: vents only ever react to
+  // system changes after the fact. When a call starts or ends — whether
+  // triggered by this app's own driving-setpoint push or by the
+  // thermostat itself — the zones affected by that transition are still
+  // sitting wherever their last ordinary computation left them, and only
+  // catch up over several ticks at the normal modulation_step_pct/
+  // max_steps_per_tick rate. The equipment side has no equivalent ramp
+  // (a compressor/blower can be moving real air within moments of the
+  // call actually starting), so for the first several minutes a
+  // newly-demanding zone's own vent can be only a fraction open while
+  // full airflow is already trying to move through it — real static
+  // pressure risk, not just a comfort lag. Symmetric on the way out too:
+  // a call ending should let previously-demanding zones (now satisfied)
+  // catch up to their new resting position quickly rather than creep
+  // down, for the same "avoid a stuck-partway motor" reasoning
+  // dead_zone_recovery_jump_pct above already established.
+  //
+  // Deliberately a bigger per-tick step allowance, not the dead-zone
+  // jump's own fixed landing value reused — a transitioning zone already
+  // has a real, correctly-computed target (Step 1/3's own output,
+  // contention-resolved), so there's no need to jump-then-correct the
+  // way dead-zone recovery does; it just needs to close the gap to that
+  // target faster than the ordinary ramp rate allows. Implemented as a
+  // larger max_steps_per_tick for this one tick's ramp call only (see
+  // computeZoneCommands's own callTransitioning comment) — contention and
+  // the pressure-floor clamp keep governing exactly as they do every
+  // other tick, unmodified: if closing every non-demanding zone at once
+  // would drop the aggregate below the floor, the clamp reopens the
+  // highest-priority ones back up, same as it already does today — no
+  // separate "stagger by priority" logic needed, it falls out for free.
+  // Applies uniformly to every zone, sleep-mode included: fewer, larger
+  // movements mean less total motor activity and less exposure to
+  // getting stuck mid-creep than many small steps would, which is *more*
+  // aligned with sleep_quiet_anchor_enabled's own quiet-hours goal, not
+  // in tension with it.
+  //
+  // Defaults to off: this changes real dispatch behavior during exactly
+  // the moments comfort matters most, so it ships opt-in rather than
+  // silently changing what every existing installation already does —
+  // and everything here reduces to today's exact behavior at
+  // fast_transition_enabled: false, no matter what
+  // fast_transition_step_pct is set to.
+  fast_transition_enabled: z.boolean().default(false),
+  // Only consulted while fast_transition_enabled is true. Expressed as a
+  // percentage (like dead_zone_recovery_jump_pct) rather than a step
+  // count for the same reason: it's independent of whatever
+  // modulation_step_pct/discrete_position_step_pct grid is configured —
+  // internally converted to however many of that grid's own steps are
+  // needed to cover this percentage in one tick, never coarsening the
+  // grid itself. PLACEHOLDER pending real-world tuning.
+  fast_transition_step_pct: z.number().positive().max(100).default(50),
   min_step_delta_pct: z.number().positive().default(15),
   // Quiet actuation: while a zone's currently-active schedule event has
   // Sleep Mode (assume_occupied) set for it, this threshold replaces

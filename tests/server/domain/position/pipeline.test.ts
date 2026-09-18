@@ -86,6 +86,10 @@ const settings = {
   sleepQuietAnchorEnabled: false,
   reanchorIntervalMinutes: 60,
   capacitySharingEnabled: false,
+  // Off by default — the dedicated "fast transition" describe block below
+  // turns it on explicitly to exercise it.
+  fastTransitionEnabled: false,
+  fastTransitionStepPct: 50,
 };
 
 describe("computeZoneCommands — no contention", () => {
@@ -1412,5 +1416,242 @@ describe("computeZoneCommands — dead-zone recovery", () => {
     });
     // Ordinary one-step ramp toward the idle baseline, not the jump to 50.
     expect(result.commandedPositions["z"]).toBe(90);
+  });
+});
+
+// fast_transition_enabled — see its own comment in systemSettings.ts. All
+// tests here use modulationStepPct=10, maxStepsPerTick=1 (ordinary max
+// delta 10) and fastTransitionStepPct=50, so a fast-transitioning zone
+// should reach up to 50 points of movement in one tick instead of 10 —
+// the gap between those two numbers is what every assertion below is
+// actually checking.
+describe("computeZoneCommands — fast transition (call start/end)", () => {
+  const fastSettings = {
+    ...settings,
+    modulationStepPct: 10,
+    maxStepsPerTick: 1,
+    fastTransitionEnabled: true,
+    fastTransitionStepPct: 50,
+  };
+
+  // lastCommandedTarget deliberately avoids the exact 0/100 extremes
+  // throughout this describe block — landing exactly on either one would
+  // trigger the unrelated dead-zone-recovery jump instead (checked first,
+  // inside rampTowardTarget itself), masking whatever fast-transition
+  // itself actually does.
+  it("lets a freshly-demanding zone take a much bigger step than the ordinary ramp allows when a call just started", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "IDLE",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(30), // well above setpoint -> demanding, saturates near 100
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // origin 10, maxDelta = 10 * ceil(50/10) = 50 -> lands on 60, not the
+    // ordinary single-step 20.
+    expect(result.commandedPositions["z"]).toBe(60);
+  });
+
+  it("lets a newly-satisfied zone drop just as far when a call just ended", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 90,
+          minVentPosition: 0,
+          calibratedTemp: asAbsoluteTemp(10), // well below setpoint -> satisfied, closes toward the floor
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // origin 90, target saturates toward minVentPosition(0) — maxDelta 50
+    // means landing at 40, not the ordinary single-step 80.
+    expect(result.commandedPositions["z"]).toBe(40);
+  });
+
+  it("does nothing while the feature is disabled — the kill switch fully reverts to the ordinary ramp", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "IDLE",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(30),
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...fastSettings, fastTransitionEnabled: false },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(20);
+  });
+
+  it("does nothing when the state didn't actually change tick-to-tick", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(30),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(20);
+  });
+
+  it("does nothing on the first tick ever (no prior state to compare against), whether null or omitted", () => {
+    const zones = [
+      zone({
+        zoneId: "z",
+        lastCommandedTarget: 10,
+        calibratedTemp: asAbsoluteTemp(30),
+      }),
+    ];
+    const withNull = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: null,
+      zones,
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(withNull.commandedPositions["z"]).toBe(20);
+
+    const withOmitted = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(withOmitted.commandedPositions["z"]).toBe(20);
+  });
+
+  it("still lands on the ordinary quantization grid — a bigger step allowance, not a coarser one", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "IDLE",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(23), // a modest deviation, not saturating
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // Whatever it lands on, it must be a multiple of modulationStepPct
+    // (10) — never a value only reachable by widening the grid itself.
+    expect(result.commandedPositions["z"]! % 10).toBe(0);
+  });
+
+  // Regression coverage for the user's own correction: many small steps
+  // risk a stuck vent (needing a full, louder recalibration cycle to
+  // recover) more than one larger decisive step does, so sleep-mode zones
+  // should NOT be exempted from this — the opposite of
+  // sleep_quiet_anchor_enabled's own "hold flat" behavior, which this
+  // still respects (the anchor's own frozen value is unchanged), just
+  // reaching that value faster.
+  it("applies to sleep-mode zones too, reaching the frozen anchor value faster instead of creeping toward it", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          sleepModeActive: true,
+          priorAnchorPositionPct: 50,
+          priorAnchorSinceMs: 0,
+          priorAnchorIsFanOnly: false,
+          calibratedTemp: asAbsoluteTemp(19.5),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 1000, // well inside the reanchor interval — anchor stays frozen at 50
+      settings: { ...fastSettings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // Frozen anchor target is 50; origin 10 — ordinary ramp would land on
+    // 20, fast transition reaches the full 50 in one tick.
+    expect(result.commandedPositions["z"]).toBe(50);
+  });
+
+  // Proves the "stagger by priority" behavior discussed doesn't need any
+  // new code: the existing pressure-floor clamp already reopens
+  // highest-priority zones first when the aggregate would otherwise drop
+  // too low — which, from the other side, means a lower-priority zone is
+  // the one left to actually finish closing fast.
+  it("relies on the existing pressure-floor clamp to keep a higher-priority zone open when fast-closing everything at once would violate the floor", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "high",
+          priorityRank: 0,
+          lastCommandedTarget: 90,
+          minVentPosition: 0,
+          flowRateLps: 100,
+          calibratedTemp: asAbsoluteTemp(10),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+        zone({
+          zoneId: "low",
+          priorityRank: 1,
+          lastCommandedTarget: 90,
+          minVentPosition: 0,
+          flowRateLps: 100,
+          calibratedTemp: asAbsoluteTemp(10),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      // Both zones fast-close from 90 to 40 (origin 90, maxDelta 50) —
+      // 100 Lps each * 40% = 40 Lps apiece, 80 Lps total, short of a
+      // 120 Lps floor. The clamp must reopen the higher-priority zone to
+      // make up the gap; the lower-priority one finishes its fast close
+      // untouched.
+      floorLps: 120,
+    });
+    expect(result.pressureFloorClamped).toBe(true);
+    expect(result.commandedPositions["high"]).toBeGreaterThan(40);
+    expect(result.commandedPositions["low"]).toBe(40);
   });
 });

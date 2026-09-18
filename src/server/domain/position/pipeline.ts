@@ -211,6 +211,15 @@ function bucketFor(
  */
 export function computeZoneCommands(params: {
   state: HvacState;
+  // The previous tick's own state — null/omitted when there's no prior
+  // tick at all (first run since a restart/deploy). Used only to detect a
+  // callActive transition for fast_transition_enabled (see its own
+  // comment, systemSettings.ts); null deliberately never counts as a
+  // transition, so a restart while a call happens to already be running
+  // doesn't spuriously fire it. Optional (not just nullable) so every
+  // existing caller that doesn't care about this feature — most of this
+  // file's own tests — doesn't need to know it exists.
+  previousState?: HvacState | null;
   zones: PipelineZoneInput[];
   nowMs: number;
   settings: {
@@ -233,6 +242,8 @@ export function computeZoneCommands(params: {
     sleepQuietAnchorEnabled: boolean;
     reanchorIntervalMinutes: number;
     capacitySharingEnabled: boolean;
+    fastTransitionEnabled: boolean;
+    fastTransitionStepPct: number;
   };
   capLps: number;
   floorLps: number;
@@ -247,6 +258,33 @@ export function computeZoneCommands(params: {
   const effectivePositionStepPct =
     params.settings.discretePositionStepPct ??
     params.settings.modulationStepPct;
+  // See fast_transition_enabled's own comment (systemSettings.ts). Applies
+  // uniformly to every zone's Step 2 ramp call below via
+  // effectiveMaxStepsPerTick — deliberately not scoped to only-demanding
+  // or only-satisfied zones, since manual-position/no_vent/manual_fixed_vent
+  // zones never reach the ramp loop at all regardless, and every zone that
+  // does benefits from catching up faster on the same transition tick.
+  const wasCallActive =
+    params.previousState === "COOLING_CALL" ||
+    params.previousState === "HEATING_CALL";
+  const callTransitioning =
+    params.settings.fastTransitionEnabled &&
+    // != (not !==) — deliberately catches both null and omitted/undefined,
+    // both of which mean "no prior tick to compare against."
+    params.previousState != null &&
+    wasCallActive !== callActive;
+  // Widens the ramp's own per-tick allowance without coarsening the
+  // quantization grid — rampTowardTarget uses modulationStepPct for both,
+  // so the fix is a bigger maxStepsPerTick (more steps of the *same*
+  // size), not a bigger modulationStepPct (fewer, coarser landing spots).
+  const effectiveMaxStepsPerTick = callTransitioning
+    ? Math.max(
+        params.settings.maxStepsPerTick,
+        Math.ceil(
+          params.settings.fastTransitionStepPct / effectivePositionStepPct,
+        ),
+      )
+    : params.settings.maxStepsPerTick;
   const commandedPositions: Record<string, number> = {};
   const effectiveIdleBaselines: Record<string, number> = {};
   const classifications: Record<string, ZoneClassification | "inactive"> = {};
@@ -683,7 +721,7 @@ export function computeZoneCommands(params: {
       desiredPosition: position,
       lastCommandedTarget: zone.lastCommandedTarget,
       modulationStepPct: effectivePositionStepPct,
-      maxStepsPerTick: params.settings.maxStepsPerTick,
+      maxStepsPerTick: effectiveMaxStepsPerTick,
       minVentPosition: zone.minVentPosition,
       maxVentPosition: zone.maxVentPosition,
       // Neither override level set one (dead_zone_recovery_jump_pct

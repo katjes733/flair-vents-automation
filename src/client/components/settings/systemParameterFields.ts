@@ -422,6 +422,28 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "advanced",
       },
       {
+        path: "fast_transition_enabled",
+        baseLabel: "Fast transition on call start/end",
+        kind: "boolean",
+        options: [
+          { value: "true", label: "Enabled" },
+          { value: "false", label: "Disabled" },
+        ],
+        description:
+          "When a call starts or ends — whether triggered by this app's own setpoint push or by the thermostat itself — every affected zone's vent takes a much bigger step than the ordinary ramp allows, instead of creeping toward its new target over several ticks. Fixes a real static-pressure risk: the equipment side has no equivalent ramp, so a newly-demanding zone's vent can otherwise sit mostly closed while full airflow is already trying to move through it. Off by default — this changes real dispatch behavior during exactly the moments comfort matters most.",
+        tier: "advanced",
+      },
+      {
+        path: "fast_transition_step_pct",
+        baseLabel: "Fast transition step size",
+        kind: "percent",
+        min: 0,
+        max: 100,
+        description:
+          "Only consulted while Fast transition on call start/end is on. How far a transitioning zone's vent is allowed to move in the one tick a call starts or ends, instead of the ordinary max ramp step. Contention and the pressure-floor safeguard still govern the actual outcome exactly as they do every other tick — this only widens how fast a zone can close the gap to its already-computed target.",
+        tier: "advanced",
+      },
+      {
         path: "min_step_delta_pct",
         baseLabel: "Min dispatch step delta",
         kind: "percent",
