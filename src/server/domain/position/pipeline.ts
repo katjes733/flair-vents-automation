@@ -553,6 +553,7 @@ export function computeZoneCommands(params: {
       overshootTolerance: zone.overshootTolerance,
       occupied: zone.occupied,
       spiking: zone.spiking,
+      callActive,
       settings: {
         proportionalBandWidthC: params.settings.proportionalBandWidthC,
         maxPositionPct: params.settings.maxPositionPct,

@@ -35,6 +35,12 @@ export interface DesiredPositionInput {
   overshootTolerance: TempDelta | null;
   occupied: boolean;
   spiking: boolean;
+  // Gates the satisfied branch's proportional closing below — see that
+  // branch's own comment for why. Never affects the demanding branch: a
+  // zone that's still demanding during genuine idle (the arbitrary
+  // cooling-direction default) ramps exactly the same as it would during
+  // an active call.
+  callActive: boolean;
   settings: {
     proportionalBandWidthC: TempDelta;
     maxPositionPct: number;
@@ -131,6 +137,23 @@ export function computeDesiredPosition(
     // See "Occupancy" — this replaces effectiveIdleBaseline's old flat
     // idleBaselinePosition return for a satisfied zone during an active
     // call, which had no mechanism to correct an already-overcooled room.
+    //
+    // Gated on callActive (see ADR-0010): the whole justification for
+    // closing further than idleBaselinePosition is "every percent open is
+    // real conditioned air diverted from a zone that needs it right now" —
+    // true only while a sibling is actively being conditioned. During
+    // genuine idle there's nothing to divert, and closing further actively
+    // works against no_call_active_baseline_position's own purpose
+    // (standing pressure headroom for whenever the next call starts) — so
+    // a satisfied zone holds flat at idleBaselinePosition regardless of
+    // overshoot whenever no call is active anywhere.
+    if (!i.callActive) {
+      return {
+        desiredPosition: i.idleBaselinePosition,
+        deviation,
+        clampedBy: null,
+      };
+    }
     const overshoot = Math.max(0, -overshootToleranceC - deviation);
     const closeRatio =
       effectiveBand > 0 ? Math.min(1, overshoot / effectiveBand) : 1;

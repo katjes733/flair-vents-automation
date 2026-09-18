@@ -91,3 +91,15 @@ renamed to `no_call_active_baseline_position` once its own name was
 flagged as stale for the same reason: it still said "fan_only" despite
 this decision having widened it to cover genuine IDLE too. See
 [[rename-fan-only-idle-baseline-and-minimum-comfort-tolerance]] (ADR-0009).
+
+## Update (ADR-0010)
+
+This decision changed which value feeds the satisfied/demanding curve's
+continuity anchor during genuine idle, but never addressed that the
+curve's own proportional-closing behavior (closing further the more a
+zone overshoots) kept applying regardless of `callActive` — a real gap,
+since that closing behavior's justification only holds while a call is
+actually active. See
+[[satisfied-zone-holds-flat-during-genuine-idle]] (ADR-0010): a satisfied
+zone now holds flat at whichever baseline this decision resolves,
+regardless of overshoot, during genuine idle.

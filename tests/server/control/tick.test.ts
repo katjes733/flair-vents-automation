@@ -433,7 +433,14 @@ describe("runTick — a satisfied zone closes down during someone else's active 
   // had to re-close from scratch next cycle — it never actually settled.
   // Confirmed via real production data: desired 100 -> 90 -> 80 (closing,
   // COOLING_CALL) -> 90 -> 100 (reset, the instant IDLE hit).
-  it("doesn't reopen an occupied, satisfied zone just because the compressor cycles to IDLE mid-close", async () => {
+  //
+  // ADR-0010 changed what the zone's *raw target* is once IDLE is genuine
+  // (holds flat at no_call_active_baseline_position instead of continuing
+  // to close with overshoot) — but Step 2's ordinary rate limit still
+  // governs the *actual commanded* movement regardless of how far the raw
+  // target jumps, so this stays a bounded, single-step nudge toward the
+  // new target, never the instant full reopen the original incident saw.
+  it("takes at most one ordinary rate-limited step toward the no-call baseline when the compressor cycles to IDLE mid-close, never an instant reopen", async () => {
     const persisted = new Map<string, ZoneRuntimeState>();
     const ctx = makeCtx();
     ctx.schedules = [
@@ -492,10 +499,15 @@ describe("runTick — a satisfied zone closes down during someone else's active 
     expect(closedPosition).toBeLessThan(100);
 
     // Tick 2: the compressor cycles to IDLE, nothing else changes — the
-    // *same* persisted runtime state carries the ramp forward. The old,
-    // buggy behavior would jump this straight back toward 100
-    // (satisfied_baseline_position, since the zone is occupied); the fix keeps
-    // it continuing from (or at) where it already was.
+    // *same* persisted runtime state carries the ramp forward (via
+    // `state: persisted.get(...)`, mirroring every other multi-tick test in
+    // this file). The old, buggy behavior jumped this straight back to 100
+    // (satisfied_baseline_position, since the zone is occupied) in one
+    // tick. Today's raw target for a genuinely idle, satisfied zone is
+    // no_call_active_baseline_position (50, ctx's own default) — a real,
+    // legitimate change from ADR-0010 — but Step 2 still only allows one
+    // ordinary step (modulation_step_pct=10) toward it per tick, so this
+    // stays a bounded nudge, not the old instant snap.
     const client2 = new FakeFlairClient();
     setupFlairFixture(
       client2,
@@ -512,16 +524,23 @@ describe("runTick — a satisfied zone closes down during someone else's active 
     );
     const decision2 = await runTick(
       makeAirHandler(),
-      zones,
+      [
+        makeZone({
+          id: "z-bedroom",
+          flairRoomId: "room-bedroom",
+          state: persisted.get("z-bedroom"),
+        }),
+      ],
       ctx,
       makeDeps(client2, persisted, NOW + 60_000),
     );
 
     expect(decision2.hvac_state).toBe("IDLE");
     expect(decision2.zones[0]?.classification).toBe("satisfied");
-    expect(
-      decision2.zones[0]?.vents[0]?.commanded_position_pct,
-    ).toBeLessThanOrEqual(closedPosition!);
+    // origin ~10.64 (closedPosition), target 50 (no_call_active_baseline_position),
+    // maxDelta 10 -> lands on 20.64, quantized to 20 — one ordinary step
+    // toward the new baseline, nowhere close to an instant reopen to 50.
+    expect(decision2.zones[0]?.vents[0]?.commanded_position_pct).toBe(20);
   });
 });
 
