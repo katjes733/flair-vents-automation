@@ -73,3 +73,21 @@ it's set to today) now also governs genuine idle, effective immediately on
 deploy. `fan_only_idle_baseline_position`'s own default (50, per ADR-0003's
 update) needed no further change — it was already tuned for "moderate,
 not maxed" reasoning that applies equally well to the newly-widened scope.
+
+## Update (ADR-0008)
+
+`comfort_idle_baseline_position`/`idle_baseline_position` — referenced
+throughout this decision under their names at the time — were renamed to
+`satisfied_baseline_position` (same name at both the system and per-zone
+level) once the "comfort"/"idle" naming was flagged as actively confusing.
+See [[rename-comfort-idle-baseline-to-satisfied-baseline]] (ADR-0008) for
+the rename itself; the decision recorded above is otherwise unchanged.
+
+## Update (ADR-0009)
+
+`fan_only_idle_baseline_position` — the setting this decision widened in
+scope, referenced throughout under its name at the time — was itself
+renamed to `no_call_active_baseline_position` once its own name was
+flagged as stale for the same reason: it still said "fan_only" despite
+this decision having widened it to cover genuine IDLE too. See
+[[rename-fan-only-idle-baseline-and-minimum-comfort-tolerance]] (ADR-0009).

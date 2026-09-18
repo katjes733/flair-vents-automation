@@ -29,8 +29,8 @@ const TONNAGE_MAX = 25;
  * "Multi-Vent Manual Zones"; the old zone-level `duct_flow_rate_lps`
  * field no longer exists at all (retired once every vent-having type
  * moved to a per-vent rating, with nothing left to apply it to);
- * min/max_vent_position ordering; idle_baseline_position within [min,max]
- * rejected, never silently clamped — see "Config-time validation".
+ * min/max_vent_position ordering; satisfied_baseline_position within
+ * [min,max] rejected, never silently clamped — see "Config-time validation".
  */
 export function validateZoneConfig(zone: {
   ventHardwareType: VentHardwareType;
@@ -40,12 +40,12 @@ export function validateZoneConfig(zone: {
   minVentPosition: number;
   maxVentPosition: number;
   // undefined means "deferring to the system-wide
-  // comfort_idle_baseline_position default" (see zoneConfigSchema's own
+  // satisfied_baseline_position default" (see zoneConfigSchema's own
   // comment) — skipped below, since there's no zone-specific value to
   // range-check without threading system settings into this validation
   // path, and the system default is already bounds-checked by its own
   // schema.
-  idleBaselinePosition: number | undefined;
+  satisfiedBaselinePosition: number | undefined;
 }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -90,15 +90,15 @@ export function validateZoneConfig(zone: {
   }
 
   if (
-    zone.idleBaselinePosition !== undefined &&
-    (zone.idleBaselinePosition < zone.minVentPosition ||
-      zone.idleBaselinePosition > zone.maxVentPosition)
+    zone.satisfiedBaselinePosition !== undefined &&
+    (zone.satisfiedBaselinePosition < zone.minVentPosition ||
+      zone.satisfiedBaselinePosition > zone.maxVentPosition)
   ) {
     issues.push({
-      code: "idle_baseline_out_of_range",
+      code: "satisfied_baseline_out_of_range",
       severity: "error",
       message:
-        "idle_baseline_position must fall within [min_vent_position, max_vent_position].",
+        "satisfied_baseline_position must fall within [min_vent_position, max_vent_position].",
     });
   }
 

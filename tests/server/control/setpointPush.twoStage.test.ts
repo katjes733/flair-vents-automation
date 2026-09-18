@@ -83,7 +83,7 @@ function makeZone(
     ventHardwareType: "flair_smart_vent",
     config: resolveZoneConfig({
       has_temperature_sensor: true,
-      idle_baseline_position: 100,
+      satisfied_baseline_position: 100,
     }),
     state,
   };

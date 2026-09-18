@@ -3,7 +3,7 @@ export type ContentionBucket = "spiking" | "occupied" | "unoccupied";
 export interface ContentionZone {
   zoneId: string;
   desiredPosition: number;
-  floorPosition: number; // max(idle_baseline_position, min_vent_position)
+  floorPosition: number; // max(satisfied_baseline_position, min_vent_position)
   flowRateLps: number;
   priorityRank: number; // Infinity if absent from the active priority list
   bucket: ContentionBucket;

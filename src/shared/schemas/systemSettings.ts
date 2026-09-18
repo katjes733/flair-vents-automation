@@ -28,8 +28,8 @@ export const systemSettingsConfigSchema = z.object({
   // picked as the midpoint (Step 1 section).
   heating_choke_position_pct: z.number().min(15).max(25).default(20),
   // System-wide fallback for a flair_smart_vent zone's own
-  // idle_baseline_position (zoneConfig.ts), used whenever a zone leaves it
-  // unset. Defaulted to 0, not the old flat 100 every zone used to get —
+  // satisfied_baseline_position (zoneConfig.ts), used whenever a zone leaves
+  // it unset. Defaulted to 0, not the old flat 100 every zone used to get —
   // a real, confirmed incident (docs/recommendation-engine-candidates.md):
   // a zone sitting at its 100%-default idle baseline while merely
   // satisfied (not overshooting enough to trigger the closing ramp) ran
@@ -40,13 +40,22 @@ export const systemSettingsConfigSchema = z.object({
   // baseline), since capacity-sharing independently guarantees a
   // genuinely struggling zone gets reopened regardless of what this
   // default is.
-  comfort_idle_baseline_position: z.number().min(0).max(100).default(0),
+  // Named satisfied_baseline_position, not "idle" or "comfort" (its name
+  // until ADR-0008): "idle" was actively backwards — this only ever applies
+  // while a call is *active* elsewhere (never during idle), and "comfort"
+  // added no real meaning since both this and no_call_active_baseline_position
+  // below ultimately serve comfort. The per-zone override
+  // (zoneConfig.ts) matches this name exactly, mirroring
+  // no_call_active_baseline_position's own same-name-at-both-levels pattern —
+  // previously the per-zone field was named idle_baseline_position, a
+  // second, different name for the identical concept at the other level.
+  satisfied_baseline_position: z.number().min(0).max(100).default(0),
   // The fallback for *any* stretch where no call is active anywhere on
   // this air handler — deliberately a separate setting from
-  // comfort_idle_baseline_position above, not the same value reused,
+  // satisfied_baseline_position above, not the same value reused,
   // despite both feeding the exact same demanding/satisfied curve as its
   // own continuity anchor (step1DesiredPosition.ts). The two scenarios
-  // that anchor serves need different numbers: comfort_idle_baseline_position
+  // that anchor serves need different numbers: satisfied_baseline_position
   // must stay low for "satisfied while a *sibling* zone is actively being
   // conditioned" — every percent open there is real conditioned air
   // diverted from a zone that needs it right now, which is exactly the
@@ -56,13 +65,17 @@ export const systemSettingsConfigSchema = z.object({
   // there's no conditioned air being produced to conserve, so the only
   // cost of resting open is standing pressure headroom for whenever the
   // next call starts, which is a benefit, not a cost. Originally scoped
-  // to FAN_ONLY only (hence the name); genuine IDLE shares the identical
-  // "nothing being conditioned" justification, so rather than add a
-  // second, near-duplicate setting for it, this one's scope was widened
-  // instead — resolved once per zone per tick in pipeline.ts
-  // (`callActive ? idleBaselinePosition : fanOnlyIdleBaselinePosition`)
+  // to FAN_ONLY only (named fan_only_idle_baseline_position at the time);
+  // genuine IDLE shares the identical "nothing being conditioned"
+  // justification, so rather than add a second, near-duplicate setting for
+  // it, this one's scope was widened instead — resolved once per zone per
+  // tick in pipeline.ts
+  // (`callActive ? satisfiedBaselinePosition : noCallActiveBaselinePosition`)
   // and fed into the *same* existing formula, not a parallel computation
-  // path. Defaulted to 50, not the full opposite-extreme 100 this used to
+  // path. Renamed from fan_only_idle_baseline_position once the widened
+  // scope made the old name itself misleading in the same way
+  // comfort_idle_baseline_position was — see ADR-0009. Defaulted to 50, not
+  // the full opposite-extreme 100 this used to
   // be — achieving real house-wide mixing doesn't require every vent
   // maxed, especially with several zones opening simultaneously, and 100
   // has a real cost of its own: reaching it from wherever a vent
@@ -72,7 +85,7 @@ export const systemSettingsConfigSchema = z.object({
   // FAN_ONLY (see sleep_quiet_anchor_enabled's own comment and ADR-0003's
   // update) — the whole point there is quiet, and maxing every vent out
   // undercuts that even though the position itself isn't "wrong."
-  fan_only_idle_baseline_position: z.number().min(0).max(100).default(50),
+  no_call_active_baseline_position: z.number().min(0).max(100).default(50),
 
   // --- Step 2 / ramp & dispatch ---
   // The spec's own stated defaults, kept despite the deadlock they'd create
@@ -556,7 +569,7 @@ export const systemSettingsConfigSchema = z.object({
   // (confirmed live: a bedroom's own reading wobbling ~0.5°C around its
   // setpoint with nothing actually wrong) is enough to flip
   // satisfied/demanding classification every tick — and since a zone's
-  // idle_baseline_position commonly equals its max_vent_position, any
+  // satisfied_baseline_position commonly equals its max_vent_position, any
   // "demanding" tick — even a hairline one — snaps its target straight
   // back to fully open, undoing whatever proportional closing had already
   // happened. This floor guarantees every zone gets at least this much
@@ -570,7 +583,7 @@ export const systemSettingsConfigSchema = z.object({
   // floor too. ~1°F default; the real noise observed live was closer to
   // 0.5°C in amplitude, so this may need to go higher via System
   // Parameters once you've watched a few real cycles.
-  minimum_comfort_tolerance_c: z.number().min(0).max(2.78).default(0.56),
+  minimum_demand_tolerance_c: z.number().min(0).max(2.78).default(0.56),
   // The companion fix, layered on top of the floor above: even with a real
   // deadband, a zone whose actual temperature happens to sit close to its
   // own boundary can still cross it occasionally on pure noise. Mirrors

@@ -12,15 +12,15 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     hasTemperatureSensor: true,
     minVentPosition: 0,
     maxVentPosition: 100,
-    idleBaselinePosition: 100,
-    // Matches idleBaselinePosition by default so every pre-existing test
+    satisfiedBaselinePosition: 100,
+    // Matches satisfiedBaselinePosition by default so every pre-existing test
     // in this file (many of which exercise IDLE/!callActive scenarios)
     // sees identical behavior regardless of the callActive-based
-    // resolution introduced alongside fan_only_idle_baseline_position's
+    // resolution introduced alongside no_call_active_baseline_position's
     // widened scope — tests that actually exercise the distinction
     // override this explicitly. See "idle baseline reuse" describe block
     // below.
-    fanOnlyIdleBaselinePosition: 100,
+    noCallActiveBaselinePosition: 100,
     thermalLoadFlags: [],
     flowRateLps: 47,
     manualVents: [],
@@ -142,14 +142,14 @@ describe("computeZoneCommands — genuine contention", () => {
       zone({
         zoneId: "high",
         priorityRank: 0,
-        idleBaselinePosition: 0, // room to reduce toward — see step1DesiredPosition tests
+        satisfiedBaselinePosition: 0, // room to reduce toward — see step1DesiredPosition tests
         calibratedTemp: asAbsoluteTemp(30),
         flowRateLps: 100,
       }),
       zone({
         zoneId: "low",
         priorityRank: 1,
-        idleBaselinePosition: 0,
+        satisfiedBaselinePosition: 0,
         calibratedTemp: asAbsoluteTemp(30),
         flowRateLps: 100,
       }),
@@ -443,7 +443,7 @@ describe("computeZoneCommands — inactive and stale zones", () => {
       zone({
         zoneId: "inactive",
         resolvedSetpoint: null,
-        idleBaselinePosition: 40,
+        satisfiedBaselinePosition: 40,
       }),
     ];
     const result = computeZoneCommands({
@@ -463,7 +463,7 @@ describe("computeZoneCommands — inactive and stale zones", () => {
       zone({
         zoneId: "stale",
         staleReading: true,
-        idleBaselinePosition: 80,
+        satisfiedBaselinePosition: 80,
         calibratedTemp: asAbsoluteTemp(30), // would otherwise be demanding
       }),
     ];
@@ -485,12 +485,12 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        // Deliberately different from idleBaselinePosition (left at the
+        // Deliberately different from satisfiedBaselinePosition (left at the
         // factory's own default) — proves FAN_ONLY reads its own
         // dedicated setting, not the comfort-idle one, even though both
         // exist on the same zone.
-        idleBaselinePosition: 100,
-        fanOnlyIdleBaselinePosition: 60,
+        satisfiedBaselinePosition: 100,
+        noCallActiveBaselinePosition: 60,
       }),
     ];
     const result = computeZoneCommands({
@@ -501,7 +501,7 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
       capLps: 10000,
       floorLps: 0,
     });
-    // unoccupied, non-active-call -> fanOnlyIdleBaselinePosition * unoccupiedIdleFactor
+    // unoccupied, non-active-call -> noCallActiveBaselinePosition * unoccupiedIdleFactor
     // — FAN_ONLY circulates unconditioned air, so deviation-based math has
     // nothing to react to, unlike IDLE (see the describe block below).
     expect(result.commandedPositions["z1"]).toBe(30);
@@ -512,7 +512,7 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
 // the same decision, both documented in ADR-0003 (original + its update).
 //
 // Original incident: a satisfied bedroom zone in an active Sleep Mode
-// window got yanked open toward fanOnlyIdleBaselinePosition every time the
+// window got yanked open toward noCallActiveBaselinePosition every time the
 // blower ran a brief FAN_ONLY stretch between compressor cycles — ten
 // separate cycles in one night — because this whole FAN_ONLY branch used
 // to run (and `continue`) before sleep_quiet_anchor's own logic ever got a
@@ -525,7 +525,7 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
 // sleeping room stopped getting yanked open, but also never actually
 // circulated air during FAN_ONLY at all, just held closed. Fixed again:
 // a non-demanding Sleep-Mode zone during genuine FAN_ONLY now anchors to
-// the fanOnlyIdleBaselinePosition-derived target instead — still held
+// the noCallActiveBaselinePosition-derived target instead — still held
 // flat for the same anti-noise reason, just circulating rather than
 // closed. Demanding is unaffected either way, by design (see below).
 describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
@@ -533,7 +533,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        fanOnlyIdleBaselinePosition: 40,
+        noCallActiveBaselinePosition: 40,
         sleepModeActive: true,
         calibratedTemp: asAbsoluteTemp(25), // well above setpoint(21) -> demanding
       }),
@@ -562,7 +562,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        fanOnlyIdleBaselinePosition: 60,
+        noCallActiveBaselinePosition: 60,
         sleepModeActive: true,
         occupied: false,
         minVentPosition: 0,
@@ -580,7 +580,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       floorLps: 0,
     });
     expect(result.classifications["z1"]).toBe("satisfied");
-    // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5) — the
+    // noCallActiveBaselinePosition(60) * unoccupiedIdleFactor(0.5) — the
     // same target the ordinary (non-sleep) FAN_ONLY branch would compute,
     // not a proportionally-closing comfort-curve value.
     expect(result.commandedPositions["z1"]).toBe(30);
@@ -590,8 +590,8 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        idleBaselinePosition: 100,
-        fanOnlyIdleBaselinePosition: 60,
+        satisfiedBaselinePosition: 100,
+        noCallActiveBaselinePosition: 60,
         sleepModeActive: false,
       }),
     ];
@@ -603,7 +603,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       capLps: 10000,
       floorLps: 0,
     });
-    expect(result.commandedPositions["z1"]).toBe(30); // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5)
+    expect(result.commandedPositions["z1"]).toBe(30); // noCallActiveBaselinePosition(60) * unoccupiedIdleFactor(0.5)
   });
 
   // A real FAN_ONLY stretch is typically only a few minutes — far shorter
@@ -618,7 +618,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         state: "FAN_ONLY",
         zones: [
           zone({
-            fanOnlyIdleBaselinePosition: 80,
+            noCallActiveBaselinePosition: 80,
             occupied: false,
             sleepModeActive: true,
             calibratedTemp: asAbsoluteTemp(19),
@@ -640,7 +640,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         capLps: 10000,
         floorLps: 0,
       });
-      // fanOnlyIdleBaselinePosition(80) * unoccupiedIdleFactor(0.5) = 40 —
+      // noCallActiveBaselinePosition(80) * unoccupiedIdleFactor(0.5) = 40 —
       // deliberately picked to coincide with the old anchor's own value,
       // so a passing commandedPositions assertion alone couldn't hide a
       // failure to actually reanchor; the isFanOnly/sinceMs check below
@@ -658,7 +658,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         state: "FAN_ONLY",
         zones: [
           zone({
-            fanOnlyIdleBaselinePosition: 80,
+            noCallActiveBaselinePosition: 80,
             occupied: false,
             sleepModeActive: true,
             calibratedTemp: asAbsoluteTemp(10), // would compute very differently if unanchored
@@ -730,7 +730,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         state: "FAN_ONLY",
         zones: [
           zone({
-            fanOnlyIdleBaselinePosition: 80,
+            noCallActiveBaselinePosition: 80,
             occupied: false,
             sleepModeActive: true,
             calibratedTemp: asAbsoluteTemp(19),
@@ -760,7 +760,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
 });
 
 // Regression coverage for a real gap found live: a satisfied zone was
-// getting shoved back open to idle_baseline_position every time the
+// getting shoved back open to satisfied_baseline_position every time the
 // compressor cycled to IDLE, then had to re-close from scratch next
 // cycle — a short-cycling system never let it settle. IDLE now runs the
 // identical proportional math a real call would, using the same
@@ -772,7 +772,7 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     const zones = [
       zone({
         zoneId: "z1",
-        idleBaselinePosition: 60,
+        satisfiedBaselinePosition: 60,
         calibratedTemp: asAbsoluteTemp(25), // well above setpoint(21) -> demanding
       }),
     ];
@@ -792,7 +792,7 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     const zones = [
       zone({
         zoneId: "z1",
-        idleBaselinePosition: 100,
+        satisfiedBaselinePosition: 100,
         minVentPosition: 0,
         calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
         demandTolerance: asTempDelta(0.5),
@@ -811,15 +811,15 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(result.commandedPositions["z1"]).toBeLessThan(100);
   });
 
-  // Only holds when idleBaselinePosition and fanOnlyIdleBaselinePosition
+  // Only holds when satisfiedBaselinePosition and noCallActiveBaselinePosition
   // happen to match (both 100 here, via the zone() builder's own
   // defaults) — see the "idle baseline reuse for genuine IDLE" describe
   // block below for what changes once they diverge, which is the entire
-  // point of fan_only_idle_baseline_position's widened scope.
+  // point of no_call_active_baseline_position's widened scope.
   it("computes the identical position for a satisfied zone whether the call is genuinely active or the compressor just cycled to idle", () => {
     const satisfiedZone = {
       zoneId: "z1",
-      idleBaselinePosition: 100,
+      satisfiedBaselinePosition: 100,
       minVentPosition: 0,
       calibratedTemp: asAbsoluteTemp(18),
       demandTolerance: asTempDelta(0.5),
@@ -847,23 +847,23 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
   });
 });
 
-// fan_only_idle_baseline_position's widened scope — see its own comment
+// no_call_active_baseline_position's widened scope — see its own comment
 // in systemSettings.ts. Originally consulted only during FAN_ONLY, it now
-// feeds the exact same demanding/satisfied curve as idleBaselinePosition's
+// feeds the exact same demanding/satisfied curve as satisfiedBaselinePosition's
 // own continuity anchor for *any* stretch with no call active anywhere
 // (FAN_ONLY or genuine IDLE alike) — reusing the existing setting rather
 // than introducing a dedicated new one, since both scenarios share the
 // identical "nothing being conditioned" justification. While a call *is*
-// active, fanOnlyIdleBaselinePosition is never consulted for this purpose
-// at all — the existing idleBaselinePosition-anchored behavior (the
+// active, noCallActiveBaselinePosition is never consulted for this purpose
+// at all — the existing satisfiedBaselinePosition-anchored behavior (the
 // 190%-capacity incident fix) is completely unaffected.
 describe("computeZoneCommands — idle baseline reuse for genuine IDLE", () => {
-  it("anchors the demanding/satisfied curve to fanOnlyIdleBaselinePosition while genuinely idle, ignoring idleBaselinePosition", () => {
+  it("anchors the demanding/satisfied curve to noCallActiveBaselinePosition while genuinely idle, ignoring satisfiedBaselinePosition", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        idleBaselinePosition: 0,
-        fanOnlyIdleBaselinePosition: 50,
+        satisfiedBaselinePosition: 0,
+        noCallActiveBaselinePosition: 50,
         minVentPosition: 0,
         calibratedTemp: asAbsoluteTemp(21), // right at the boundary -> satisfied, overshoot 0
         demandTolerance: asTempDelta(0.5),
@@ -881,15 +881,15 @@ describe("computeZoneCommands — idle baseline reuse for genuine IDLE", () => {
     });
     expect(result.classifications["z1"]).toBe("satisfied");
     // At overshoot=0, the satisfied curve lands exactly on its own anchor
-    // — fanOnlyIdleBaselinePosition (50), not idleBaselinePosition (0).
+    // — noCallActiveBaselinePosition (50), not satisfiedBaselinePosition (0).
     expect(result.commandedPositions["z1"]).toBe(50);
   });
 
-  it("has zero effect while a call is active — idleBaselinePosition alone still governs", () => {
+  it("has zero effect while a call is active — satisfiedBaselinePosition alone still governs", () => {
     const satisfiedZone = {
       zoneId: "z1",
-      idleBaselinePosition: 0,
-      fanOnlyIdleBaselinePosition: 50,
+      satisfiedBaselinePosition: 0,
+      noCallActiveBaselinePosition: 50,
       minVentPosition: 0,
       calibratedTemp: asAbsoluteTemp(21),
       demandTolerance: asTempDelta(0.5),
@@ -911,8 +911,8 @@ describe("computeZoneCommands — idle baseline reuse for genuine IDLE", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        idleBaselinePosition: 0,
-        fanOnlyIdleBaselinePosition: 50,
+        satisfiedBaselinePosition: 0,
+        noCallActiveBaselinePosition: 50,
         calibratedTemp: asAbsoluteTemp(25), // demanding
         resolvedSetpoint: asAbsoluteTemp(21),
       }),
@@ -942,20 +942,20 @@ describe("computeZoneCommands — idle baseline reuse for genuine IDLE", () => {
 // Regression coverage for a real gap found live: a near-zero comfort
 // tolerance combined with ordinary sensor noise (~±0.5°C observed) flipped
 // a zone's raw classification every tick. Note that for a zone whose
-// idle_baseline_position equals its max_vent_position (the exact real
+// satisfied_baseline_position equals its max_vent_position (the exact real
 // scenario — Martin Bedroom), the demanding and satisfied formulas both
-// converge to exactly idleBaselinePosition right at/past the tolerance
+// converge to exactly satisfiedBaselinePosition right at/past the tolerance
 // boundary (continuity by construction — see step1DesiredPosition.ts's own
 // comment), so a held-vs-flipped classification doesn't change *that one
 // tick's own desiredPosition* in this degenerate case; what it protects is
 // whether the zone gets pulled into Step 3 contention at all on a blip
 // that shouldn't count as genuine, sustained demand — see also
-// minimum_comfort_tolerance_c, a separate, complementary fix that reduces
+// minimum_demand_tolerance_c, a separate, complementary fix that reduces
 // how often noise crosses the boundary in the first place.
 describe("computeZoneCommands — classification stabilization holds a noisy zone out of contention", () => {
   const noisyZone = {
     zoneId: "z1",
-    idleBaselinePosition: 100,
+    satisfiedBaselinePosition: 100,
     minVentPosition: 0,
     maxVentPosition: 100,
     demandTolerance: asTempDelta(0.05),
@@ -1400,7 +1400,7 @@ describe("computeZoneCommands — dead-zone recovery", () => {
           zoneId: "z",
           lastCommandedTarget: 100,
           deadZoneRecoveryJumpPct: 50,
-          idleBaselinePosition: 20,
+          satisfiedBaselinePosition: 20,
           calibratedTemp: asAbsoluteTemp(21), // right at setpoint — satisfied
         }),
       ],

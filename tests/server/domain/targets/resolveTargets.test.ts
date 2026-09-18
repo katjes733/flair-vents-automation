@@ -27,7 +27,7 @@ function base() {
     zoneDemandTolerance: null,
     zoneOvershootTolerance: null,
     state: "COOLING_CALL" as const,
-    minimumComfortTolerance: asTempDelta(0),
+    minimumDemandTolerance: asTempDelta(0),
   };
 }
 
@@ -204,11 +204,11 @@ describe("resolveZoneTargets", () => {
     });
   });
 
-  describe("minimum comfort tolerance floor", () => {
+  describe("minimum demand tolerance floor", () => {
     it("floors an unset schedule-event demand tolerance up to the minimum, leaving overshoot unset", () => {
       const result = resolveZoneTargets({
         ...base(),
-        minimumComfortTolerance: asTempDelta(0.56),
+        minimumDemandTolerance: asTempDelta(0.56),
         governingEvent: {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
@@ -224,7 +224,7 @@ describe("resolveZoneTargets", () => {
     it("floors a small explicit demand tolerance up to the minimum", () => {
       const result = resolveZoneTargets({
         ...base(),
-        minimumComfortTolerance: asTempDelta(0.56),
+        minimumDemandTolerance: asTempDelta(0.56),
         governingEvent: {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
@@ -239,7 +239,7 @@ describe("resolveZoneTargets", () => {
     it("leaves an already-wide demand tolerance untouched", () => {
       const result = resolveZoneTargets({
         ...base(),
-        minimumComfortTolerance: asTempDelta(0.56),
+        minimumDemandTolerance: asTempDelta(0.56),
         governingEvent: {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
@@ -254,7 +254,7 @@ describe("resolveZoneTargets", () => {
     it("never floors the overshoot tolerance, even when explicitly zero", () => {
       const result = resolveZoneTargets({
         ...base(),
-        minimumComfortTolerance: asTempDelta(0.56),
+        minimumDemandTolerance: asTempDelta(0.56),
         governingEvent: {
           mode: "active",
           coolSetpoint: asAbsoluteTemp(21),
@@ -269,7 +269,7 @@ describe("resolveZoneTargets", () => {
     it("does not apply to an inactive resolution — no setpoint means no tolerance to floor", () => {
       const result = resolveZoneTargets({
         ...base(),
-        minimumComfortTolerance: asTempDelta(0.56),
+        minimumDemandTolerance: asTempDelta(0.56),
         governingEvent: {
           mode: "inactive",
           coolSetpoint: null,
@@ -286,7 +286,7 @@ describe("resolveZoneTargets", () => {
     it("applies to a manual setpoint override's own demand tolerance too", () => {
       const result = resolveZoneTargets({
         ...base(),
-        minimumComfortTolerance: asTempDelta(0.56),
+        minimumDemandTolerance: asTempDelta(0.56),
         manualOverride: {
           config: {
             kind: "setpoint",

@@ -51,7 +51,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       thermal_load_flags: [],
       observation_only: false,
       capacity_sharing_exempt: false,
-      idle_baseline_position: 100,
+      satisfied_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
       max_vent_position: 100,

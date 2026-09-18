@@ -162,7 +162,7 @@ describe("computeDesiredPosition", () => {
 
   // Regression coverage for a real incident: Martin Bedroom sat
   // "demanding" for 53 straight minutes at a literal 0% target overnight
-  // once comfort_idle_baseline_position moved to 0 — a deviation only
+  // once satisfied_baseline_position moved to 0 — a deviation only
   // just past demandTolerance computed a ratio near 0, landing exactly on
   // idleBaselinePosition instead of some meaningfully-open position.
   it("floors a barely-demanding zone at one step above idle baseline instead of collapsing to it", () => {

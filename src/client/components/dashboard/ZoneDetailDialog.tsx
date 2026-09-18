@@ -66,8 +66,8 @@ interface ZoneDetailDialogProps {
 }
 
 // A blank field means "unset" for comfort_demand_tolerance/
-// comfort_overshoot_tolerance/idle_baseline_position/
-// fan_only_idle_baseline_position — a real, distinct state from an
+// comfort_overshoot_tolerance/satisfied_baseline_position/
+// no_call_active_baseline_position — a real, distinct state from an
 // explicit 0 (see zoneConfigSchema's own comments). The form sends an
 // explicit `null` for "blank," never `undefined` — a real, confirmed live
 // bug this fixes: `undefined` is silently dropped by JSON.stringify
@@ -96,8 +96,8 @@ export default function ZoneDetailDialog({
 
   const [ventHardwareType, setVentHardwareType] =
     useState<VentHardwareType>("flair_smart_vent");
-  const [idleBaseline, setIdleBaseline] = useState("");
-  const [fanOnlyIdleBaseline, setFanOnlyIdleBaseline] = useState("");
+  const [satisfiedBaseline, setSatisfiedBaseline] = useState("");
+  const [noCallActiveBaseline, setNoCallActiveBaseline] = useState("");
   const [deadZoneRecoveryJumpPct, setDeadZoneRecoveryJumpPct] = useState("");
   const [comfortDemandTolerance, setComfortDemandTolerance] = useState("");
   const [comfortOvershootTolerance, setComfortOvershootTolerance] =
@@ -124,14 +124,14 @@ export default function ZoneDetailDialog({
   if (zone && zone.id !== seededZoneId) {
     setSeededZoneId(zone.id);
     setVentHardwareType(zone.ventHardwareType);
-    setIdleBaseline(
-      zone.config.idle_baseline_position !== undefined
-        ? String(zone.config.idle_baseline_position)
+    setSatisfiedBaseline(
+      zone.config.satisfied_baseline_position !== undefined
+        ? String(zone.config.satisfied_baseline_position)
         : "",
     );
-    setFanOnlyIdleBaseline(
-      zone.config.fan_only_idle_baseline_position !== undefined
-        ? String(zone.config.fan_only_idle_baseline_position)
+    setNoCallActiveBaseline(
+      zone.config.no_call_active_baseline_position !== undefined
+        ? String(zone.config.no_call_active_baseline_position)
         : "",
     );
     setDeadZoneRecoveryJumpPct(
@@ -238,12 +238,12 @@ export default function ZoneDetailDialog({
                     : {}),
                 }))
               : [],
-          idle_baseline_position:
-            idleBaseline.trim() === "" ? null : Number(idleBaseline),
-          fan_only_idle_baseline_position:
-            fanOnlyIdleBaseline.trim() === ""
+          satisfied_baseline_position:
+            satisfiedBaseline.trim() === "" ? null : Number(satisfiedBaseline),
+          no_call_active_baseline_position:
+            noCallActiveBaseline.trim() === ""
               ? null
-              : Number(fanOnlyIdleBaseline),
+              : Number(noCallActiveBaseline),
           dead_zone_recovery_jump_pct:
             deadZoneRecoveryJumpPct.trim() === ""
               ? null
@@ -304,8 +304,8 @@ export default function ZoneDetailDialog({
     comfortOvershootTolerance,
     hasOccupancySensor,
     hasTemperatureSensor,
-    idleBaseline,
-    fanOnlyIdleBaseline,
+    satisfiedBaseline,
+    noCallActiveBaseline,
     deadZoneRecoveryJumpPct,
     manualVents,
     maxPosition,
@@ -411,18 +411,18 @@ export default function ZoneDetailDialog({
                   Position
                 </Typography>
                 <TextField
-                  label="Comfort idle baseline, % (blank = system default)"
+                  label="Satisfied baseline, % (blank = system default)"
                   type="number"
-                  value={idleBaseline}
-                  onChange={(e) => setIdleBaseline(e.target.value)}
+                  value={satisfiedBaseline}
+                  onChange={(e) => setSatisfiedBaseline(e.target.value)}
                   slotProps={{ inputLabel: { shrink: true } }}
-                  helperText="Where this vent sits once the zone is satisfied during an active call — lower wastes less conditioned air on a room that doesn't need more."
+                  helperText="Where this vent sits once the zone is satisfied while a sibling zone is still being conditioned — lower wastes less conditioned air on a room that doesn't need more."
                 />
                 <TextField
-                  label="Fan-only idle baseline, % (blank = system default)"
+                  label="No-call baseline, % (blank = system default)"
                   type="number"
-                  value={fanOnlyIdleBaseline}
-                  onChange={(e) => setFanOnlyIdleBaseline(e.target.value)}
+                  value={noCallActiveBaseline}
+                  onChange={(e) => setNoCallActiveBaseline(e.target.value)}
                   slotProps={{ inputLabel: { shrink: true } }}
                   helperText="Where this vent sits whenever no call is active anywhere — circulating (FAN_ONLY) or genuinely idle alike — a separate setting since the comfort baseline above only applies while a call is actively running for a sibling zone."
                 />

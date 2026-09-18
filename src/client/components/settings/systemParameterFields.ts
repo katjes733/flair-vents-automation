@@ -305,23 +305,23 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "common",
       },
       {
-        path: "comfort_idle_baseline_position",
-        baseLabel: "Comfort idle baseline",
+        path: "satisfied_baseline_position",
+        baseLabel: "Satisfied baseline (call active)",
         kind: "percent",
         min: 0,
         max: 100,
         description:
-          "System-wide fallback for how far open a satisfied zone's vent sits during an active call, for any zone that doesn't set its own override. Lower wastes less conditioned air on a room that doesn't need more — closing a satisfied zone costs nothing, since capacity sharing independently guarantees a genuinely struggling zone still gets reopened.",
+          "System-wide fallback for how far open a satisfied zone's vent sits while a sibling zone is still being conditioned, for any zone that doesn't set its own override. Lower wastes less conditioned air on a room that doesn't need more — closing a satisfied zone costs nothing, since capacity sharing independently guarantees a genuinely struggling zone still gets reopened.",
         tier: "common",
       },
       {
-        path: "fan_only_idle_baseline_position",
-        baseLabel: "Fan-only idle baseline",
+        path: "no_call_active_baseline_position",
+        baseLabel: "No-call baseline (FAN_ONLY / idle)",
         kind: "percent",
         min: 0,
         max: 100,
         description:
-          "System-wide fallback for how far open a zone's vent sits whenever no call is active anywhere — the system is only circulating air (FAN_ONLY) or doing nothing at all (genuine idle), not conditioning it. Deliberately a separate setting from the comfort idle baseline above — a low comfort baseline shouldn't also starve circulation or standing pressure headroom for the next call, since nothing is being conditioned while this applies.",
+          "System-wide fallback for how far open a zone's vent sits whenever no call is active anywhere — the system is only circulating air (FAN_ONLY) or doing nothing at all (genuine idle), not conditioning it. Deliberately a separate setting from the satisfied baseline above — a low satisfied-while-active baseline shouldn't also starve circulation or standing pressure headroom for the next call, since nothing is being conditioned while this applies.",
         tier: "common",
       },
       {
@@ -990,7 +990,7 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "advanced",
       },
       {
-        path: "minimum_comfort_tolerance_c",
+        path: "minimum_demand_tolerance_c",
         baseLabel: "Minimum demand tolerance",
         kind: "tempDelta",
         min: 0,

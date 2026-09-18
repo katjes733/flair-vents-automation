@@ -47,16 +47,16 @@ export interface ZoneConfig {
   // See "Multi-Vent Manual Zones" and zoneConfigSchema's own comment.
   manual_vents: ManualVent[];
   thermal_load_flags: ThermalLoadFlag[];
-  // Unset means "defer to the system-wide comfort_idle_baseline_position
+  // Unset means "defer to the system-wide satisfied_baseline_position
   // setting" — see zoneConfigSchema's own comment.
-  idle_baseline_position?: number;
+  satisfied_baseline_position?: number;
   // Covers any stretch with no call active anywhere (FAN_ONLY and genuine
-  // IDLE alike) — see fan_only_idle_baseline_position's own comment in
+  // IDLE alike) — see no_call_active_baseline_position's own comment in
   // systemSettings.ts.
-  fan_only_idle_baseline_position?: number;
+  no_call_active_baseline_position?: number;
   // Per-zone override of dead_zone_recovery_jump_pct (systemSettings.ts) —
   // unset defers to the global setting, same convention as
-  // idle_baseline_position above.
+  // satisfied_baseline_position above.
   dead_zone_recovery_jump_pct?: number;
   // Telemetry-only — excluded from schedule-driven comfort tracking
   // entirely. See zoneConfigSchema's own comment.
@@ -198,7 +198,7 @@ export interface CreateZoneRequest {
 // before the request ever leaves the browser, so the server never sees it
 // mentioned at all and a `{...existing, ...patch}` merge leaves the stale
 // value in place — confirmed live, this exact bug, for
-// idle_baseline_position/fan_only_idle_baseline_position (and, it turns
+// satisfied_baseline_position/no_call_active_baseline_position (and, it turns
 // out, comfort_demand_tolerance/comfort_overshoot_tolerance the whole
 // time). See genuinePartial()'s own comment (zodPartial.ts) for the
 // server-side half: it already normalizes an incoming `null` to
