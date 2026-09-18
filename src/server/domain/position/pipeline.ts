@@ -58,7 +58,23 @@ export interface PipelineZoneInput {
   // comfort_demand_tolerance/comfort_overshoot_tolerance.
   demandTolerance: TempDelta | null;
   overshootTolerance: TempDelta | null;
+  // Discounted once a continuously-true reading has been sustained past
+  // occupancy_trust_window_minutes — see that setting's own comment
+  // (systemSettings.ts). Used for every occupancy check tied to
+  // *protecting a zone from closing* while a call is active (the
+  // computeDesiredPosition occupancy boost, Step 3's contention bucket):
+  // the trust window exists specifically to stop a stuck-on sensor from
+  // indefinitely protecting an actually-empty room at a demanding
+  // sibling's expense, a real, confirmed incident (see its own comment).
   occupied: boolean;
+  // The live signal, never discounted — see ADR-0011. Used for every
+  // occupancy check tied to *prioritizing airflow to an occupied room*
+  // while no call is active (FAN_ONLY circulation, both the ordinary
+  // branch and the FAN_ONLY-during-Sleep-Mode anchor target): there's no
+  // scarcity to protect against here, so discounting a still-genuinely-
+  // occupied room after occupancy_trust_window_minutes only works against
+  // the exact prioritization this is for.
+  rawOccupied: boolean;
   staleOccupancy: boolean;
   staleReading: boolean;
   spiking: boolean;
@@ -101,6 +117,19 @@ export interface PipelineZoneInput {
   // sleeping zone's vent stuck holding whatever comfort-curve position it
   // last anchored to — never actually circulating.
   priorAnchorIsFanOnly: boolean | null;
+  // Same convention as priorAnchorIsFanOnly above, tracking a second,
+  // independent dimension the anchor can go stale on: whether the anchor
+  // was captured while a call was active. Needed since ADR-0010 made a
+  // satisfied zone's raw target itself depend on callActive (flat at
+  // satisfied_baseline_position while active, flat at
+  // no_call_active_baseline_position once genuinely idle) — before that,
+  // both cases fed the same comfort-curve output, so this dimension didn't
+  // exist. Without tracking it, a Sleep-Mode zone that became satisfied
+  // mid-call stays anchored to that in-call value for the entire
+  // subsequent idle stretch (up to reanchorIntervalMinutes), never picking
+  // up the no-call baseline's own standing-headroom benefit — see
+  // ADR-0011.
+  priorAnchorWasCallActive: boolean | null;
   // Capacity sharing inputs — see capacity_sharing_enabled's own comment in
   // systemSettings.ts. otherZoneStruggling is computed by the caller from
   // *other* zones' persisted demand-tracking state (never this zone's
@@ -159,6 +188,7 @@ export interface PipelineResult {
       positionPct: number | null;
       sinceMs: number | null;
       isFanOnly: boolean | null;
+      wasCallActive: boolean | null;
     }
   >;
   contention: ContentionResult | null;
@@ -432,7 +462,10 @@ export function computeZoneCommands(params: {
         idleBaselinePosition: resolvedIdleBaseline,
         minVentPosition: zone.minVentPosition,
         maxVentPosition: zone.maxVentPosition,
-        occupied: zone.occupied,
+        // See ADR-0011: trusted (protection from closing) while a call is
+        // active, raw (circulation priority) while it isn't — mirrors
+        // effectiveIdleBaseline's own callActive branch.
+        occupied: callActive ? zone.occupied : zone.rawOccupied,
         staleOccupancy: zone.staleOccupancy,
         callActive,
         unoccupiedIdleFactor: params.settings.unoccupiedIdleFactor,
@@ -484,7 +517,11 @@ export function computeZoneCommands(params: {
         idleBaselinePosition: zone.noCallActiveBaselinePosition,
         minVentPosition: zone.minVentPosition,
         maxVentPosition: zone.maxVentPosition,
-        occupied: zone.occupied,
+        // Raw, not trusted (see ADR-0011 and PipelineZoneInput's own
+        // comment) — no scarcity to protect against during FAN_ONLY, so a
+        // still-genuinely-occupied room shouldn't stop getting priority
+        // airflow just because occupancy_trust_window_minutes elapsed.
+        occupied: zone.rawOccupied,
         staleOccupancy: zone.staleOccupancy,
         callActive: false,
         unoccupiedIdleFactor: params.settings.unoccupiedIdleFactor,
@@ -530,7 +567,8 @@ export function computeZoneCommands(params: {
         idleBaselinePosition: resolvedIdleBaseline,
         minVentPosition: zone.minVentPosition,
         maxVentPosition: zone.maxVentPosition,
-        occupied: zone.occupied,
+        // See ADR-0011: trusted while a call is active, raw while it isn't.
+        occupied: callActive ? zone.occupied : zone.rawOccupied,
         staleOccupancy: zone.staleOccupancy,
         callActive,
         unoccupiedIdleFactor: params.settings.unoccupiedIdleFactor,
@@ -601,7 +639,10 @@ export function computeZoneCommands(params: {
           idleBaselinePosition: zone.noCallActiveBaselinePosition,
           minVentPosition: zone.minVentPosition,
           maxVentPosition: zone.maxVentPosition,
-          occupied: zone.occupied,
+          // Raw, same reasoning as the ordinary FAN_ONLY branch above (see
+          // ADR-0011) — this is the same circulation-priority scenario,
+          // just for a Sleep-Mode zone's anchor target.
+          occupied: zone.rawOccupied,
           staleOccupancy: zone.staleOccupancy,
           callActive: false,
           unoccupiedIdleFactor: params.settings.unoccupiedIdleFactor,
@@ -611,6 +652,7 @@ export function computeZoneCommands(params: {
     let anchorPositionPct = zone.priorAnchorPositionPct;
     let anchorSinceMs = zone.priorAnchorSinceMs;
     let anchorIsFanOnly: boolean | null = zone.priorAnchorIsFanOnly;
+    let anchorWasCallActive: boolean | null = zone.priorAnchorWasCallActive;
     if (
       params.settings.sleepQuietAnchorEnabled &&
       !isDemanding &&
@@ -629,12 +671,21 @@ export function computeZoneCommands(params: {
         // comment for the same backward-compatibility shape.
         (anchorIsFanOnly !== null &&
           anchorIsFanOnly !== inFanOnlyDuringSleep) ||
+        // Same backward-compatible shape, second dimension (ADR-0011): a
+        // satisfied zone's raw target itself depends on callActive since
+        // ADR-0010, so an anchor captured while a call was active is stale
+        // the instant the call ends (and vice versa) — without this, a
+        // Sleep-Mode zone stays pinned to its in-call value for the whole
+        // subsequent idle stretch, never picking up
+        // no_call_active_baseline_position's own standing-headroom intent.
+        (anchorWasCallActive !== null && anchorWasCallActive !== callActive) ||
         params.nowMs - anchorSinceMs >=
           params.settings.reanchorIntervalMinutes * 60000;
       if (reanchorDue) {
         anchorPositionPct = anchorTarget;
         anchorSinceMs = params.nowMs;
         anchorIsFanOnly = inFanOnlyDuringSleep;
+        anchorWasCallActive = callActive;
       }
       // reanchorDue's own condition guarantees anchorPositionPct is
       // non-null by this point (either it already was, or the block above
@@ -645,6 +696,7 @@ export function computeZoneCommands(params: {
       anchorPositionPct = null;
       anchorSinceMs = null;
       anchorIsFanOnly = null;
+      anchorWasCallActive = null;
 
       // Capacity sharing: a comfortable zone gives up its own unclaimed
       // headroom — down to its own configured floor, full authority, not
@@ -672,6 +724,7 @@ export function computeZoneCommands(params: {
       positionPct: anchorPositionPct,
       sinceMs: anchorSinceMs,
       isFanOnly: anchorIsFanOnly,
+      wasCallActive: anchorWasCallActive,
     };
 
     // A satisfied zone closes proportionally toward its floor (see

@@ -88,6 +88,14 @@ export interface ZoneRuntimeState {
   // stuck holding whatever the *other* mode last anchored to. See
   // pipeline.ts's own inFanOnlyDuringSleep comment.
   sleep_quiet_anchor_is_fan_only: boolean | null;
+  // Same convention as sleep_quiet_anchor_is_fan_only above, tracking a
+  // second, independent dimension the anchor can go stale on: whether it
+  // was captured while a call was active. Needed since ADR-0010 made a
+  // satisfied zone's raw target itself depend on callActive — without
+  // this, a Sleep-Mode zone that became satisfied mid-call stays anchored
+  // to that in-call value for the entire subsequent idle stretch. See
+  // ADR-0011 and pipeline.ts's own reanchorDue comment.
+  sleep_quiet_anchor_was_call_active: boolean | null;
   // Vent misalignment auto-recalibration (see
   // vent_misalignment_auto_recalibration_enabled) — the window fields
   // anchor a *single continuous* stretch of "reported 0%, satisfied,
@@ -177,6 +185,7 @@ export const EMPTY_ZONE_RUNTIME_STATE: ZoneRuntimeState = {
   sleep_quiet_anchor_position: null,
   sleep_quiet_anchor_since: null,
   sleep_quiet_anchor_is_fan_only: null,
+  sleep_quiet_anchor_was_call_active: null,
   vent_misalignment_window_since: null,
   vent_misalignment_window_start_temp: null,
   vent_misalignment_recalibrating_since: null,

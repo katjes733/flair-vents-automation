@@ -1,8 +1,6 @@
 .agents/
-.claude/
-docs/agents/
-skills-lock.json
-CLAUDE.md
+.claude/*
+!.claude/settings.json
 
 logs
 *.log
