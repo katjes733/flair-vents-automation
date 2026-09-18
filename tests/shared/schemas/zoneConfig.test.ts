@@ -25,10 +25,10 @@ describe("resolveZoneConfig", () => {
     expect(config.comfort_overshoot_tolerance).toBeUndefined();
   });
 
-  it("leaves idle_baseline_position and fan_only_idle_baseline_position unset rather than defaulting them — see systemSettings.ts's own comfort/fan-only fallbacks", () => {
+  it("leaves satisfied_baseline_position and no_call_active_baseline_position unset rather than defaulting them — see systemSettings.ts's own comfort/fan-only fallbacks", () => {
     const config = resolveZoneConfig({});
-    expect(config.idle_baseline_position).toBeUndefined();
-    expect(config.fan_only_idle_baseline_position).toBeUndefined();
+    expect(config.satisfied_baseline_position).toBeUndefined();
+    expect(config.no_call_active_baseline_position).toBeUndefined();
   });
 
   it("resolves against null the same as against an empty object", () => {
@@ -147,7 +147,7 @@ describe("zoneConfigPartialSchema", () => {
       has_temperature_sensor: true,
       has_occupancy_sensor: false,
       thermal_load_flags: [],
-      idle_baseline_position: 80,
+      satisfied_baseline_position: 80,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
       max_vent_position: 100,

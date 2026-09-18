@@ -818,8 +818,8 @@ export async function runTick(
             // Inert here — minStepDeltaPct: 0 above already bypasses both
             // of shouldDispatch's clauses regardless of position.
             idleBaselinePosition:
-              zone.config.idle_baseline_position ??
-              ctx.settings.comfort_idle_baseline_position,
+              zone.config.satisfied_baseline_position ??
+              ctx.settings.satisfied_baseline_position,
             reconciliationQueue: deps.reconciliationQueue,
             nowMs: startedAtMs,
             actuationDelayMs: ACTUATION_DELAY_MS,
@@ -1144,8 +1144,8 @@ export async function runTick(
       // decision this tick uses, instead of its own independent copy of
       // the same fallback ternary — see effectiveCallState's own comment.
       state: effectiveCallState,
-      minimumComfortTolerance: asTempDelta(
-        ctx.settings.minimum_comfort_tolerance_c,
+      minimumDemandTolerance: asTempDelta(
+        ctx.settings.minimum_demand_tolerance_c,
       ),
     });
     targetsByZone.set(zone.id, target);
@@ -1268,12 +1268,12 @@ export async function runTick(
       hasTemperatureSensor: zone.config.has_temperature_sensor,
       minVentPosition: zone.config.min_vent_position,
       maxVentPosition: zone.config.max_vent_position,
-      idleBaselinePosition:
-        zone.config.idle_baseline_position ??
-        ctx.settings.comfort_idle_baseline_position,
-      fanOnlyIdleBaselinePosition:
-        zone.config.fan_only_idle_baseline_position ??
-        ctx.settings.fan_only_idle_baseline_position,
+      satisfiedBaselinePosition:
+        zone.config.satisfied_baseline_position ??
+        ctx.settings.satisfied_baseline_position,
+      noCallActiveBaselinePosition:
+        zone.config.no_call_active_baseline_position ??
+        ctx.settings.no_call_active_baseline_position,
       deadZoneRecoveryJumpPct:
         zone.config.dead_zone_recovery_jump_pct ??
         ctx.settings.dead_zone_recovery_jump_pct,
@@ -1375,7 +1375,7 @@ export async function runTick(
     await deps.alerting.alertOnce({
       key: pressureFloorAlertKey,
       subject: `${airHandler.name}: pressure floor unsatisfiable`,
-      text: `Even with every zone at its floor, air handler "${airHandler.name}" cannot reach the topology's minimum open-area safeguard — likely a misconfiguration (min_vent_position/idle_baseline_position set too low across too many zones for this equipment).`,
+      text: `Even with every zone at its floor, air handler "${airHandler.name}" cannot reach the topology's minimum open-area safeguard — likely a misconfiguration (min_vent_position/satisfied_baseline_position set too low across too many zones for this equipment).`,
       rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
       nowMs: startedAtMs,
     });
@@ -1965,8 +1965,8 @@ export async function runTick(
     for (const zone of zones) {
       if (!isControllable(zone.ventHardwareType)) continue;
       finalPositions[zone.id] = clampToZoneRange(
-        zone.config.idle_baseline_position ??
-          ctx.settings.comfort_idle_baseline_position,
+        zone.config.satisfied_baseline_position ??
+          ctx.settings.satisfied_baseline_position,
         zone.config.min_vent_position,
         zone.config.max_vent_position,
       );
@@ -2388,8 +2388,8 @@ export async function runTick(
           // manual_fixed_vent), for which this check is inert anyway.
           idleBaselinePosition:
             pipelineResult.effectiveIdleBaselines[zone.id] ??
-            zone.config.idle_baseline_position ??
-            ctx.settings.comfort_idle_baseline_position,
+            zone.config.satisfied_baseline_position ??
+            ctx.settings.satisfied_baseline_position,
           reconciliationQueue: deps.reconciliationQueue,
           nowMs: startedAtMs,
           actuationDelayMs: ACTUATION_DELAY_MS,
@@ -2864,8 +2864,8 @@ async function holdAtIdleBaseline(params: {
     const ventReadings = readings.get(zone.id)?.vents ?? [];
     if (ventReadings.length === 0) continue;
     const target = clampToZoneRange(
-      zone.config.idle_baseline_position ??
-        ctx.settings.comfort_idle_baseline_position,
+      zone.config.satisfied_baseline_position ??
+        ctx.settings.satisfied_baseline_position,
       zone.config.min_vent_position,
       zone.config.max_vent_position,
     );

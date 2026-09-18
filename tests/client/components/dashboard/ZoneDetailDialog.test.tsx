@@ -41,7 +41,7 @@ function makeZone(overrides: Partial<Zone> = {}): Zone {
       thermal_load_flags: [],
       observation_only: false,
       capacity_sharing_exempt: false,
-      idle_baseline_position: 100,
+      satisfied_baseline_position: 100,
       sensor_calibration_offset: 0,
       min_vent_position: 0,
       max_vent_position: 100,
@@ -129,7 +129,7 @@ describe("ZoneDetailDialog", () => {
           thermal_load_flags: [],
           observation_only: false,
           capacity_sharing_exempt: false,
-          idle_baseline_position: 80,
+          satisfied_baseline_position: 80,
           comfort_demand_tolerance: 1.5,
           comfort_overshoot_tolerance: 0.75,
           sensor_calibration_offset: 0.5,
@@ -141,7 +141,7 @@ describe("ZoneDetailDialog", () => {
         },
       }),
     );
-    expect(screen.getByLabelText(/Comfort idle baseline/)).toHaveValue(80);
+    expect(screen.getByLabelText(/Satisfied baseline/)).toHaveValue(80);
     expect(screen.getByLabelText(/Demand tolerance/)).toHaveValue(1.5);
     expect(screen.getByLabelText(/Overshoot tolerance/)).toHaveValue(0.8);
     expect(screen.getByLabelText(/Sensor calibration offset/)).toHaveValue(0.5);
@@ -298,7 +298,7 @@ describe("ZoneDetailDialog", () => {
           thermal_load_flags: [],
           observation_only: false,
           capacity_sharing_exempt: false,
-          idle_baseline_position: 100,
+          satisfied_baseline_position: 100,
           sensor_calibration_offset: 0,
           min_vent_position: 0,
           max_vent_position: 100,
@@ -309,7 +309,7 @@ describe("ZoneDetailDialog", () => {
       }),
     );
     expect(
-      screen.queryByLabelText(/Comfort idle baseline/),
+      screen.queryByLabelText(/Satisfied baseline/),
     ).not.toBeInTheDocument();
   });
 
@@ -317,7 +317,7 @@ describe("ZoneDetailDialog", () => {
     const onSaved = vi.fn();
     const onClose = vi.fn();
     renderDialog(makeZone(), onSaved, onClose);
-    fireEvent.change(screen.getByLabelText(/Comfort idle baseline/), {
+    fireEvent.change(screen.getByLabelText(/Satisfied baseline/), {
       target: { value: "60" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -325,7 +325,7 @@ describe("ZoneDetailDialog", () => {
       expect(updateZone).toHaveBeenCalledWith(
         "z1",
         expect.objectContaining({
-          config: expect.objectContaining({ idle_baseline_position: 60 }),
+          config: expect.objectContaining({ satisfied_baseline_position: 60 }),
         }),
       );
       expect(onSaved).toHaveBeenCalled();
@@ -363,34 +363,34 @@ describe("ZoneDetailDialog", () => {
     });
   });
 
-  it("shows a blank comfort/fan-only idle baseline as blank, not a stale default", () => {
+  it("shows a blank satisfied/no-call baseline as blank, not a stale default", () => {
     renderDialog(
       makeZone({
         config: {
           ...makeZone().config,
-          idle_baseline_position: undefined,
-          fan_only_idle_baseline_position: undefined,
+          satisfied_baseline_position: undefined,
+          no_call_active_baseline_position: undefined,
         },
       }),
     );
-    expect(screen.getByLabelText(/Comfort idle baseline/)).toHaveValue(null);
-    expect(screen.getByLabelText(/Fan-only idle baseline/)).toHaveValue(null);
+    expect(screen.getByLabelText(/Satisfied baseline/)).toHaveValue(null);
+    expect(screen.getByLabelText(/No-call baseline/)).toHaveValue(null);
   });
 
-  it("treats a blank comfort/fan-only idle baseline as unset, deferring to the system default, not zero", async () => {
+  it("treats a blank satisfied/no-call baseline as unset, deferring to the system default, not zero", async () => {
     renderDialog(
       makeZone({
         config: {
           ...makeZone().config,
-          idle_baseline_position: 25,
-          fan_only_idle_baseline_position: 100,
+          satisfied_baseline_position: 25,
+          no_call_active_baseline_position: 100,
         },
       }),
     );
-    fireEvent.change(screen.getByLabelText(/Comfort idle baseline/), {
+    fireEvent.change(screen.getByLabelText(/Satisfied baseline/), {
       target: { value: "" },
     });
-    fireEvent.change(screen.getByLabelText(/Fan-only idle baseline/), {
+    fireEvent.change(screen.getByLabelText(/No-call baseline/), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -399,17 +399,17 @@ describe("ZoneDetailDialog", () => {
         "z1",
         expect.objectContaining({
           config: expect.objectContaining({
-            idle_baseline_position: null,
-            fan_only_idle_baseline_position: null,
+            satisfied_baseline_position: null,
+            no_call_active_baseline_position: null,
           }),
         }),
       );
     });
   });
 
-  it("saves an explicit fan-only idle baseline override", async () => {
+  it("saves an explicit no-call baseline override", async () => {
     renderDialog(makeZone());
-    fireEvent.change(screen.getByLabelText(/Fan-only idle baseline/), {
+    fireEvent.change(screen.getByLabelText(/No-call baseline/), {
       target: { value: "40" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -418,7 +418,7 @@ describe("ZoneDetailDialog", () => {
         "z1",
         expect.objectContaining({
           config: expect.objectContaining({
-            fan_only_idle_baseline_position: 40,
+            no_call_active_baseline_position: 40,
           }),
         }),
       );

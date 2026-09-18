@@ -114,11 +114,11 @@ export interface ClassificationStabilization {
  * confirmed gap found live via shadow-mode evaluation: real sensor noise
  * (confirmed: a bedroom's own reading wobbling ~0.5°C around its setpoint
  * with nothing actually wrong) can flip the *raw* classification every
- * tick, and since a zone's idle_baseline_position commonly equals its
+ * tick, and since a zone's satisfied_baseline_position commonly equals its
  * max_vent_position, any "demanding" tick — even a hairline one — snaps
  * the computed position straight back to fully open, undoing whatever
  * proportional closing had already happened. This is a separate, layered
- * fix from `minimum_comfort_tolerance_c` (which raises the deadband
+ * fix from `minimum_demand_tolerance_c` (which raises the deadband
  * itself) — this one holds the *classification* steady even when a real
  * temperature genuinely sits close enough to the boundary that noise still
  * crosses it occasionally.

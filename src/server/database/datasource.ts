@@ -14,6 +14,7 @@ import { InstallationMember } from "~/server/database/models/installationMember"
 import { WebauthnCredential } from "~/server/database/models/webauthnCredential";
 import { SignupVerification } from "~/server/database/models/signupVerification";
 import { PasswordResetCode } from "~/server/database/models/passwordResetCode";
+import { dataMigrations } from "~/server/database/dataMigrations";
 
 // TypeORM's own repository/query-builder APIs apply the DataSource's
 // configured `schema` automatically, but raw dataSource.query() calls
@@ -106,6 +107,10 @@ class AppDataSource {
         log("✅ Database schema ensured successfully.");
         await dataSource.synchronize();
         log("✅ Database schema synchronised successfully.");
+        for (const migration of dataMigrations) {
+          await migration.run(dataSource, schema);
+        }
+        log("✅ Data migrations applied successfully.");
         AppDataSource.instance = dataSource;
         AppDataSource.initializing = null;
         return dataSource;

@@ -78,7 +78,7 @@ export function resolveTrustedOccupancy(params: {
  *
  * During an active call: unoccupied closes all the way to
  * min_vent_position (no reason to hold a sensorless, empty room open while
- * the equipment works); occupied stays at the plain idle_baseline_position
+ * the equipment works); occupied stays at the plain satisfied_baseline_position
  * (no data at all to react to, so err toward not cutting off airflow to an
  * occupied room). During FAN_ONLY/IDLE, the gentler unoccupiedIdleFactor
  * reduction applies instead of a full close (circulation fairness, not

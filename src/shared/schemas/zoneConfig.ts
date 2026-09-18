@@ -100,8 +100,14 @@ export const zoneConfigSchema = z.object({
   // Empty array = "standard" (no special thermal load). Both flags can be
   // set simultaneously — they aren't mutually exclusive.
   thermal_load_flags: z.array(z.enum(THERMAL_LOAD_FLAGS)).default([]),
+  // Named satisfied_baseline_position (not "idle" or "comfort" — an earlier,
+  // confusing name renamed in full, see ADR-0008): this only ever applies
+  // while a call is *active* elsewhere on this air handler — a zone that's
+  // satisfied while a sibling zone is still being conditioned. It never
+  // applies during genuine idle or FAN_ONLY; no_call_active_baseline_position
+  // below governs those instead, despite both feeding the same formula.
   // Unset (undefined) means "defer to the system-wide
-  // comfort_idle_baseline_position setting" — a real, distinct state from
+  // satisfied_baseline_position setting" — a real, distinct state from
   // an explicit 0, mirroring comfort_demand_tolerance/
   // comfort_overshoot_tolerance's own convention below (no `.default()`
   // for exactly the same reason: defaulting would silently collapse
@@ -110,17 +116,17 @@ export const zoneConfigSchema = z.object({
   // system-wide default (2026-09-14) already has an explicit value
   // persisted from before — this change has no effect on any of them; it
   // only matters for a zone that genuinely never sets this.
-  idle_baseline_position: z.number().min(0).max(100).optional(),
+  satisfied_baseline_position: z.number().min(0).max(100).optional(),
   // The fallback for any stretch where no call is active anywhere (both
-  // FAN_ONLY and genuine IDLE — see fan_only_idle_baseline_position's own
+  // FAN_ONLY and genuine IDLE — see no_call_active_baseline_position's own
   // comment in systemSettings.ts for why one setting now covers both) —
-  // a genuinely separate setting from idle_baseline_position above, not
+  // a genuinely separate setting from satisfied_baseline_position above, not
   // the same value reused. Same unset-is-distinct-from-zero convention.
-  fan_only_idle_baseline_position: z.number().min(0).max(100).optional(),
+  no_call_active_baseline_position: z.number().min(0).max(100).optional(),
   // Per-zone override of dead_zone_recovery_jump_pct (systemSettings.ts) —
   // unset defers to the global setting, same unset-is-distinct-from-zero
-  // convention as idle_baseline_position above (a zone deliberately set to
-  // 0 must stay distinguishable from one that never overrode it at all).
+  // convention as satisfied_baseline_position above (a zone deliberately set
+  // to 0 must stay distinguishable from one that never overrode it at all).
   dead_zone_recovery_jump_pct: z.number().min(0).max(100).optional(),
   // Telemetry-only: excluded from schedule-driven comfort tracking
   // entirely — target resolution short-circuits to "inactive" before even

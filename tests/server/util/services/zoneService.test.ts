@@ -44,7 +44,7 @@ const BASE_CONFIG = {
   has_occupancy_sensor: false,
   homekit_sensor_serial: null,
   thermal_load_flags: [],
-  idle_baseline_position: 100,
+  satisfied_baseline_position: 100,
   observation_only: false,
   capacity_sharing_exempt: false,
   sensor_calibration_offset: 0,
@@ -301,13 +301,13 @@ describe("updateZoneWithValidation", () => {
       })
       .mockResolvedValueOnce({ id: "z1", name: "Updated" });
     const result = await updateZoneWithValidation("inst-1", "z1", {
-      config: { idle_baseline_position: 50 },
+      config: { satisfied_baseline_position: 50 },
     });
     expect(updateZone).toHaveBeenCalledWith(
       "z1",
       expect.objectContaining({
         config: expect.objectContaining({
-          idle_baseline_position: 50,
+          satisfied_baseline_position: 50,
           has_temperature_sensor: true, // preserved from the existing row
         }),
       }),

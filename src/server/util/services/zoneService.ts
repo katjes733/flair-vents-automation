@@ -77,7 +77,7 @@ function assertNoConfigIssues(zone: {
     })),
     minVentPosition: zone.config.min_vent_position,
     maxVentPosition: zone.config.max_vent_position,
-    idleBaselinePosition: zone.config.idle_baseline_position,
+    satisfiedBaselinePosition: zone.config.satisfied_baseline_position,
   }).filter((i) => i.severity === "error");
   if (issues.length > 0) {
     throw new HttpError(issues.map((i) => i.message).join(" "), 400);

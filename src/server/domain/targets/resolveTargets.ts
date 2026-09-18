@@ -75,14 +75,14 @@ export function resolveZoneTargets(params: {
   // real, confirmed gap: a near-zero tolerance combined with ordinary
   // sensor noise (~±0.5°C observed live) flapped a zone's raw
   // classification every tick, which — for a zone whose
-  // idle_baseline_position equals its max_vent_position — snapped
+  // satisfied_baseline_position equals its max_vent_position — snapped
   // position straight back to fully open on any hairline "demanding"
   // tick. See also stabilizeClassification, a second, layered fix for the
   // same underlying flapping. Deliberately NOT applied to the overshoot
-  // side — see minimum_comfort_tolerance_c's own comment in
+  // side — see minimum_demand_tolerance_c's own comment in
   // systemSettings.ts for why a tight/zero overshoot tolerance is meant to
   // be reachable.
-  minimumComfortTolerance: TempDelta;
+  minimumDemandTolerance: TempDelta;
 }): ResolvedTarget {
   if (params.observationOnly) {
     return {
@@ -109,7 +109,7 @@ export function resolveZoneTargets(params: {
           manualPositionPct: null,
         }
     : resolveBeneathManual(params);
-  return applyMinimumToleranceFloor(result, params.minimumComfortTolerance);
+  return applyMinimumToleranceFloor(result, params.minimumDemandTolerance);
 }
 
 /**
@@ -120,7 +120,7 @@ export function resolveZoneTargets(params: {
  * tolerance to a literal 0 would silently collapse "unset ⇒ tight
  * targeting" and "explicitly zero" into the same on-the-wire value, which
  * `resolveComfortTolerance`'s own contract explicitly treats as distinct.
- * Only the demand side is floored — see minimumComfortTolerance's own
+ * Only the demand side is floored — see minimumDemandTolerance's own
  * comment above.
  */
 function applyMinimumToleranceFloor(

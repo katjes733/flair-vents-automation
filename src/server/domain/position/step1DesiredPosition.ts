@@ -198,7 +198,7 @@ export function computeDesiredPosition(
   // rests at, which means it never actually pursues comfort and is left
   // hoping incidental leakage from a sibling zone's ducting happens to
   // help (confirmed live: Martin Bedroom sat "demanding" for 53 straight
-  // minutes at a literal 0% target once comfort_idle_baseline_position
+  // minutes at a literal 0% target once satisfied_baseline_position
   // moved to 0, since ratio≈0 near the demand-tolerance edge now lands
   // exactly on idleBaselinePosition instead of the old 100%-default idle
   // baseline that accidentally made this a non-issue). Applied *before*

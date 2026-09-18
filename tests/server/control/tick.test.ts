@@ -87,7 +87,7 @@ function makeZone(params: {
     ventHardwareType: "flair_smart_vent",
     config: resolveZoneConfig({
       has_temperature_sensor: params.hasTemperatureSensor ?? true,
-      idle_baseline_position: 100,
+      satisfied_baseline_position: 100,
       observation_only: params.observationOnly ?? false,
       flair_vents: (
         params.flairVentIds ?? [params.flairRoomId.replace("room", "vent")]
@@ -429,7 +429,7 @@ describe("runTick — a satisfied zone closes down during someone else's active 
 
   // Regression test for the exact live sequence that exposed this: a
   // short-cycling system kept yanking a closing bedroom back open to
-  // idle_baseline_position every time the compressor cycled to IDLE, then
+  // satisfied_baseline_position every time the compressor cycled to IDLE, then
   // had to re-close from scratch next cycle — it never actually settled.
   // Confirmed via real production data: desired 100 -> 90 -> 80 (closing,
   // COOLING_CALL) -> 90 -> 100 (reset, the instant IDLE hit).
@@ -494,7 +494,7 @@ describe("runTick — a satisfied zone closes down during someone else's active 
     // Tick 2: the compressor cycles to IDLE, nothing else changes — the
     // *same* persisted runtime state carries the ramp forward. The old,
     // buggy behavior would jump this straight back toward 100
-    // (idle_baseline_position, since the zone is occupied); the fix keeps
+    // (satisfied_baseline_position, since the zone is occupied); the fix keeps
     // it continuing from (or at) where it already was.
     const client2 = new FakeFlairClient();
     setupFlairFixture(
@@ -594,12 +594,12 @@ describe("runTick — FAN_ONLY/IDLE baselines", () => {
     expect(
       decision.zones.find((z) => z.zone_id === "z-unocc")?.vents[0]
         ?.commanded_position_pct,
-    ).toBe(30); // fan_only_idle_baseline_position(50) * unoccupied_idle_factor(0.5) = 25, quantized (modulation_step_pct=10) to 30
+    ).toBe(30); // no_call_active_baseline_position(50) * unoccupied_idle_factor(0.5) = 25, quantized (modulation_step_pct=10) to 30
     // z-occ is demanding here (tempC 22 vs cool_setpoint 21), so it's
     // unaffected by occupancy scaling (that's a satisfied/non-demanding
     // concern) — but it's also genuinely idle (FAN_ONLY, no call active),
-    // so its own demanding-curve anchor is fan_only_idle_baseline_position
-    // (defaults to 50, not this fixture's idle_baseline_position of 100) —
+    // so its own demanding-curve anchor is no_call_active_baseline_position
+    // (defaults to 50, not this fixture's satisfied_baseline_position of 100) —
     // 50 + (100-50)*ratio, not saturating at 100 the way it would if the
     // two settings matched.
     expect(
@@ -1628,7 +1628,7 @@ describe("runTick — stale sensor safeguard", () => {
         roomId: "room-1",
         ventId: "vent-1",
         // Clearly demanding against the fallback cool setpoint (23.89°C)
-        // even once minimum_comfort_tolerance_c's default 0.56°C floor is
+        // even once minimum_demand_tolerance_c's default 0.56°C floor is
         // applied — 24°C (deviation 0.11) used to be enough to read as
         // demanding under the old implicit-zero tolerance, but now floors
         // to "satisfied", which would incorrectly trip classifyStaleness's
@@ -2119,7 +2119,7 @@ describe("runTick — manual disarm", () => {
     expect(client.getVentCommandHistory()[0]).toMatchObject({
       ventId: "vent-1",
       percentOpen: 100,
-    }); // idle_baseline_position default 100
+    }); // satisfied_baseline_position default 100
     expect(client.getSetpointCommandHistory()).toHaveLength(0);
   });
 });
@@ -2147,11 +2147,11 @@ describe("runTick — genuine contention", () => {
       makeZone({ id: "z1", flairRoomId: "room-1" }),
       makeZone({ id: "z2", flairRoomId: "room-2" }),
     ];
-    // idle_baseline_position defaults to 100 in makeZone's config, which
+    // satisfied_baseline_position defaults to 100 in makeZone's config, which
     // (per the domain layer's own behavior) pins every demanding zone's
     // Step 1 output at 100 regardless of demand — give both zones room to
     // actually be reduced by lowering it.
-    zones.forEach((z) => (z.config.idle_baseline_position = 0));
+    zones.forEach((z) => (z.config.satisfied_baseline_position = 0));
     const persisted = new Map<string, ZoneRuntimeState>();
     // A tiny blower rating forces contention between the two zones.
     const airHandler = makeAirHandler({
@@ -2405,7 +2405,7 @@ describe("runTick — unknown call confidence", () => {
     expect(client.getVentCommandHistory()[0]).toMatchObject({
       ventId: "vent-1",
       percentOpen: 100,
-    }); // idle_baseline_position default
+    }); // satisfied_baseline_position default
   });
 });
 
@@ -4208,7 +4208,7 @@ describe("runTick — demand stall detection & mitigation", () => {
         percentOpen: 95, // the vent has now actually reported opening
       },
     ]);
-    // idle_baseline_position: 0 (not this file's usual 100) so the
+    // satisfied_baseline_position: 0 (not this file's usual 100) so the
     // demanding branch's own proportional math actually produces a
     // modest intermediate value for a small deviation — with the usual
     // 100 baseline, "demanding" always saturates at 100 regardless of
@@ -4221,7 +4221,7 @@ describe("runTick — demand stall detection & mitigation", () => {
     });
     zone.config = resolveZoneConfig({
       ...zone.config,
-      idle_baseline_position: 0,
+      satisfied_baseline_position: 0,
     });
     const decision = await runTick(
       makeAirHandler({ minimum_aggregate_flow_lps: 0.001 }),

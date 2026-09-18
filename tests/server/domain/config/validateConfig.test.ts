@@ -19,7 +19,7 @@ function zoneConfig(overrides = {}) {
     }>,
     minVentPosition: 0,
     maxVentPosition: 100,
-    idleBaselinePosition: 100,
+    satisfiedBaselinePosition: 100,
     ...overrides,
   };
 }
@@ -132,17 +132,17 @@ describe("validateZoneConfig", () => {
     );
   });
 
-  it("rejects idle_baseline_position outside [min,max] rather than clamping it", () => {
+  it("rejects satisfied_baseline_position outside [min,max] rather than clamping it", () => {
     const issues = validateZoneConfig(
       zoneConfig({
         minVentPosition: 0,
         maxVentPosition: 50,
-        idleBaselinePosition: 80,
+        satisfiedBaselinePosition: 80,
       }),
     );
-    expect(issues.some((i) => i.code === "idle_baseline_out_of_range")).toBe(
-      true,
-    );
+    expect(
+      issues.some((i) => i.code === "satisfied_baseline_out_of_range"),
+    ).toBe(true);
   });
 });
 

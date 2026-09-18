@@ -107,3 +107,12 @@ partial value, which now matters directly here: a Sleep-Mode zone
 circulating through this same baseline should do so quietly, not with a
 full-range sweep that reintroduces the very noise this ADR exists to
 prevent.
+
+## Update (ADR-0009)
+
+`fan_only_idle_baseline_position` — referenced throughout this decision
+under its name at the time — was renamed to `no_call_active_baseline_position`
+once its name was flagged as misleading (it had, since ADR-0006, widened
+to cover genuine IDLE too, not just FAN_ONLY). See
+[[rename-fan-only-idle-baseline-and-minimum-comfort-tolerance]] (ADR-0009);
+the decision recorded above is otherwise unchanged.
