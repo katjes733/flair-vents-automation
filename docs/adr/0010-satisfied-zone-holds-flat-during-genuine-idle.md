@@ -9,16 +9,16 @@ gap [[idle-baseline-reuse-for-genuine-idle]] (ADR-0006) left unaddressed.
 further the more it's overshot its comfort tolerance, running from
 `idleBaselinePosition` (at zero overshoot) down to `min_vent_position`
 (at or past a full proportional band of overshoot) — see that branch's
-own comment. ADR-0006 changed *which value* feeds `idleBaselinePosition`
+own comment. ADR-0006 changed _which value_ feeds `idleBaselinePosition`
 depending on `callActive` (`satisfied_baseline_position` vs
-`no_call_active_baseline_position`), but never touched *whether* this
+`no_call_active_baseline_position`), but never touched _whether_ this
 proportional-closing behavior itself should apply. So a genuinely idle,
 satisfied zone still closed further with more overshoot, exactly as it
 would while a sibling was actively being conditioned.
 
 That's wrong on its own terms: the closing curve's entire justification
-is *"every percent open is real conditioned air diverted from a zone that
-needs it right now"* — true only while `callActive`. During genuine idle
+is _"every percent open is real conditioned air diverted from a zone that
+needs it right now"_ — true only while `callActive`. During genuine idle
 there's nothing being conditioned, so there's nothing to divert, and
 closing further actively works against `no_call_active_baseline_position`'s
 own purpose (standing pressure headroom for whenever the next call
@@ -38,7 +38,7 @@ during an active call, unaffected by this change, since the safety-net
 reasoning for demanding never depended on `callActive` in the first
 place.
 
-This only changes Step 1's *raw target* for a satisfied, genuinely-idle
+This only changes Step 1's _raw target_ for a satisfied, genuinely-idle
 zone. Step 2 (`rampTowardTarget`) still rate-limits the actual commanded
 movement per tick regardless of how far the raw target jumps — so a call
 ending doesn't snap a zone straight to its no-call baseline in one tick;
@@ -72,3 +72,14 @@ single-step behavior instead of exact position equality.
 No new setting, no migration — this is a formula-level fix to how
 `no_call_active_baseline_position`/`satisfied_baseline_position` were
 already being consumed, not a new config surface.
+
+## Update (ADR-0011)
+
+Making a satisfied zone's raw target depend on `callActive` introduced a
+dimension two existing mechanisms hadn't been built to track: the
+sleep-mode quiet anchor could stay pinned to a stale in-call value for up
+to a full refresh interval after a call ended, never picking up this
+decision's own no-call baseline. See
+[[fan-only-raw-occupancy-and-anchor-call-active-reanchor]] (ADR-0011),
+which also fixes a related, separately-discovered gap in FAN_ONLY's own
+occupancy handling.

@@ -29,6 +29,11 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     demandTolerance: null,
     overshootTolerance: null,
     occupied: false,
+    // Matches occupied by default so every pre-existing test sees identical
+    // behavior regardless of which one a given branch consults (see
+    // ADR-0011) — tests that actually exercise the trusted-vs-raw
+    // distinction override this explicitly.
+    rawOccupied: false,
     staleOccupancy: false,
     staleReading: false,
     spiking: false,
@@ -50,6 +55,7 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     priorAnchorPositionPct: null,
     priorAnchorSinceMs: null,
     priorAnchorIsFanOnly: null,
+    priorAnchorWasCallActive: null,
     otherZoneStruggling: false,
     capacitySharingExempt: false,
     ...overrides,
@@ -506,6 +512,67 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
     // nothing to react to, unlike IDLE (see the describe block below).
     expect(result.commandedPositions["z1"]).toBe(30);
   });
+
+  // See ADR-0011: FAN_ONLY's occupancy check exists to prioritize airflow
+  // to a genuinely occupied room, not to protect a zone from closing —
+  // that distinction only matters once occupied/rawOccupied actually
+  // diverge, which happens once occupancy_trust_window_minutes discounts a
+  // long-continuous "occupied" reading. A real-world case: someone sitting
+  // in an office for over half an hour shouldn't stop getting priority
+  // airflow just because the trust window elapsed.
+  it("uses the raw occupancy signal, not the trust-window-discounted one, for the FAN_ONLY baseline", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        noCallActiveBaselinePosition: 60,
+        occupied: false, // trust window has discounted a long-continuous reading
+        rawOccupied: true, // but the room is still genuinely occupied right now
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "FAN_ONLY",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // Full baseline, not the unoccupied-scaled 30 — rawOccupied governs
+    // here, not the discounted occupied.
+    expect(result.commandedPositions["z1"]).toBe(60);
+  });
+
+  // The contrasting case: during an active call, the *trusted* signal must
+  // still govern — that's the scenario occupancy_trust_window_minutes was
+  // actually built to guard (a stuck-on sensor indefinitely protecting an
+  // empty room from closing at a demanding sibling's expense). Confirmed
+  // via the "unclassified_no_sensor" branch, which is the one place both
+  // signals are consulted conditionally on callActive.
+  it("still uses the trusted occupancy signal, not raw, while a call is active", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        hasTemperatureSensor: false, // forces unclassified_no_sensor
+        satisfiedBaselinePosition: 0,
+        minVentPosition: 0,
+        occupied: false, // trusted: no longer considered occupied
+        rawOccupied: true, // raw: sensor still says someone's there
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("unclassified_no_sensor");
+    // occupied (trusted) -> callActive && !occupied -> closes fully to
+    // minVentPosition(0), per effectiveIdleBaseline's own callActive
+    // branch — proves trusted, not raw, governs here.
+    expect(result.commandedPositions["z1"]).toBe(0);
+  });
 });
 
 // Regression coverage for two real, confirmed overnight incidents against
@@ -555,6 +622,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       positionPct: null,
       sinceMs: null,
       isFanOnly: null,
+      wasCallActive: null,
     });
   });
 
@@ -650,6 +718,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         positionPct: 40,
         sinceMs: 1000 + 5 * 60000,
         isFanOnly: true,
+        wasCallActive: false,
       });
     });
 
@@ -683,6 +752,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         positionPct: 40,
         sinceMs: 1000,
         isFanOnly: true,
+        wasCallActive: null,
       });
     });
 
@@ -717,6 +787,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         positionPct: expect.closeTo(40.12, 1),
         sinceMs: 1000 + 5 * 60000,
         isFanOnly: false,
+        wasCallActive: true,
       });
     });
 
@@ -754,6 +825,7 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
         positionPct: 40,
         sinceMs: 1000,
         isFanOnly: null,
+        wasCallActive: null,
       });
     });
   });
@@ -1130,6 +1202,43 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
       positionPct: 40,
       sinceMs: 1000,
       isFanOnly: false,
+      wasCallActive: null,
+    });
+  });
+
+  // ADR-0011: without tracking wasCallActive, this zone would stay frozen
+  // at its in-call anchor (0) for the full 60-minute refresh interval even
+  // though the call already ended — never picking up
+  // no_call_active_baseline_position's own standing-headroom intent.
+  it("re-anchors immediately when callActive flips, even well within the refresh interval", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      zones: [
+        satisfiedZone({
+          noCallActiveBaselinePosition: 60,
+          priorAnchorPositionPct: 0,
+          priorAnchorSinceMs: 1000,
+          priorAnchorIsFanOnly: false,
+          priorAnchorWasCallActive: true,
+        }),
+      ],
+      nowMs: 1000 + 5 * 60000, // well inside the 60-min interval
+      settings: {
+        ...settings,
+        sleepQuietAnchorEnabled: true,
+        reanchorIntervalMinutes: 60,
+      },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // The call ended (IDLE now) — ADR-0010 holds a satisfied zone flat at
+    // the no-call baseline (60) here, not the old in-call anchor (0).
+    expect(result.commandedPositions["z"]).toBe(60);
+    expect(result.sleepQuietAnchors["z"]).toEqual({
+      positionPct: 60,
+      sinceMs: 1000 + 5 * 60000,
+      isFanOnly: false,
+      wasCallActive: false,
     });
   });
 
@@ -1180,6 +1289,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
       positionPct: null,
       sinceMs: null,
       isFanOnly: null,
+      wasCallActive: null,
     });
   });
 
@@ -1197,6 +1307,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
       positionPct: null,
       sinceMs: null,
       isFanOnly: null,
+      wasCallActive: null,
     });
   });
 
@@ -1214,6 +1325,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
       positionPct: null,
       sinceMs: null,
       isFanOnly: null,
+      wasCallActive: null,
     });
   });
 });

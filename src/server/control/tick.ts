@@ -1302,6 +1302,7 @@ export async function runTick(
       demandTolerance: target.demandTolerance,
       overshootTolerance: target.overshootTolerance,
       occupied: trustedOccupiedByZone.get(zone.id) ?? false,
+      rawOccupied: occupiedByZone.get(zone.id) ?? false,
       staleOccupancy: false,
       staleReading: zoneStaleness.get(zone.id) ?? false,
       spiking: zoneSpike.get(zone.id)?.spiking ?? false,
@@ -1318,6 +1319,7 @@ export async function runTick(
       priorAnchorPositionPct: zone.state.sleep_quiet_anchor_position,
       priorAnchorSinceMs: parseIsoOrNull(zone.state.sleep_quiet_anchor_since),
       priorAnchorIsFanOnly: zone.state.sleep_quiet_anchor_is_fan_only,
+      priorAnchorWasCallActive: zone.state.sleep_quiet_anchor_was_call_active,
       otherZoneStruggling: [...strugglingZoneIds].some((id) => id !== zone.id),
       capacitySharingExempt: zone.config.capacity_sharing_exempt,
     };
@@ -2502,6 +2504,8 @@ export async function runTick(
         : null,
       sleep_quiet_anchor_is_fan_only:
         pipelineResult.sleepQuietAnchors[zone.id]?.isFanOnly ?? null,
+      sleep_quiet_anchor_was_call_active:
+        pipelineResult.sleepQuietAnchors[zone.id]?.wasCallActive ?? null,
       // Falls back to the zone's own already-persisted value — absent
       // from ventMisalignmentNextStateByZoneId means the feature is off,
       // disarmed, or this zone was skipped this tick (not controllable /
