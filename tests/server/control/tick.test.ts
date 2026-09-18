@@ -595,10 +595,17 @@ describe("runTick — FAN_ONLY/IDLE baselines", () => {
       decision.zones.find((z) => z.zone_id === "z-unocc")?.vents[0]
         ?.commanded_position_pct,
     ).toBe(30); // fan_only_idle_baseline_position(50) * unoccupied_idle_factor(0.5) = 25, quantized (modulation_step_pct=10) to 30
+    // z-occ is demanding here (tempC 22 vs cool_setpoint 21), so it's
+    // unaffected by occupancy scaling (that's a satisfied/non-demanding
+    // concern) — but it's also genuinely idle (FAN_ONLY, no call active),
+    // so its own demanding-curve anchor is fan_only_idle_baseline_position
+    // (defaults to 50, not this fixture's idle_baseline_position of 100) —
+    // 50 + (100-50)*ratio, not saturating at 100 the way it would if the
+    // two settings matched.
     expect(
       decision.zones.find((z) => z.zone_id === "z-occ")?.vents[0]
         ?.commanded_position_pct,
-    ).toBe(100); // occupied (Sleep Mode) — unscaled
+    ).toBe(70);
   });
 
   // Regression test for a real bug found live via shadow-mode evaluation:

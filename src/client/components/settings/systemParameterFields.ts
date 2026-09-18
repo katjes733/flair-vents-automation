@@ -321,7 +321,7 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         min: 0,
         max: 100,
         description:
-          "System-wide fallback for how far open a zone's vent sits while the system is only circulating air, not conditioning it. Deliberately a separate setting from the comfort idle baseline above — fan-only's goal is even circulation throughout the structure, not conserving conditioned air, so a low comfort baseline shouldn't also starve fan-only circulation.",
+          "System-wide fallback for how far open a zone's vent sits whenever no call is active anywhere — the system is only circulating air (FAN_ONLY) or doing nothing at all (genuine idle), not conditioning it. Deliberately a separate setting from the comfort idle baseline above — a low comfort baseline shouldn't also starve circulation or standing pressure headroom for the next call, since nothing is being conditioned while this applies.",
         tier: "common",
       },
       {

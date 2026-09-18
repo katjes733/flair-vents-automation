@@ -13,6 +13,13 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     minVentPosition: 0,
     maxVentPosition: 100,
     idleBaselinePosition: 100,
+    // Matches idleBaselinePosition by default so every pre-existing test
+    // in this file (many of which exercise IDLE/!callActive scenarios)
+    // sees identical behavior regardless of the callActive-based
+    // resolution introduced alongside fan_only_idle_baseline_position's
+    // widened scope — tests that actually exercise the distinction
+    // override this explicitly. See "idle baseline reuse" describe block
+    // below.
     fanOnlyIdleBaselinePosition: 100,
     thermalLoadFlags: [],
     flowRateLps: 47,
@@ -800,6 +807,11 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(result.commandedPositions["z1"]).toBeLessThan(100);
   });
 
+  // Only holds when idleBaselinePosition and fanOnlyIdleBaselinePosition
+  // happen to match (both 100 here, via the zone() builder's own
+  // defaults) — see the "idle baseline reuse for genuine IDLE" describe
+  // block below for what changes once they diverge, which is the entire
+  // point of fan_only_idle_baseline_position's widened scope.
   it("computes the identical position for a satisfied zone whether the call is genuinely active or the compressor just cycled to idle", () => {
     const satisfiedZone = {
       zoneId: "z1",
@@ -828,6 +840,98 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(duringIdle.commandedPositions["z1"]).toBe(
       duringCall.commandedPositions["z1"],
     );
+  });
+});
+
+// fan_only_idle_baseline_position's widened scope — see its own comment
+// in systemSettings.ts. Originally consulted only during FAN_ONLY, it now
+// feeds the exact same demanding/satisfied curve as idleBaselinePosition's
+// own continuity anchor for *any* stretch with no call active anywhere
+// (FAN_ONLY or genuine IDLE alike) — reusing the existing setting rather
+// than introducing a dedicated new one, since both scenarios share the
+// identical "nothing being conditioned" justification. While a call *is*
+// active, fanOnlyIdleBaselinePosition is never consulted for this purpose
+// at all — the existing idleBaselinePosition-anchored behavior (the
+// 190%-capacity incident fix) is completely unaffected.
+describe("computeZoneCommands — idle baseline reuse for genuine IDLE", () => {
+  it("anchors the demanding/satisfied curve to fanOnlyIdleBaselinePosition while genuinely idle, ignoring idleBaselinePosition", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 0,
+        fanOnlyIdleBaselinePosition: 50,
+        minVentPosition: 0,
+        calibratedTemp: asAbsoluteTemp(21), // right at the boundary -> satisfied, overshoot 0
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
+        resolvedSetpoint: asAbsoluteTemp(21),
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "IDLE",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("satisfied");
+    // At overshoot=0, the satisfied curve lands exactly on its own anchor
+    // — fanOnlyIdleBaselinePosition (50), not idleBaselinePosition (0).
+    expect(result.commandedPositions["z1"]).toBe(50);
+  });
+
+  it("has zero effect while a call is active — idleBaselinePosition alone still governs", () => {
+    const satisfiedZone = {
+      zoneId: "z1",
+      idleBaselinePosition: 0,
+      fanOnlyIdleBaselinePosition: 50,
+      minVentPosition: 0,
+      calibratedTemp: asAbsoluteTemp(21),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
+      resolvedSetpoint: asAbsoluteTemp(21),
+    };
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [zone(satisfiedZone)],
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z1"]).toBe(0);
+  });
+
+  it("exposes the resolved anchor via effectiveIdleBaselines, for callers that need to stay consistent with it", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 0,
+        fanOnlyIdleBaselinePosition: 50,
+        calibratedTemp: asAbsoluteTemp(25), // demanding
+        resolvedSetpoint: asAbsoluteTemp(21),
+      }),
+    ];
+    const duringIdle = computeZoneCommands({
+      state: "IDLE",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(duringIdle.effectiveIdleBaselines["z1"]).toBe(50);
+
+    const duringCall = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(duringCall.effectiveIdleBaselines["z1"]).toBe(0);
   });
 });
 

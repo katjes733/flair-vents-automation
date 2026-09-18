@@ -2374,7 +2374,13 @@ export async function runTick(
           minStepDeltaPct: effectiveMinStepDeltaPct,
           minPosition: zone.config.min_vent_position,
           maxPosition: zone.config.max_vent_position,
+          // The same idle-baseline anchor the demand-floor math actually
+          // used this tick (see PipelineResult.effectiveIdleBaselines's own
+          // comment) — falls back to the raw comfort setting for a zone
+          // that never resolved one (manual position override, no_vent,
+          // manual_fixed_vent), for which this check is inert anyway.
           idleBaselinePosition:
+            pipelineResult.effectiveIdleBaselines[zone.id] ??
             zone.config.idle_baseline_position ??
             ctx.settings.comfort_idle_baseline_position,
           reconciliationQueue: deps.reconciliationQueue,

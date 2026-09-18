@@ -41,23 +41,37 @@ export const systemSettingsConfigSchema = z.object({
   // genuinely struggling zone gets reopened regardless of what this
   // default is.
   comfort_idle_baseline_position: z.number().min(0).max(100).default(0),
-  // The equivalent fallback for FAN_ONLY specifically — deliberately a
-  // separate setting from comfort_idle_baseline_position above, not the
-  // same value reused. FAN_ONLY's whole purpose is circulating air
-  // throughout the structure while nothing is being conditioned, so a
-  // "satisfied, keep it mostly closed" default makes no sense here — a
-  // closed vent during FAN_ONLY doesn't save anything (there's no
-  // conditioned air to conserve), it just fails to circulate that room.
-  // Defaulted to 50, not the full opposite-extreme 100 this used to be —
-  // achieving real house-wide mixing doesn't require every vent maxed,
-  // especially with several zones opening simultaneously, and 100 has a
-  // real cost of its own: reaching it from wherever a vent currently sits
-  // is a larger, louder motor sweep and more moved air than reaching a
-  // partial value, which matters directly for a Sleep-Mode zone now
-  // circulating through this same baseline during FAN_ONLY (see
-  // sleep_quiet_anchor_enabled's own comment and ADR-0003's update) — the
-  // whole point there is quiet, and maxing every vent out undercuts that
-  // even though the position itself isn't "wrong."
+  // The fallback for *any* stretch where no call is active anywhere on
+  // this air handler — deliberately a separate setting from
+  // comfort_idle_baseline_position above, not the same value reused,
+  // despite both feeding the exact same demanding/satisfied curve as its
+  // own continuity anchor (step1DesiredPosition.ts). The two scenarios
+  // that anchor serves need different numbers: comfort_idle_baseline_position
+  // must stay low for "satisfied while a *sibling* zone is actively being
+  // conditioned" — every percent open there is real conditioned air
+  // diverted from a zone that needs it right now, which is exactly the
+  // 190%-capacity incident that setting's own comment describes. But
+  // whenever no call is active anywhere — FAN_ONLY (circulating
+  // unconditioned air) or genuine IDLE (nothing moving at all) alike —
+  // there's no conditioned air being produced to conserve, so the only
+  // cost of resting open is standing pressure headroom for whenever the
+  // next call starts, which is a benefit, not a cost. Originally scoped
+  // to FAN_ONLY only (hence the name); genuine IDLE shares the identical
+  // "nothing being conditioned" justification, so rather than add a
+  // second, near-duplicate setting for it, this one's scope was widened
+  // instead — resolved once per zone per tick in pipeline.ts
+  // (`callActive ? idleBaselinePosition : fanOnlyIdleBaselinePosition`)
+  // and fed into the *same* existing formula, not a parallel computation
+  // path. Defaulted to 50, not the full opposite-extreme 100 this used to
+  // be — achieving real house-wide mixing doesn't require every vent
+  // maxed, especially with several zones opening simultaneously, and 100
+  // has a real cost of its own: reaching it from wherever a vent
+  // currently sits is a larger, louder motor sweep and more moved air
+  // than reaching a partial value, which matters directly for a
+  // Sleep-Mode zone now circulating through this same baseline during
+  // FAN_ONLY (see sleep_quiet_anchor_enabled's own comment and ADR-0003's
+  // update) — the whole point there is quiet, and maxing every vent out
+  // undercuts that even though the position itself isn't "wrong."
   fan_only_idle_baseline_position: z.number().min(0).max(100).default(50),
 
   // --- Step 2 / ramp & dispatch ---

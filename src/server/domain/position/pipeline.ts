@@ -118,6 +118,19 @@ export interface PipelineResult {
   // update) — using commandedPositions there would silently reintroduce a
   // multi-tick ramp-down, not the immediate snap the caller actually wants.
   rawDesiredPositions: Record<string, number>;
+  // The resolved `callActive ? idleBaselinePosition : fanOnlyIdleBaselinePosition`
+  // value actually used this tick — see fan_only_idle_baseline_position's
+  // own comment (systemSettings.ts) for why its scope now covers any
+  // no-call-active stretch, not just FAN_ONLY. Exposed so callers needing
+  // the *same* anchor the demand-floor math used (e.g. stepDelta.ts's
+  // "crossed above idle baseline" dispatch bypass) stay consistent with
+  // it instead of independently re-deriving just idleBaselinePosition,
+  // which would silently disagree the instant callActive is false.
+  // Present for the same zones rawDesiredPositions is (everything that
+  // reaches past a manual position override) plus
+  // inactive/stale-reading/unclassified_no_sensor zones, which resolve
+  // this value too even though they don't ramp.
+  effectiveIdleBaselines: Record<string, number>;
   classifications: Record<string, ZoneClassification | "inactive">;
   // The updated hysteresis-dwell state per zone, for the caller to persist
   // back to zone.state.classification_pending_value/_since — absent for a
@@ -235,6 +248,7 @@ export function computeZoneCommands(params: {
     params.settings.discretePositionStepPct ??
     params.settings.modulationStepPct;
   const commandedPositions: Record<string, number> = {};
+  const effectiveIdleBaselines: Record<string, number> = {};
   const classifications: Record<string, ZoneClassification | "inactive"> = {};
   const classificationPending: PipelineResult["classificationPending"] = {};
   const sleepQuietAnchors: PipelineResult["sleepQuietAnchors"] = {};
@@ -345,11 +359,22 @@ export function computeZoneCommands(params: {
       continue;
     }
 
+    // Resolved once per zone, fed into every comfort-curve/idle-resting
+    // branch below in place of the raw idleBaselinePosition — see
+    // fan_only_idle_baseline_position's own comment (systemSettings.ts)
+    // for why it's reused here rather than a dedicated new setting. Only
+    // meaningful while a call is genuinely inactive; while callActive,
+    // this is just idleBaselinePosition unchanged.
+    const effectiveComfortIdleBaseline = callActive
+      ? zone.idleBaselinePosition
+      : zone.fanOnlyIdleBaselinePosition;
+    effectiveIdleBaselines[zone.zoneId] = effectiveComfortIdleBaseline;
+
     if (zone.resolvedSetpoint === null) {
       // "inactive" — rests at idle baseline, still counts toward pressure.
       classifications[zone.zoneId] = "inactive";
       nonDemandingSmartVent[zone.zoneId] = clampToZoneRange(
-        zone.idleBaselinePosition,
+        effectiveComfortIdleBaseline,
         zone.minVentPosition,
         zone.maxVentPosition,
       );
@@ -359,7 +384,7 @@ export function computeZoneCommands(params: {
     if (zone.staleReading) {
       classifications[zone.zoneId] = "unclassified_no_sensor";
       nonDemandingSmartVent[zone.zoneId] = effectiveIdleBaseline({
-        idleBaselinePosition: zone.idleBaselinePosition,
+        idleBaselinePosition: effectiveComfortIdleBaseline,
         minVentPosition: zone.minVentPosition,
         maxVentPosition: zone.maxVentPosition,
         occupied: zone.occupied,
@@ -457,7 +482,7 @@ export function computeZoneCommands(params: {
     // handles both directions of the same proportional curve.
     if (classification === "unclassified_no_sensor") {
       nonDemandingSmartVent[zone.zoneId] = effectiveIdleBaseline({
-        idleBaselinePosition: zone.idleBaselinePosition,
+        idleBaselinePosition: effectiveComfortIdleBaseline,
         minVentPosition: zone.minVentPosition,
         maxVentPosition: zone.maxVentPosition,
         occupied: zone.occupied,
@@ -470,7 +495,7 @@ export function computeZoneCommands(params: {
 
     const isDemanding = classification === "demanding";
     const step1 = computeDesiredPosition({
-      idleBaselinePosition: zone.idleBaselinePosition,
+      idleBaselinePosition: effectiveComfortIdleBaseline,
       minVentPosition: zone.minVentPosition,
       maxVentPosition: zone.maxVentPosition,
       thermalLoadFlags: zone.thermalLoadFlags,
@@ -716,6 +741,7 @@ export function computeZoneCommands(params: {
   return {
     commandedPositions,
     rawDesiredPositions,
+    effectiveIdleBaselines,
     classifications,
     classificationPending,
     sleepQuietAnchors,
