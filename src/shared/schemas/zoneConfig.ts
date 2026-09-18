@@ -111,11 +111,11 @@ export const zoneConfigSchema = z.object({
   // persisted from before — this change has no effect on any of them; it
   // only matters for a zone that genuinely never sets this.
   idle_baseline_position: z.number().min(0).max(100).optional(),
-  // The FAN_ONLY-specific counterpart — see
-  // fan_only_idle_baseline_position's own comment in systemSettings.ts
-  // for why this is a genuinely separate setting from
-  // idle_baseline_position above, not the same value reused. Same
-  // unset-is-distinct-from-zero convention.
+  // The fallback for any stretch where no call is active anywhere (both
+  // FAN_ONLY and genuine IDLE — see fan_only_idle_baseline_position's own
+  // comment in systemSettings.ts for why one setting now covers both) —
+  // a genuinely separate setting from idle_baseline_position above, not
+  // the same value reused. Same unset-is-distinct-from-zero convention.
   fan_only_idle_baseline_position: z.number().min(0).max(100).optional(),
   // Per-zone override of dead_zone_recovery_jump_pct (systemSettings.ts) —
   // unset defers to the global setting, same unset-is-distinct-from-zero

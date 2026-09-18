@@ -13,6 +13,13 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     minVentPosition: 0,
     maxVentPosition: 100,
     idleBaselinePosition: 100,
+    // Matches idleBaselinePosition by default so every pre-existing test
+    // in this file (many of which exercise IDLE/!callActive scenarios)
+    // sees identical behavior regardless of the callActive-based
+    // resolution introduced alongside fan_only_idle_baseline_position's
+    // widened scope — tests that actually exercise the distinction
+    // override this explicitly. See "idle baseline reuse" describe block
+    // below.
     fanOnlyIdleBaselinePosition: 100,
     thermalLoadFlags: [],
     flowRateLps: 47,
@@ -42,6 +49,7 @@ function zone(overrides: Partial<PipelineZoneInput>): PipelineZoneInput {
     sleepModeActive: false,
     priorAnchorPositionPct: null,
     priorAnchorSinceMs: null,
+    priorAnchorIsFanOnly: null,
     otherZoneStruggling: false,
     capacitySharingExempt: false,
     ...overrides,
@@ -78,6 +86,10 @@ const settings = {
   sleepQuietAnchorEnabled: false,
   reanchorIntervalMinutes: 60,
   capacitySharingEnabled: false,
+  // Off by default — the dedicated "fast transition" describe block below
+  // turns it on explicitly to exercise it.
+  fastTransitionEnabled: false,
+  fastTransitionStepPct: 50,
 };
 
 describe("computeZoneCommands — no contention", () => {
@@ -496,17 +508,26 @@ describe("computeZoneCommands — FAN_ONLY baselines", () => {
   });
 });
 
-// Regression coverage for a real, confirmed overnight incident: a satisfied
-// bedroom zone in an active Sleep Mode window got yanked open toward
-// fanOnlyIdleBaselinePosition every time the blower ran a brief FAN_ONLY
-// stretch between compressor cycles — ten separate cycles in one night,
-// each producing several genuine motor movements — because this whole
-// FAN_ONLY branch used to run (and `continue`) before sleep_quiet_anchor's
-// own logic ever got a chance to apply. A Sleep-Mode zone now falls
-// through to the exact same anchor-aware path IDLE already used for this
-// reason (see that describe block's own comment) — FAN_ONLY becomes just
-// another idle gap for that zone, not its own separate open-for-
-// circulation state.
+// Regression coverage for two real, confirmed overnight incidents against
+// the same decision, both documented in ADR-0003 (original + its update).
+//
+// Original incident: a satisfied bedroom zone in an active Sleep Mode
+// window got yanked open toward fanOnlyIdleBaselinePosition every time the
+// blower ran a brief FAN_ONLY stretch between compressor cycles — ten
+// separate cycles in one night — because this whole FAN_ONLY branch used
+// to run (and `continue`) before sleep_quiet_anchor's own logic ever got a
+// chance to apply. Fixed by falling through to the same anchor-aware path
+// IDLE already used.
+//
+// That fix over-corrected, though: it anchored a Sleep-Mode zone in
+// genuine FAN_ONLY to the *comfort* curve's own step1 output (same as an
+// ordinary idle/call gap), which trends toward minVentPosition — so a
+// sleeping room stopped getting yanked open, but also never actually
+// circulated air during FAN_ONLY at all, just held closed. Fixed again:
+// a non-demanding Sleep-Mode zone during genuine FAN_ONLY now anchors to
+// the fanOnlyIdleBaselinePosition-derived target instead — still held
+// flat for the same anti-noise reason, just circulating rather than
+// closed. Demanding is unaffected either way, by design (see below).
 describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
   it("opens a demanding zone proportionally during FAN_ONLY while Sleep Mode is active, instead of resting at the FAN_ONLY baseline", () => {
     const zones = [
@@ -521,22 +542,31 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       state: "FAN_ONLY",
       zones,
       nowMs: 0,
-      settings,
+      settings: { ...settings, sleepQuietAnchorEnabled: true },
       capLps: 10000,
       floorLps: 0,
     });
     expect(result.classifications["z1"]).toBe("demanding");
     expect(result.commandedPositions["z1"]).toBeGreaterThan(40);
+    // Demanding never anchors at all, in FAN_ONLY or otherwise — the
+    // safety net for a night the AC genuinely can't keep up must always
+    // run the full ramp, not get capped at a circulation baseline.
+    expect(result.sleepQuietAnchors["z1"]).toEqual({
+      positionPct: null,
+      sinceMs: null,
+      isFanOnly: null,
+    });
   });
 
-  it("closes a satisfied zone proportionally during FAN_ONLY while Sleep Mode is active, instead of resting at the FAN_ONLY baseline", () => {
+  it("rests at the (occupancy-scaled) FAN_ONLY baseline for a satisfied zone during FAN_ONLY while Sleep Mode is active — the update's own fix", () => {
     const zones = [
       zone({
         zoneId: "z1",
-        fanOnlyIdleBaselinePosition: 100,
+        fanOnlyIdleBaselinePosition: 60,
         sleepModeActive: true,
+        occupied: false,
         minVentPosition: 0,
-        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied, closing
+        calibratedTemp: asAbsoluteTemp(15), // well below setpoint(21) -> satisfied
         demandTolerance: asTempDelta(0.5),
         overshootTolerance: asTempDelta(0.5),
       }),
@@ -550,7 +580,10 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
       floorLps: 0,
     });
     expect(result.classifications["z1"]).toBe("satisfied");
-    expect(result.commandedPositions["z1"]).toBeLessThan(100);
+    // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5) — the
+    // same target the ordinary (non-sleep) FAN_ONLY branch would compute,
+    // not a proportionally-closing comfort-curve value.
+    expect(result.commandedPositions["z1"]).toBe(30);
   });
 
   it("still rests at the FAN_ONLY baseline when Sleep Mode is not active — today's daytime circulation behavior is unchanged", () => {
@@ -573,37 +606,155 @@ describe("computeZoneCommands — FAN_ONLY respects Sleep Mode", () => {
     expect(result.commandedPositions["z1"]).toBe(30); // fanOnlyIdleBaselinePosition(60) * unoccupiedIdleFactor(0.5)
   });
 
-  it("holds the sleep-quiet anchor flat through a FAN_ONLY stretch — the actual fix: FAN_ONLY no longer bypasses it", () => {
-    // Identical fixture to the sleep-quiet-anchor describe block's own
-    // "holds the anchored position flat" test, except state is FAN_ONLY
-    // here instead of COOLING_CALL — before this fix, FAN_ONLY never
-    // reached the anchor at all and this would have instead computed
-    // fanOnlyIdleBaselinePosition (100 by default), not the frozen 40.
-    const result = computeZoneCommands({
-      state: "FAN_ONLY",
-      zones: [
-        zone({
-          calibratedTemp: asAbsoluteTemp(19), // colder than the anchor tick's own 19.5
-          demandTolerance: asTempDelta(0.5),
-          overshootTolerance: asTempDelta(0.5),
-          sleepModeActive: true,
-          priorAnchorPositionPct: 40,
-          priorAnchorSinceMs: 1000,
-        }),
-      ],
-      nowMs: 1000 + 5 * 60000,
-      settings: {
-        ...settings,
-        sleepQuietAnchorEnabled: true,
-        reanchorIntervalMinutes: 60,
-      },
-      capLps: 10000,
-      floorLps: 0,
+  // A real FAN_ONLY stretch is typically only a few minutes — far shorter
+  // than reanchorIntervalMinutes (default 60) — so the interval-based
+  // reanchor alone would almost never fire during one. Entering/leaving
+  // FAN_ONLY must force its own reanchor, or a sleeping zone would keep
+  // holding whichever target it last anchored to under the *other* mode
+  // for the entire brief window.
+  describe("mode-transition reanchor", () => {
+    it("reanchors to the FAN_ONLY target immediately on entering FAN_ONLY, replacing a held comfort-curve anchor", () => {
+      const result = computeZoneCommands({
+        state: "FAN_ONLY",
+        zones: [
+          zone({
+            fanOnlyIdleBaselinePosition: 80,
+            occupied: false,
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(19),
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            // A comfort-curve anchor already held from before FAN_ONLY
+            // started — explicitly recorded as such (isFanOnly: false).
+            priorAnchorPositionPct: 40,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: false,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000, // well inside the 60-min reanchor interval
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      // fanOnlyIdleBaselinePosition(80) * unoccupiedIdleFactor(0.5) = 40 —
+      // deliberately picked to coincide with the old anchor's own value,
+      // so a passing commandedPositions assertion alone couldn't hide a
+      // failure to actually reanchor; the isFanOnly/sinceMs check below
+      // is what actually proves a fresh capture happened.
+      expect(result.commandedPositions["z"]).toBe(40);
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: 40,
+        sinceMs: 1000 + 5 * 60000,
+        isFanOnly: true,
+      });
     });
-    expect(result.commandedPositions["z"]).toBe(40);
-    expect(result.sleepQuietAnchors["z"]).toEqual({
-      positionPct: 40,
-      sinceMs: 1000,
+
+    it("holds the FAN_ONLY anchor flat across ticks within the same continuing FAN_ONLY stretch", () => {
+      const result = computeZoneCommands({
+        state: "FAN_ONLY",
+        zones: [
+          zone({
+            fanOnlyIdleBaselinePosition: 80,
+            occupied: false,
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(10), // would compute very differently if unanchored
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            priorAnchorPositionPct: 40,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: true,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000,
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      expect(result.commandedPositions["z"]).toBe(40);
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: 40,
+        sinceMs: 1000,
+        isFanOnly: true,
+      });
+    });
+
+    it("reanchors back to the comfort-curve target immediately on leaving FAN_ONLY, replacing a held FAN_ONLY anchor", () => {
+      const result = computeZoneCommands({
+        state: "COOLING_CALL",
+        zones: [
+          zone({
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(19.5),
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            priorAnchorPositionPct: 80,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: true,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000,
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      // Same known-quantity satisfied fixture as the sleep-quiet-anchor
+      // describe block below (deviation=-1.5, closeRatio≈0.599 against
+      // effectiveBand=1.67) — desiredPosition ≈ 40.12, quantized to 40.
+      expect(result.commandedPositions["z"]).toBe(40);
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: expect.closeTo(40.12, 1),
+        sinceMs: 1000 + 5 * 60000,
+        isFanOnly: false,
+      });
+    });
+
+    // Backward compatibility: an anchor already in progress from before
+    // this fix shipped carries no persisted isFanOnly at all (null) — must
+    // not force a reanchor just because the mode is unknown, or every such
+    // zone would reanchor on its very next tick after deploy regardless of
+    // whether anything actually changed.
+    it("does not force a reanchor when the held anchor's own mode is unknown (predates this fix)", () => {
+      const result = computeZoneCommands({
+        state: "FAN_ONLY",
+        zones: [
+          zone({
+            fanOnlyIdleBaselinePosition: 80,
+            occupied: false,
+            sleepModeActive: true,
+            calibratedTemp: asAbsoluteTemp(19),
+            demandTolerance: asTempDelta(0.5),
+            overshootTolerance: asTempDelta(0.5),
+            priorAnchorPositionPct: 40,
+            priorAnchorSinceMs: 1000,
+            priorAnchorIsFanOnly: null,
+          }),
+        ],
+        nowMs: 1000 + 5 * 60000,
+        settings: {
+          ...settings,
+          sleepQuietAnchorEnabled: true,
+          reanchorIntervalMinutes: 60,
+        },
+        capLps: 10000,
+        floorLps: 0,
+      });
+      expect(result.sleepQuietAnchors["z"]).toEqual({
+        positionPct: 40,
+        sinceMs: 1000,
+        isFanOnly: null,
+      });
     });
   });
 });
@@ -660,6 +811,11 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(result.commandedPositions["z1"]).toBeLessThan(100);
   });
 
+  // Only holds when idleBaselinePosition and fanOnlyIdleBaselinePosition
+  // happen to match (both 100 here, via the zone() builder's own
+  // defaults) — see the "idle baseline reuse for genuine IDLE" describe
+  // block below for what changes once they diverge, which is the entire
+  // point of fan_only_idle_baseline_position's widened scope.
   it("computes the identical position for a satisfied zone whether the call is genuinely active or the compressor just cycled to idle", () => {
     const satisfiedZone = {
       zoneId: "z1",
@@ -688,6 +844,98 @@ describe("computeZoneCommands — IDLE runs the same proportional math as an act
     expect(duringIdle.commandedPositions["z1"]).toBe(
       duringCall.commandedPositions["z1"],
     );
+  });
+});
+
+// fan_only_idle_baseline_position's widened scope — see its own comment
+// in systemSettings.ts. Originally consulted only during FAN_ONLY, it now
+// feeds the exact same demanding/satisfied curve as idleBaselinePosition's
+// own continuity anchor for *any* stretch with no call active anywhere
+// (FAN_ONLY or genuine IDLE alike) — reusing the existing setting rather
+// than introducing a dedicated new one, since both scenarios share the
+// identical "nothing being conditioned" justification. While a call *is*
+// active, fanOnlyIdleBaselinePosition is never consulted for this purpose
+// at all — the existing idleBaselinePosition-anchored behavior (the
+// 190%-capacity incident fix) is completely unaffected.
+describe("computeZoneCommands — idle baseline reuse for genuine IDLE", () => {
+  it("anchors the demanding/satisfied curve to fanOnlyIdleBaselinePosition while genuinely idle, ignoring idleBaselinePosition", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 0,
+        fanOnlyIdleBaselinePosition: 50,
+        minVentPosition: 0,
+        calibratedTemp: asAbsoluteTemp(21), // right at the boundary -> satisfied, overshoot 0
+        demandTolerance: asTempDelta(0.5),
+        overshootTolerance: asTempDelta(0.5),
+        resolvedSetpoint: asAbsoluteTemp(21),
+      }),
+    ];
+    const result = computeZoneCommands({
+      state: "IDLE",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.classifications["z1"]).toBe("satisfied");
+    // At overshoot=0, the satisfied curve lands exactly on its own anchor
+    // — fanOnlyIdleBaselinePosition (50), not idleBaselinePosition (0).
+    expect(result.commandedPositions["z1"]).toBe(50);
+  });
+
+  it("has zero effect while a call is active — idleBaselinePosition alone still governs", () => {
+    const satisfiedZone = {
+      zoneId: "z1",
+      idleBaselinePosition: 0,
+      fanOnlyIdleBaselinePosition: 50,
+      minVentPosition: 0,
+      calibratedTemp: asAbsoluteTemp(21),
+      demandTolerance: asTempDelta(0.5),
+      overshootTolerance: asTempDelta(0.5),
+      resolvedSetpoint: asAbsoluteTemp(21),
+    };
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones: [zone(satisfiedZone)],
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z1"]).toBe(0);
+  });
+
+  it("exposes the resolved anchor via effectiveIdleBaselines, for callers that need to stay consistent with it", () => {
+    const zones = [
+      zone({
+        zoneId: "z1",
+        idleBaselinePosition: 0,
+        fanOnlyIdleBaselinePosition: 50,
+        calibratedTemp: asAbsoluteTemp(25), // demanding
+        resolvedSetpoint: asAbsoluteTemp(21),
+      }),
+    ];
+    const duringIdle = computeZoneCommands({
+      state: "IDLE",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(duringIdle.effectiveIdleBaselines["z1"]).toBe(50);
+
+    const duringCall = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 0,
+      settings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(duringCall.effectiveIdleBaselines["z1"]).toBe(0);
   });
 });
 
@@ -857,6 +1105,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
           calibratedTemp: asAbsoluteTemp(19),
           priorAnchorPositionPct: 40,
           priorAnchorSinceMs: 1000,
+          priorAnchorIsFanOnly: false,
         }),
       ],
       nowMs: 1000 + 5 * 60000, // 5 min later — well inside the 60-min interval
@@ -872,6 +1121,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: 40,
       sinceMs: 1000,
+      isFanOnly: false,
     });
   });
 
@@ -921,6 +1171,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: null,
       sinceMs: null,
+      isFanOnly: null,
     });
   });
 
@@ -937,6 +1188,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: null,
       sinceMs: null,
+      isFanOnly: null,
     });
   });
 
@@ -953,6 +1205,7 @@ describe("computeZoneCommands — sleep-mode quiet anchor", () => {
     expect(result.sleepQuietAnchors["z"]).toEqual({
       positionPct: null,
       sinceMs: null,
+      isFanOnly: null,
     });
   });
 });
@@ -1163,5 +1416,242 @@ describe("computeZoneCommands — dead-zone recovery", () => {
     });
     // Ordinary one-step ramp toward the idle baseline, not the jump to 50.
     expect(result.commandedPositions["z"]).toBe(90);
+  });
+});
+
+// fast_transition_enabled — see its own comment in systemSettings.ts. All
+// tests here use modulationStepPct=10, maxStepsPerTick=1 (ordinary max
+// delta 10) and fastTransitionStepPct=50, so a fast-transitioning zone
+// should reach up to 50 points of movement in one tick instead of 10 —
+// the gap between those two numbers is what every assertion below is
+// actually checking.
+describe("computeZoneCommands — fast transition (call start/end)", () => {
+  const fastSettings = {
+    ...settings,
+    modulationStepPct: 10,
+    maxStepsPerTick: 1,
+    fastTransitionEnabled: true,
+    fastTransitionStepPct: 50,
+  };
+
+  // lastCommandedTarget deliberately avoids the exact 0/100 extremes
+  // throughout this describe block — landing exactly on either one would
+  // trigger the unrelated dead-zone-recovery jump instead (checked first,
+  // inside rampTowardTarget itself), masking whatever fast-transition
+  // itself actually does.
+  it("lets a freshly-demanding zone take a much bigger step than the ordinary ramp allows when a call just started", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "IDLE",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(30), // well above setpoint -> demanding, saturates near 100
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // origin 10, maxDelta = 10 * ceil(50/10) = 50 -> lands on 60, not the
+    // ordinary single-step 20.
+    expect(result.commandedPositions["z"]).toBe(60);
+  });
+
+  it("lets a newly-satisfied zone drop just as far when a call just ended", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 90,
+          minVentPosition: 0,
+          calibratedTemp: asAbsoluteTemp(10), // well below setpoint -> satisfied, closes toward the floor
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // origin 90, target saturates toward minVentPosition(0) — maxDelta 50
+    // means landing at 40, not the ordinary single-step 80.
+    expect(result.commandedPositions["z"]).toBe(40);
+  });
+
+  it("does nothing while the feature is disabled — the kill switch fully reverts to the ordinary ramp", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "IDLE",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(30),
+        }),
+      ],
+      nowMs: 0,
+      settings: { ...fastSettings, fastTransitionEnabled: false },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(20);
+  });
+
+  it("does nothing when the state didn't actually change tick-to-tick", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(30),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(result.commandedPositions["z"]).toBe(20);
+  });
+
+  it("does nothing on the first tick ever (no prior state to compare against), whether null or omitted", () => {
+    const zones = [
+      zone({
+        zoneId: "z",
+        lastCommandedTarget: 10,
+        calibratedTemp: asAbsoluteTemp(30),
+      }),
+    ];
+    const withNull = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: null,
+      zones,
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(withNull.commandedPositions["z"]).toBe(20);
+
+    const withOmitted = computeZoneCommands({
+      state: "COOLING_CALL",
+      zones,
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    expect(withOmitted.commandedPositions["z"]).toBe(20);
+  });
+
+  it("still lands on the ordinary quantization grid — a bigger step allowance, not a coarser one", () => {
+    const result = computeZoneCommands({
+      state: "COOLING_CALL",
+      previousState: "IDLE",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          calibratedTemp: asAbsoluteTemp(23), // a modest deviation, not saturating
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // Whatever it lands on, it must be a multiple of modulationStepPct
+    // (10) — never a value only reachable by widening the grid itself.
+    expect(result.commandedPositions["z"]! % 10).toBe(0);
+  });
+
+  // Regression coverage for the user's own correction: many small steps
+  // risk a stuck vent (needing a full, louder recalibration cycle to
+  // recover) more than one larger decisive step does, so sleep-mode zones
+  // should NOT be exempted from this — the opposite of
+  // sleep_quiet_anchor_enabled's own "hold flat" behavior, which this
+  // still respects (the anchor's own frozen value is unchanged), just
+  // reaching that value faster.
+  it("applies to sleep-mode zones too, reaching the frozen anchor value faster instead of creeping toward it", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "z",
+          lastCommandedTarget: 10,
+          sleepModeActive: true,
+          priorAnchorPositionPct: 50,
+          priorAnchorSinceMs: 0,
+          priorAnchorIsFanOnly: false,
+          calibratedTemp: asAbsoluteTemp(19.5),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 1000, // well inside the reanchor interval — anchor stays frozen at 50
+      settings: { ...fastSettings, sleepQuietAnchorEnabled: true },
+      capLps: 10000,
+      floorLps: 0,
+    });
+    // Frozen anchor target is 50; origin 10 — ordinary ramp would land on
+    // 20, fast transition reaches the full 50 in one tick.
+    expect(result.commandedPositions["z"]).toBe(50);
+  });
+
+  // Proves the "stagger by priority" behavior discussed doesn't need any
+  // new code: the existing pressure-floor clamp already reopens
+  // highest-priority zones first when the aggregate would otherwise drop
+  // too low — which, from the other side, means a lower-priority zone is
+  // the one left to actually finish closing fast.
+  it("relies on the existing pressure-floor clamp to keep a higher-priority zone open when fast-closing everything at once would violate the floor", () => {
+    const result = computeZoneCommands({
+      state: "IDLE",
+      previousState: "COOLING_CALL",
+      zones: [
+        zone({
+          zoneId: "high",
+          priorityRank: 0,
+          lastCommandedTarget: 90,
+          minVentPosition: 0,
+          flowRateLps: 100,
+          calibratedTemp: asAbsoluteTemp(10),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+        zone({
+          zoneId: "low",
+          priorityRank: 1,
+          lastCommandedTarget: 90,
+          minVentPosition: 0,
+          flowRateLps: 100,
+          calibratedTemp: asAbsoluteTemp(10),
+          demandTolerance: asTempDelta(0.5),
+          overshootTolerance: asTempDelta(0.5),
+        }),
+      ],
+      nowMs: 0,
+      settings: fastSettings,
+      capLps: 10000,
+      // Both zones fast-close from 90 to 40 (origin 90, maxDelta 50) —
+      // 100 Lps each * 40% = 40 Lps apiece, 80 Lps total, short of a
+      // 120 Lps floor. The clamp must reopen the higher-priority zone to
+      // make up the gap; the lower-priority one finishes its fast close
+      // untouched.
+      floorLps: 120,
+    });
+    expect(result.pressureFloorClamped).toBe(true);
+    expect(result.commandedPositions["high"]).toBeGreaterThan(40);
+    expect(result.commandedPositions["low"]).toBe(40);
   });
 });

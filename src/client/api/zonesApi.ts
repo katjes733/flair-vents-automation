@@ -50,8 +50,9 @@ export interface ZoneConfig {
   // Unset means "defer to the system-wide comfort_idle_baseline_position
   // setting" — see zoneConfigSchema's own comment.
   idle_baseline_position?: number;
-  // The FAN_ONLY-specific counterpart — see
-  // fan_only_idle_baseline_position's own comment in systemSettings.ts.
+  // Covers any stretch with no call active anywhere (FAN_ONLY and genuine
+  // IDLE alike) — see fan_only_idle_baseline_position's own comment in
+  // systemSettings.ts.
   fan_only_idle_baseline_position?: number;
   // Per-zone override of dead_zone_recovery_jump_pct (systemSettings.ts) —
   // unset defers to the global setting, same convention as

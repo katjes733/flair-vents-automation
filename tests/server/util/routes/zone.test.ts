@@ -78,6 +78,7 @@ describe("updateZoneState", () => {
       occupied_since: null,
       sleep_quiet_anchor_position: null,
       sleep_quiet_anchor_since: null,
+      sleep_quiet_anchor_is_fan_only: null,
       vent_misalignment_window_since: null,
       vent_misalignment_window_start_temp: null,
       vent_misalignment_recalibrating_since: null,

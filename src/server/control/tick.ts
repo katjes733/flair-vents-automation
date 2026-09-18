@@ -29,6 +29,7 @@ import {
 import {
   ARBITRARY_IDLE_CALL_STATE,
   type HvacCallState,
+  type HvacState,
 } from "~/server/domain/types";
 import {
   deriveHvacState,
@@ -1316,6 +1317,7 @@ export async function runTick(
       sleepModeActive: sleepModeActiveByZone.get(zone.id) ?? false,
       priorAnchorPositionPct: zone.state.sleep_quiet_anchor_position,
       priorAnchorSinceMs: parseIsoOrNull(zone.state.sleep_quiet_anchor_since),
+      priorAnchorIsFanOnly: zone.state.sleep_quiet_anchor_is_fan_only,
       otherZoneStruggling: [...strugglingZoneIds].some((id) => id !== zone.id),
       capacitySharingExempt: zone.config.capacity_sharing_exempt,
     };
@@ -1323,6 +1325,10 @@ export async function runTick(
 
   const pipelineResult = computeZoneCommands({
     state: hvac.state,
+    // Trusted — always either null (see AirHandlerRuntimeState's own
+    // default) or a value this same tick.ts persisted as hvac.state on a
+    // prior run (Step 4 below persists `lastHvacState: hvac.state`).
+    previousState: priorRuntime.lastHvacState as HvacState | null,
     zones: pipelineInputs,
     nowMs: startedAtMs,
     settings: {
@@ -1348,6 +1354,8 @@ export async function runTick(
       reanchorIntervalMinutes:
         ctx.settings.sleep_quiet_reanchor_interval_minutes,
       capacitySharingEnabled: ctx.settings.capacity_sharing_enabled,
+      fastTransitionEnabled: ctx.settings.fast_transition_enabled,
+      fastTransitionStepPct: ctx.settings.fast_transition_step_pct,
     },
     capLps,
     floorLps,
@@ -2373,7 +2381,13 @@ export async function runTick(
           minStepDeltaPct: effectiveMinStepDeltaPct,
           minPosition: zone.config.min_vent_position,
           maxPosition: zone.config.max_vent_position,
+          // The same idle-baseline anchor the demand-floor math actually
+          // used this tick (see PipelineResult.effectiveIdleBaselines's own
+          // comment) — falls back to the raw comfort setting for a zone
+          // that never resolved one (manual position override, no_vent,
+          // manual_fixed_vent), for which this check is inert anyway.
           idleBaselinePosition:
+            pipelineResult.effectiveIdleBaselines[zone.id] ??
             zone.config.idle_baseline_position ??
             ctx.settings.comfort_idle_baseline_position,
           reconciliationQueue: deps.reconciliationQueue,
@@ -2486,6 +2500,8 @@ export async function runTick(
         ?.sinceMs
         ? toIso(pipelineResult.sleepQuietAnchors[zone.id]!.sinceMs!)
         : null,
+      sleep_quiet_anchor_is_fan_only:
+        pipelineResult.sleepQuietAnchors[zone.id]?.isFanOnly ?? null,
       // Falls back to the zone's own already-persisted value — absent
       // from ventMisalignmentNextStateByZoneId means the feature is off,
       // disarmed, or this zone was skipped this tick (not controllable /

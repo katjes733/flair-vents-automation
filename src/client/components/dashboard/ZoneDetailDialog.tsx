@@ -424,7 +424,7 @@ export default function ZoneDetailDialog({
                   value={fanOnlyIdleBaseline}
                   onChange={(e) => setFanOnlyIdleBaseline(e.target.value)}
                   slotProps={{ inputLabel: { shrink: true } }}
-                  helperText="Where this vent sits while the system is only circulating air, not conditioning it — a separate setting since fan-only's goal (even circulation) is the opposite of the comfort baseline's (avoid waste)."
+                  helperText="Where this vent sits whenever no call is active anywhere — circulating (FAN_ONLY) or genuinely idle alike — a separate setting since the comfort baseline above only applies while a call is actively running for a sibling zone."
                 />
                 <Stack direction="row" spacing={2}>
                   <TextField
