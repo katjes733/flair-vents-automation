@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
+  HapControllerClient,
   roundToStep,
   assertCharacteristicWriteSucceeded,
 } from "~/server/util/homekit/client";
@@ -82,5 +83,102 @@ describe("assertCharacteristicWriteSucceeded", () => {
         IID,
       ),
     ).not.toThrow();
+  });
+});
+
+describe("HapControllerClient reconnection", () => {
+  const pairingData = { iOSDevicePairingID: "controller" } as any;
+  const accessoryDb = {
+    accessories: [
+      {
+        aid: 1,
+        services: [
+          {
+            type: "4A",
+            characteristics: [
+              { iid: 10, type: "33" },
+              { iid: 11, type: "11" },
+              { iid: 12, type: "35", minStep: 0.1 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  function connectedClient(tempC: number) {
+    return {
+      getAccessories: vi.fn().mockResolvedValue(accessoryDb),
+      getCharacteristics: vi.fn().mockResolvedValue({
+        characteristics: [
+          { iid: 10, value: 2 },
+          { iid: 11, value: tempC },
+          { iid: 12, value: 22 },
+        ],
+      }),
+    };
+  }
+
+  it("rediscovers after a previously connected HAP session is refused", async () => {
+    const initialClient = connectedClient(20);
+    initialClient.getCharacteristics.mockResolvedValueOnce({
+      characteristics: [
+        { iid: 10, value: 2 },
+        { iid: 11, value: 20 },
+        { iid: 12, value: 22 },
+      ],
+    });
+    initialClient.getCharacteristics.mockRejectedValueOnce(
+      new Error("connect ECONNREFUSED 192.168.2.209:45317"),
+    );
+    const staleCachedClient = {
+      getAccessories: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("connect ECONNREFUSED 192.168.2.209:45317"),
+        ),
+    };
+    const rediscoveredClient = connectedClient(21);
+    const createClient = vi
+      .fn()
+      .mockReturnValueOnce(initialClient)
+      .mockReturnValueOnce(staleCachedClient)
+      .mockReturnValueOnce(rediscoveredClient);
+    const discoveryRegistry = {
+      start: vi.fn(),
+      lookup: vi
+        .fn()
+        .mockReturnValue({ address: "192.168.2.209", port: 46111 }),
+      reportStaleEntry: vi.fn(),
+    };
+    const client = new HapControllerClient(
+      "accessory-id",
+      pairingData,
+      "192.168.2.209",
+      45317,
+      undefined,
+      {
+        createClient: createClient as any,
+        discoveryRegistry,
+      },
+    );
+
+    await expect(client.getCurrentState()).resolves.toMatchObject({
+      currentTempC: 20,
+    });
+    await expect(client.getCurrentState()).resolves.toMatchObject({
+      currentTempC: 21,
+    });
+
+    expect(discoveryRegistry.reportStaleEntry).toHaveBeenCalledWith(
+      "accessory-id",
+    );
+    expect(createClient).toHaveBeenNthCalledWith(
+      3,
+      "accessory-id",
+      "192.168.2.209",
+      46111,
+      pairingData,
+    );
   });
 });
