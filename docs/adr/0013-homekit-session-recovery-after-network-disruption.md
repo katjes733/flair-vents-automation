@@ -5,7 +5,6 @@
   - [Root cause](#root-cause)
   - [Decision](#decision)
   - [Consequences](#consequences)
-  - [Verification](#verification)
 
 ## Context
 
@@ -39,9 +38,3 @@ A router reboot or similar network interruption can now recover without restarti
 The retry is intentionally bounded to one attempt per read. If the network, accessory, pairing, or mDNS discovery remains unavailable, the existing error handling and persistent outage alerting still apply. The discovery registry's persistent process and stale-entry handling remain the source of truth for rediscovery; this decision only makes failed active sessions feed that recovery path.
 
 The no-replay write policy favors avoiding duplicate device actions over immediate write recovery. This is acceptable because the normal tick loop reevaluates desired state and can produce a fresh write once a later read and connection succeed.
-
-## Verification
-
-Added a regression test covering the incident sequence: a healthy read, a refused established session, stale-entry reporting, fresh discovery, and a successful read from the newly created client. The focused HomeKit client suite passed 10/10 tests.
-
-Full `bun run verify` passed, including Prettier, ESLint, Stylelint, TypeScript checking, 1,816 tests, coverage thresholds, and the dependency audit with no vulnerabilities.
