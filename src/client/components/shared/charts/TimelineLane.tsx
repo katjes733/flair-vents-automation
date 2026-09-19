@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef, useState, type PointerEvent } from "react";
 import Box from "@mui/material/Box";
 import type { TimelineSegment } from "~/client/components/shared/charts/timelineSegments";
 import ChartTooltip from "~/client/components/shared/charts/ChartTooltip";
@@ -40,7 +40,7 @@ export default function TimelineLane({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
 
-  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
+  const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return;
     const xPct = Math.min(
@@ -63,8 +63,8 @@ export default function TimelineLane({
       <Box
         ref={containerRef}
         data-testid="timeline-lane"
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHover(null)}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => setHover(null)}
         sx={{
           position: "relative",
           height,
@@ -72,6 +72,7 @@ export default function TimelineLane({
           bgcolor: "action.hover",
           borderRadius: 0.5,
           overflow: "hidden",
+          touchAction: "none",
           cursor: segments.length > 0 ? "crosshair" : undefined,
         }}
       >

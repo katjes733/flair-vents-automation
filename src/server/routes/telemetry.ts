@@ -6,8 +6,8 @@ import { isLokiConfigured, fetchTickDecisionHistory } from "~/server/util/loki";
 
 export const router = express.Router();
 
-const DEFAULT_LIMIT = 500;
-const MAX_LIMIT = 2000;
+const EXPECTED_TICK_INTERVAL_MS = 60_000;
+const MAX_LIMIT = 20_000;
 // Matches the widest trailing window TelemetryPage's own range picker
 // offers — a wider request would mean either a badly-formed client request
 // or an attempt to pull far more of Loki's retention than any chart here
@@ -64,7 +64,11 @@ router.get("/:airHandlerId/tick-history", async (req, res) => {
     req.params.airHandlerId,
     fromMs,
     toMs,
-    limit ?? DEFAULT_LIMIT,
+    limit ??
+      Math.min(
+        MAX_LIMIT,
+        Math.ceil((toMs - fromMs) / EXPECTED_TICK_INTERVAL_MS),
+      ),
   );
   res.status(200).json({ points });
 });
