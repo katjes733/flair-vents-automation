@@ -85,10 +85,28 @@ describe("GET /api/v1/telemetry/:airHandlerId/tick-history", () => {
     expect(fetchTickDecisionHistory).toHaveBeenCalledWith("ah-1", 0, 1000, 50);
   });
 
-  it("defaults the limit when not given", async () => {
+  it("scales the default limit to a one-hour window", async () => {
     await request(buildApp()).get(
-      "/api/v1/telemetry/ah-1/tick-history?fromMs=0&toMs=1000",
+      "/api/v1/telemetry/ah-1/tick-history?fromMs=0&toMs=3600000",
     );
-    expect(fetchTickDecisionHistory).toHaveBeenCalledWith("ah-1", 0, 1000, 500);
+    expect(fetchTickDecisionHistory).toHaveBeenCalledWith(
+      "ah-1",
+      0,
+      3600000,
+      60,
+    );
+  });
+
+  it("requests enough points for a seven-day window", async () => {
+    const toMs = 7 * 24 * 3600 * 1000;
+    await request(buildApp()).get(
+      `/api/v1/telemetry/ah-1/tick-history?fromMs=0&toMs=${toMs}`,
+    );
+    expect(fetchTickDecisionHistory).toHaveBeenCalledWith(
+      "ah-1",
+      0,
+      toMs,
+      7 * 24 * 60,
+    );
   });
 });

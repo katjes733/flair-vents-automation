@@ -78,7 +78,7 @@ describe("TimelineLane", () => {
     stubRect(lane, 0, 200);
 
     // 25% across a 200px-wide lane -> clientX=50 -> falls in the first segment.
-    fireEvent.mouseMove(lane, { clientX: 50 });
+    fireEvent.pointerMove(lane, { clientX: 50 });
     expect(screen.getByText("Cooling")).toBeInTheDocument();
     expect(screen.getByText(/Jan 1/)).toBeInTheDocument();
   });
@@ -96,10 +96,10 @@ describe("TimelineLane", () => {
     const lane = screen.getByTestId("timeline-lane");
     stubRect(lane, 0, 200);
 
-    fireEvent.mouseMove(lane, { clientX: 50 }); // 25% -> first segment
+    fireEvent.pointerMove(lane, { clientX: 50 }); // 25% -> first segment
     expect(screen.getByText("Cooling")).toBeInTheDocument();
 
-    fireEvent.mouseMove(lane, { clientX: 150 }); // 75% -> second segment
+    fireEvent.pointerMove(lane, { clientX: 150 }); // 75% -> second segment
     expect(screen.getByText("Idle")).toBeInTheDocument();
     expect(screen.queryByText("Cooling")).not.toBeInTheDocument();
   });
@@ -114,10 +114,10 @@ describe("TimelineLane", () => {
     const lane = screen.getByTestId("timeline-lane");
     stubRect(lane, 0, 200);
 
-    fireEvent.mouseMove(lane, { clientX: 50 });
+    fireEvent.pointerMove(lane, { clientX: 50 });
     expect(screen.getByText("Cooling")).toBeInTheDocument();
 
-    fireEvent.mouseLeave(lane);
+    fireEvent.pointerLeave(lane);
     expect(screen.queryByText("Cooling")).not.toBeInTheDocument();
   });
 
@@ -132,7 +132,27 @@ describe("TimelineLane", () => {
     stubRect(lane, 0, 200);
 
     // 90% across -> timeMs=900, past the only segment's endMs=200.
-    fireEvent.mouseMove(lane, { clientX: 180 });
+    fireEvent.pointerMove(lane, { clientX: 180 });
     expect(screen.queryByText("Cooling")).not.toBeInTheDocument();
+  });
+
+  it("tracks touch-style pointer movement between segments", () => {
+    render(
+      <TimelineLane
+        domain={[0, 1000]}
+        segments={[
+          { startMs: 0, endMs: 500, color: "red", label: "Cooling" },
+          { startMs: 500, endMs: 1000, color: "green", label: "Idle" },
+        ]}
+      />,
+    );
+    const lane = screen.getByTestId("timeline-lane");
+    stubRect(lane, 0, 200);
+
+    fireEvent.pointerMove(lane, { clientX: 40, pointerType: "touch" });
+    expect(screen.getByText("Cooling")).toBeInTheDocument();
+
+    fireEvent.pointerMove(lane, { clientX: 160, pointerType: "touch" });
+    expect(screen.getByText("Idle")).toBeInTheDocument();
   });
 });
