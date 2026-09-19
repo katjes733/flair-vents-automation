@@ -118,6 +118,19 @@ export interface HomeKitClient {
   removePairing(): Promise<void>;
 }
 
+interface HapControllerClientDependencies {
+  createClient?: (
+    accessoryId: string,
+    address: string,
+    port: number,
+    pairingData: PairingData,
+  ) => HttpClient;
+  discoveryRegistry?: Pick<
+    typeof hapDiscoveryRegistry,
+    "start" | "lookup" | "reportStaleEntry"
+  >;
+}
+
 const DISCOVERY_TIMEOUT_MS = 5_000;
 
 /**
@@ -453,6 +466,12 @@ export class HapControllerClient implements HomeKitClient {
   private client: HttpClient | null = null;
   private characteristics: ThermostatCharacteristicMap | null = null;
   private sensorAccessories: SensorAccessoryCharacteristics[] | null = null;
+  private readonly createClient: NonNullable<
+    HapControllerClientDependencies["createClient"]
+  >;
+  private readonly discoveryRegistry: NonNullable<
+    HapControllerClientDependencies["discoveryRegistry"]
+  >;
 
   constructor(
     private readonly accessoryId: string,
@@ -463,11 +482,37 @@ export class HapControllerClient implements HomeKitClient {
       address: string,
       port: number,
     ) => void,
+    deps: HapControllerClientDependencies = {},
   ) {
+    this.createClient =
+      deps.createClient ??
+      ((accessoryId, address, port, pairingData) =>
+        new HttpClient(accessoryId, address, port, pairingData));
+    this.discoveryRegistry = deps.discoveryRegistry ?? hapDiscoveryRegistry;
     // Idempotent — the registry is a single process-lifetime singleton;
     // this just ensures it's running by the time this client needs it,
     // regardless of which air handler's client happens to construct first.
-    hapDiscoveryRegistry.start();
+    this.discoveryRegistry.start();
+  }
+
+  private invalidateConnection(): void {
+    if (!this.client) return;
+    this.client = null;
+    this.characteristics = null;
+    this.sensorAccessories = null;
+    this.discoveryRegistry.reportStaleEntry(this.accessoryId);
+  }
+
+  private async retryReadAfterReconnect<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (err) {
+      if (!this.client) throw err;
+      this.invalidateConnection();
+      return operation();
+    }
   }
 
   private async connect(): Promise<HttpClient> {
@@ -477,7 +522,7 @@ export class HapControllerClient implements HomeKitClient {
       address: string,
       port: number,
     ): Promise<HttpClient> => {
-      const client = new HttpClient(
+      const client = this.createClient(
         this.accessoryId,
         address,
         port,
@@ -506,18 +551,16 @@ export class HapControllerClient implements HomeKitClient {
     // through to the old one-shot query if the registry genuinely hasn't
     // seen this accessory yet (e.g. it was just rebound and the
     // accessory's next re-announcement hasn't landed).
-    let discovered = hapDiscoveryRegistry.lookup(this.accessoryId);
+    let discovered = this.discoveryRegistry.lookup(this.accessoryId);
     let usedFallbackQuery = false;
     if (!discovered) {
       discovered = await discoverAccessory(this.accessoryId);
       usedFallbackQuery = true;
     }
     if (!discovered) {
-      const { totalVisible } = hapDiscoveryRegistry.snapshot();
       logger.warn(
         {
           accessory_id: this.accessoryId,
-          other_hap_accessories_visible_on_lan: totalVisible,
         },
         "Could not discover HAP accessory on the local network",
       );
@@ -536,7 +579,7 @@ export class HapControllerClient implements HomeKitClient {
       // forever. One more attempt via a fresh one-shot query before
       // giving up for this tick, unless that's exactly what we just
       // tried and it still produced this unusable answer.
-      hapDiscoveryRegistry.reportStaleEntry(this.accessoryId);
+      this.discoveryRegistry.reportStaleEntry(this.accessoryId);
       if (usedFallbackQuery) throw err;
       const fresh = await discoverAccessory(this.accessoryId);
       if (!fresh) throw err;
@@ -559,6 +602,10 @@ export class HapControllerClient implements HomeKitClient {
   }
 
   async getCurrentState(): Promise<HomeKitCurrentState> {
+    return this.retryReadAfterReconnect(() => this.getCurrentStateOnce());
+  }
+
+  private async getCurrentStateOnce(): Promise<HomeKitCurrentState> {
     const client = await this.connect();
     const chars = this.characteristics!;
     const ids = [
@@ -624,44 +671,62 @@ export class HapControllerClient implements HomeKitClient {
   }
 
   async setTargetTemperature(valueC: number): Promise<void> {
-    const client = await this.connect();
-    const chars = this.characteristics!;
-    const rounded = roundToStep(valueC, chars.targetTemperatureMinStep);
-    const result = await client.setCharacteristics({
-      [`${chars.aid}.${chars.targetTemperatureIid}`]: rounded,
-    });
-    assertCharacteristicWriteSucceeded(
-      result,
-      chars.aid,
-      chars.targetTemperatureIid,
-    );
+    try {
+      const client = await this.connect();
+      const chars = this.characteristics!;
+      const rounded = roundToStep(valueC, chars.targetTemperatureMinStep);
+      const result = await client.setCharacteristics({
+        [`${chars.aid}.${chars.targetTemperatureIid}`]: rounded,
+      });
+      assertCharacteristicWriteSucceeded(
+        result,
+        chars.aid,
+        chars.targetTemperatureIid,
+      );
+    } catch (err) {
+      this.invalidateConnection();
+      throw err;
+    }
   }
 
   async setThresholdTemperature(
     which: "heat" | "cool",
     valueC: number,
   ): Promise<void> {
-    const client = await this.connect();
-    const chars = this.characteristics!;
-    const iid =
-      which === "heat" ? chars.heatingThresholdIid : chars.coolingThresholdIid;
-    if (!iid) {
-      throw new Error(
-        `This accessory does not expose a ${which} threshold characteristic`,
-      );
+    try {
+      const client = await this.connect();
+      const chars = this.characteristics!;
+      const iid =
+        which === "heat"
+          ? chars.heatingThresholdIid
+          : chars.coolingThresholdIid;
+      if (!iid) {
+        throw new Error(
+          `This accessory does not expose a ${which} threshold characteristic`,
+        );
+      }
+      const minStep =
+        which === "heat"
+          ? chars.heatingThresholdMinStep
+          : chars.coolingThresholdMinStep;
+      const rounded = roundToStep(valueC, minStep);
+      const result = await client.setCharacteristics({
+        [`${chars.aid}.${iid}`]: rounded,
+      });
+      assertCharacteristicWriteSucceeded(result, chars.aid, iid);
+    } catch (err) {
+      this.invalidateConnection();
+      throw err;
     }
-    const minStep =
-      which === "heat"
-        ? chars.heatingThresholdMinStep
-        : chars.coolingThresholdMinStep;
-    const rounded = roundToStep(valueC, minStep);
-    const result = await client.setCharacteristics({
-      [`${chars.aid}.${iid}`]: rounded,
-    });
-    assertCharacteristicWriteSucceeded(result, chars.aid, iid);
   }
 
   async getSensorReadings(): Promise<Map<string, HomeKitSensorReading>> {
+    return this.retryReadAfterReconnect(() => this.getSensorReadingsOnce());
+  }
+
+  private async getSensorReadingsOnce(): Promise<
+    Map<string, HomeKitSensorReading>
+  > {
     const client = await this.connect();
 
     const fetchValues = async (
@@ -749,7 +814,12 @@ export class HapControllerClient implements HomeKitClient {
   }
 
   async removePairing(): Promise<void> {
-    const client = await this.connect();
-    await client.removePairing(this.pairingData.iOSDevicePairingID);
+    try {
+      const client = await this.connect();
+      await client.removePairing(this.pairingData.iOSDevicePairingID);
+    } catch (err) {
+      this.invalidateConnection();
+      throw err;
+    }
   }
 }
