@@ -17,12 +17,20 @@ export interface ZoneDemandTrackingState {
   // caller of the same per-zone ephemeral-state pattern, not a reason to
   // fork a second store.
   ductAnomalySinceMs: number | null;
+  // A third, unrelated caller of the same pattern: when did this vent most
+  // recently become continuously open at/above
+  // equipment_fault_min_vent_open_pct — reset to null the instant it drops
+  // below. Lets equipment-fault detection require
+  // equipment_fault_vent_open_dwell_minutes of sustained openness before
+  // trusting a vent's duct reading. See "Emergency fail-safe".
+  ventOpenSinceMs: number | null;
 }
 
 export const EMPTY_ZONE_DEMAND_TRACKING_STATE: ZoneDemandTrackingState = {
   demandStartedAtMs: null,
   worstDeviationAtDemandStart: null,
   ductAnomalySinceMs: null,
+  ventOpenSinceMs: null,
 };
 
 export interface ZoneDemandTrackingStore {

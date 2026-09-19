@@ -1,4 +1,5 @@
 import type { HvacCallState } from "~/server/domain/types";
+import type { ThermalLoadFlag } from "~/shared/schemas/zoneConfig";
 
 export interface DuctReadingZone {
   zoneId: string;
@@ -12,8 +13,31 @@ export interface DuctReadingZone {
   ductTemperatureC: number | null;
   ductReadingStale: boolean;
   roomTemperatureC: number;
+  // Whether this zone's OWN room-temperature reading (not the duct side)
+  // has gone stale — the duct side has always had this check
+  // (ductReadingStale); the room side never did, despite being just as
+  // vulnerable to Flair/HomeKit's own multi-minute reporting cadence and
+  // despite being a genuine, confirmed live incident: a zone's room
+  // reading observed frozen for 13-20 minutes straight, straddling the
+  // duct-vs-room comparison across what were really two different physical
+  // moments (one mid-cooling, one from well before). See "Emergency
+  // fail-safe" and isRoomReadingStale's own comment in tick.ts.
+  roomReadingStale: boolean;
   demanding: boolean;
   commandedPositionPct: number;
+  // A zone flagged distant_high_duct_loss/high_internal_heat_load has a
+  // structurally smaller true duct-to-room differential even under a fully
+  // healthy call — see equipment_fault_thermal_load_leniency_c's own
+  // comment in systemSettings.ts for the real, confirmed false-positive
+  // this fixes (Martin Office: both flags set, 4 of 5 recent fail-safe
+  // triggers).
+  thermalLoadFlags: readonly ThermalLoadFlag[];
+  // Whether this vent has sat at/above the open floor continuously for at
+  // least equipment_fault_vent_open_dwell_minutes — see that setting's own
+  // comment for the real, confirmed false-positive this fixes (a vent that
+  // just crossed the floor, or is actively closing through it, hasn't had
+  // time for its duct segment to reach a representative reading yet).
+  ventOpenDwellSatisfied: boolean;
 }
 
 export interface DuctDeltaReading {
@@ -39,6 +63,18 @@ function normalizedDelta(zone: DuctReadingZone, state: HvacCallState): number {
   return state === "COOLING_CALL" ? raw : -raw;
 }
 
+// A zone carrying any thermal load flag gets a reduced threshold — see
+// DuctReadingZone.thermalLoadFlags's own comment for why.
+function effectiveThresholdC(
+  zone: DuctReadingZone,
+  baseThresholdC: number,
+  thermalLoadLeniencyC: number,
+): number {
+  return zone.thermalLoadFlags.length > 0
+    ? baseThresholdC - thermalLoadLeniencyC
+    : baseThresholdC;
+}
+
 function passesDifferential(
   zone: DuctReadingZone,
   state: HvacCallState,
@@ -53,6 +89,10 @@ function passesDifferential(
 // compressor is actually producing. Excluded from "usable" the same way a
 // stale or missing reading already is — see minVentOpenPct's own comment
 // in systemSettings.ts for the real, confirmed false-positive this fixes.
+// A vent that clears that floor only just now, or is passing through it
+// while actively closing, is excluded too until it's sat there long enough
+// (ventOpenDwellSatisfied) — see equipment_fault_vent_open_dwell_minutes's
+// own comment for the real, confirmed false-positive this fixes.
 function usableZones(
   zones: DuctReadingZone[],
   minVentOpenPct: number,
@@ -61,8 +101,10 @@ function usableZones(
     (z) =>
       z.hasSmartVent &&
       !z.ductReadingStale &&
+      !z.roomReadingStale &&
       z.ductTemperatureC !== null &&
-      z.commandedPositionPct >= minVentOpenPct,
+      z.commandedPositionPct >= minVentOpenPct &&
+      z.ventOpenDwellSatisfied,
   );
 }
 
@@ -83,6 +125,7 @@ export function detectEquipmentFault(params: {
   callDurationMinutes: number;
   gracePeriodMinutes: number;
   ductDeltaThresholdC: number;
+  thermalLoadLeniencyC: number;
   minVentOpenPct: number;
   zones: DuctReadingZone[];
 }): EquipmentFaultResult {
@@ -107,7 +150,15 @@ export function detectEquipmentFault(params: {
     deltaC: normalizedDelta(z, params.state),
   }));
   const anyPassing = usable.some((z) =>
-    passesDifferential(z, params.state, params.ductDeltaThresholdC),
+    passesDifferential(
+      z,
+      params.state,
+      effectiveThresholdC(
+        z,
+        params.ductDeltaThresholdC,
+        params.thermalLoadLeniencyC,
+      ),
+    ),
   );
   return anyPassing
     ? {
@@ -148,15 +199,33 @@ export interface DuctAnomalyResult {
 export function detectDuctAirflowAnomaly(params: {
   state: HvacCallState;
   ductDeltaThresholdC: number;
+  thermalLoadLeniencyC: number;
   minVentOpenPct: number;
   zones: DuctReadingZone[];
 }): DuctAnomalyResult[] {
   const usable = usableZones(params.zones, params.minVentOpenPct);
   const passing = usable.filter((z) =>
-    passesDifferential(z, params.state, params.ductDeltaThresholdC),
+    passesDifferential(
+      z,
+      params.state,
+      effectiveThresholdC(
+        z,
+        params.ductDeltaThresholdC,
+        params.thermalLoadLeniencyC,
+      ),
+    ),
   );
   const failing = usable.filter(
-    (z) => !passesDifferential(z, params.state, params.ductDeltaThresholdC),
+    (z) =>
+      !passesDifferential(
+        z,
+        params.state,
+        effectiveThresholdC(
+          z,
+          params.ductDeltaThresholdC,
+          params.thermalLoadLeniencyC,
+        ),
+      ),
   );
   if (passing.length === 0) {
     // Every usable vent fails — detectEquipmentFault's case, not an

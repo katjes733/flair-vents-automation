@@ -37,6 +37,7 @@ describe("createRedisZoneDemandTrackingStore", () => {
       demandStartedAtMs: 123,
       worstDeviationAtDemandStart: 2.5,
       ductAnomalySinceMs: null,
+      ventOpenSinceMs: null,
     };
     await store.set("z1", state);
     expect(set).toHaveBeenCalledWith(
@@ -58,6 +59,7 @@ describe("createInMemoryZoneDemandTrackingStore", () => {
       demandStartedAtMs: 100,
       worstDeviationAtDemandStart: 3,
       ductAnomalySinceMs: null,
+      ventOpenSinceMs: null,
     };
     await store.set("z1", state);
     expect(await store.get("z1")).toEqual(state);

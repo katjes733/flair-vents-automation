@@ -13,8 +13,11 @@ function zone(overrides: Partial<DuctReadingZone>): DuctReadingZone {
     ductTemperatureC: 15,
     ductReadingStale: false,
     roomTemperatureC: 22,
+    roomReadingStale: false,
     demanding: true,
     commandedPositionPct: 100,
+    thermalLoadFlags: [],
+    ventOpenDwellSatisfied: true,
     ...overrides,
   };
 }
@@ -24,6 +27,7 @@ describe("detectEquipmentFault", () => {
     state: "COOLING_CALL" as const,
     gracePeriodMinutes: 10,
     ductDeltaThresholdC: 5.56,
+    thermalLoadLeniencyC: 1,
     minVentOpenPct: 20,
   };
 
@@ -116,6 +120,7 @@ describe("detectEquipmentFault", () => {
       state: "HEATING_CALL",
       gracePeriodMinutes: 10,
       ductDeltaThresholdC: 5.56,
+      thermalLoadLeniencyC: 1,
       minVentOpenPct: 20,
       callDurationMinutes: 15,
       zones: [
@@ -178,12 +183,94 @@ describe("detectEquipmentFault", () => {
     expect(result.faulted).toBe(false);
     expect(result.reason).toMatch(/expected duct differential/);
   });
+
+  // Regression test for a real, confirmed live false-positive: Martin
+  // Office (flagged distant_high_duct_loss + high_internal_heat_load)
+  // accounted for 4 of 5 fail-safe triggers in a 48-hour window, one within
+  // 0.01°C of the flat threshold — a structurally smaller true differential
+  // for that zone, not evidence of an actual fault.
+  it("applies the thermal-load leniency only to a zone carrying a thermal load flag", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        // 4.9°C: fails the flat 5.56°C threshold, but passes once the 1°C
+        // leniency applies.
+        zone({
+          thermalLoadFlags: ["distant_high_duct_loss"],
+          roomTemperatureC: 24,
+          ductTemperatureC: 19.1,
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(false);
+    expect(result.reason).toMatch(/expected duct differential/);
+  });
+
+  it("does not lower the threshold for a zone with no thermal load flag, even at the same differential", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          thermalLoadFlags: [],
+          roomTemperatureC: 24,
+          ductTemperatureC: 19.1, // same 4.9°C delta as above
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(true);
+  });
+
+  // Regression test for a real, confirmed live false-positive: Luke
+  // Bedroom's sole usable vent sat exactly at the 20% open floor while
+  // actively closing at the moment of a fail-safe trigger — a vent that
+  // hasn't sat open long enough shouldn't get to carry the whole verdict.
+  it("excludes a vent that hasn't satisfied the open dwell requirement, even if positioned above the floor", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          commandedPositionPct: 20,
+          ventOpenDwellSatisfied: false,
+          roomTemperatureC: 22,
+          ductTemperatureC: 15,
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(false);
+    expect(result.reason).toMatch(/no usable duct data/);
+  });
+
+  // Regression test for a real, confirmed live incident: a zone's room
+  // reading observed frozen at an identical value for 13-20 minutes
+  // straight across several real fail-safe triggers — comparing a fresh
+  // duct reading against a stale room reading from well before it. The
+  // duct side has always had this exclusion (ductReadingStale); the room
+  // side never did.
+  it("excludes a zone whose room reading has gone stale, even with a real-looking failing differential", () => {
+    const result = detectEquipmentFault({
+      ...base,
+      callDurationMinutes: 15,
+      zones: [
+        zone({
+          roomReadingStale: true,
+          roomTemperatureC: 22,
+          ductTemperatureC: 21.9, // would otherwise clearly fail
+        }),
+      ],
+    });
+    expect(result.faulted).toBe(false);
+    expect(result.reason).toMatch(/no usable duct data/);
+  });
 });
 
 describe("detectDuctAirflowAnomaly", () => {
   const base = {
     state: "COOLING_CALL" as const,
     ductDeltaThresholdC: 5.56,
+    thermalLoadLeniencyC: 1,
     minVentOpenPct: 20,
   };
 
@@ -248,6 +335,60 @@ describe("detectDuctAirflowAnomaly", () => {
       ],
     });
     expect(results.find((r) => r.zoneId === "closed")).toBeUndefined();
+  });
+
+  it("excludes a vent whose zone's room reading has gone stale from the result set entirely", () => {
+    const results = detectDuctAirflowAnomaly({
+      ...base,
+      zones: [
+        zone({
+          zoneId: "stale-room",
+          roomReadingStale: true,
+          ductTemperatureC: 22,
+          demanding: true,
+          commandedPositionPct: 80,
+        }),
+        zone({ zoneId: "passing", ductTemperatureC: 15 }),
+      ],
+    });
+    expect(results.find((r) => r.zoneId === "stale-room")).toBeUndefined();
+  });
+
+  it("excludes a vent that hasn't satisfied the open dwell requirement from the result set entirely", () => {
+    const results = detectDuctAirflowAnomaly({
+      ...base,
+      zones: [
+        zone({
+          zoneId: "just-opened",
+          ductTemperatureC: 22,
+          demanding: true,
+          commandedPositionPct: 80,
+          ventOpenDwellSatisfied: false,
+        }),
+        zone({ zoneId: "passing", ductTemperatureC: 15 }),
+      ],
+    });
+    expect(results.find((r) => r.zoneId === "just-opened")).toBeUndefined();
+  });
+
+  it("does not flag a thermal-load-flagged zone whose differential only fails the flat threshold, not the leniency-adjusted one", () => {
+    const results = detectDuctAirflowAnomaly({
+      ...base,
+      zones: [
+        zone({
+          zoneId: "distant",
+          thermalLoadFlags: ["high_internal_heat_load"],
+          roomTemperatureC: 24,
+          ductTemperatureC: 19.1, // 4.9°C — fails flat 5.56°C, passes with 1°C leniency
+          demanding: true,
+          commandedPositionPct: 80,
+        }),
+        zone({ zoneId: "passing", ductTemperatureC: 15 }),
+      ],
+    });
+    // Passes the leniency-adjusted threshold, so it's not "failing" at all —
+    // absent from the result set entirely, same as any other passing vent.
+    expect(results.find((r) => r.zoneId === "distant")).toBeUndefined();
   });
 });
 

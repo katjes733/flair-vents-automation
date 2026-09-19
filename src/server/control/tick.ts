@@ -214,6 +214,36 @@ function isDuctReadingStale(
   return nowMs - createdAtMs > staleThresholdMinutes * 60000;
 }
 
+// The room-temperature sibling of isDuctReadingStale above — the duct side
+// has always had this check; the room side never did, on either the Flair
+// or HomeKit path (neither `FlairRoom.currentTemperatureC` nor
+// `HomeKitSensorReading.tempC` carries a per-reading timestamp this app
+// captures). Confirmed live: a zone's calibratedTemp observed frozen at an
+// identical value for 13-20 minutes straight across several real fail-safe
+// triggers — comparing a fresh duct reading against a room reading from
+// well before it, sometimes from before the call had even started cooling
+// in earnest. Deliberately does NOT take classifyStaleness's own
+// `previousClassification === "satisfied"` exemption — that exemption
+// exists so a genuinely comfortable, unmoving room isn't treated as a
+// broken sensor for the *normal* per-zone staleness alert, but it's
+// exactly what let one of these incidents slip through: capacity sharing
+// can still meaningfully move a "satisfied" zone's vent, so its duct
+// reading can still be "usable" for this check even while satisfied, and a
+// truly stale room reading needs to be caught regardless of classification
+// here. Uses last tick's persisted `last_reading_changed_at` — Step 5 runs
+// before this tick's own Steps 6-7 staleness computation, the same
+// one-tick-behind timing every other Step 5 signal (vent position, dwell)
+// already accepts.
+function isRoomReadingStale(
+  lastReadingChangedAt: string | null,
+  nowMs: number,
+  staleThresholdMinutes: number,
+): boolean {
+  const lastReadingChangedAtMs = parseIsoOrNull(lastReadingChangedAt);
+  if (lastReadingChangedAtMs === null) return true;
+  return nowMs - lastReadingChangedAtMs > staleThresholdMinutes * 60000;
+}
+
 // One room-scoped reading (temperature/occupancy) plus one entry per
 // zone.config.flair_vents member, same order — see "Multi-Vent Zones".
 interface ZoneReadingBundle {
@@ -670,12 +700,58 @@ export async function runTick(
   // entries — since detectEquipmentFault/detectDuctAirflowAnomaly already
   // treat this as a flat list, tolerant of duplicate zoneIds. See
   // "Multi-Vent Zones".
-  const ductZones: DuctReadingZone[] = zones
-    .filter((z) => isControllable(z.ventHardwareType))
-    .flatMap((z) => {
-      const bundle = readings.get(z.id)!;
-      const roomTemperatureC = bundle.room.calibratedTemp ?? Number.NaN;
-      return bundle.vents.map((v) => ({
+  //
+  // Built as a sequential loop rather than a flatMap since each vent's
+  // ventOpenDwellSatisfied needs a Redis round-trip (per-vent "how long has
+  // this been continuously open" tracking, mirroring the duct-anomaly
+  // tracking below) — reused verbatim by the anomalyZones block further
+  // down via ventOpenDwellByKey rather than recomputed, so both blocks
+  // agree on the same dwell clock within one tick.
+  const ductZones: DuctReadingZone[] = [];
+  const ventOpenDwellByKey = new Map<string, boolean>();
+  const roomReadingStaleByZoneId = new Map<string, boolean>();
+  for (const z of zones.filter((z) => isControllable(z.ventHardwareType))) {
+    const bundle = readings.get(z.id)!;
+    const roomTemperatureC = bundle.room.calibratedTemp ?? Number.NaN;
+    if (!Number.isFinite(roomTemperatureC)) continue;
+    const roomReadingStale = isRoomReadingStale(
+      z.state.last_reading_changed_at,
+      startedAtMs,
+      ctx.settings.stale_threshold_minutes,
+    );
+    roomReadingStaleByZoneId.set(z.id, roomReadingStale);
+    for (const v of bundle.vents) {
+      // Step 5 runs before this tick's own position pipeline (Step 9),
+      // so the only real signal available yet is the vent's own last
+      // *reported* position from the previous tick — a reasonable proxy
+      // for "has there been meaningful airflow through this duct
+      // segment recently," which is exactly what usableZones()'s
+      // minVentOpenPct filter needs. A real, confirmed bug this fixes:
+      // this was hardcoded to 0 for every vent, which — combined with
+      // that filter being newly added — would have made every vent
+      // permanently "too closed to be usable," never what was intended.
+      const commandedPositionPct =
+        ventStateNow(z.id, v.flairVentId)?.last_reported_position ?? 0;
+      const meetsOpenFloor =
+        commandedPositionPct >= ctx.settings.equipment_fault_min_vent_open_pct;
+      const trackingKey = reconciliationKey(z.id, v.flairVentId);
+      const tracking = await deps.zoneDemandTrackingStore.get(trackingKey);
+      const ventOpenSinceMs = meetsOpenFloor
+        ? (tracking.ventOpenSinceMs ?? startedAtMs)
+        : null;
+      if (ventOpenSinceMs !== tracking.ventOpenSinceMs) {
+        await deps.zoneDemandTrackingStore.set(trackingKey, {
+          ...tracking,
+          ventOpenSinceMs,
+        });
+      }
+      const openDwellMinutes =
+        ventOpenSinceMs !== null ? (startedAtMs - ventOpenSinceMs) / 60000 : 0;
+      const ventOpenDwellSatisfied =
+        openDwellMinutes >=
+        ctx.settings.equipment_fault_vent_open_dwell_minutes;
+      ventOpenDwellByKey.set(trackingKey, ventOpenDwellSatisfied);
+      ductZones.push({
         zoneId: z.id,
         ventId: v.flairVentId,
         hasSmartVent: true,
@@ -686,21 +762,14 @@ export async function runTick(
           ctx.settings.stale_threshold_minutes,
         ),
         roomTemperatureC,
+        roomReadingStale,
         demanding: false,
-        // Step 5 runs before this tick's own position pipeline (Step 9),
-        // so the only real signal available yet is the vent's own last
-        // *reported* position from the previous tick — a reasonable proxy
-        // for "has there been meaningful airflow through this duct
-        // segment recently," which is exactly what usableZones()'s new
-        // minVentOpenPct filter needs. A real, confirmed bug this fixes:
-        // this was hardcoded to 0 for every vent, which — combined with
-        // that filter being newly added — would have made every vent
-        // permanently "too closed to be usable," never what was intended.
-        commandedPositionPct:
-          ventStateNow(z.id, v.flairVentId)?.last_reported_position ?? 0,
-      }));
-    })
-    .filter((z) => Number.isFinite(z.roomTemperatureC));
+        commandedPositionPct,
+        thermalLoadFlags: z.config.thermal_load_flags,
+        ventOpenDwellSatisfied,
+      });
+    }
+  }
 
   const faultCheck = callActive
     ? detectEquipmentFault({
@@ -709,6 +778,8 @@ export async function runTick(
         gracePeriodMinutes: ctx.settings.equipment_fault_grace_period_minutes,
         ductDeltaThresholdC:
           ctx.settings.equipment_fault_duct_delta_threshold_c,
+        thermalLoadLeniencyC:
+          ctx.settings.equipment_fault_thermal_load_leniency_c,
         minVentOpenPct: ctx.settings.equipment_fault_min_vent_open_pct,
         zones: ductZones,
       })
@@ -1479,14 +1550,31 @@ export async function runTick(
             ctx.settings.stale_threshold_minutes,
           ),
           roomTemperatureC,
+          // Reused from Step 5's per-zone staleness check above, for the
+          // same reason ventOpenDwellSatisfied is reused below — one
+          // staleness verdict per zone per tick, not two.
+          roomReadingStale: roomReadingStaleByZoneId.get(z.id) ?? true,
           demanding: pipelineResult.classifications[z.id] === "demanding",
           commandedPositionPct: pipelineResult.commandedPositions[z.id] ?? 0,
+          thermalLoadFlags: z.config.thermal_load_flags,
+          // Reused from Step 5's dwell tracking above rather than
+          // recomputed — that block already established this tick's
+          // ventOpenSinceMs clock for every controllable vent, and
+          // recomputing here against pipelineResult's post-pipeline
+          // commandedPositionPct (a different signal than Step 5's
+          // pre-pipeline last-reported-position proxy) would just
+          // overwrite the same Redis record with an inconsistent value.
+          ventOpenDwellSatisfied:
+            ventOpenDwellByKey.get(reconciliationKey(z.id, v.flairVentId)) ??
+            false,
         }));
       })
       .filter((z) => Number.isFinite(z.roomTemperatureC));
     const anomalies = detectDuctAirflowAnomaly({
       state: hvac.state as "COOLING_CALL" | "HEATING_CALL",
       ductDeltaThresholdC: ctx.settings.equipment_fault_duct_delta_threshold_c,
+      thermalLoadLeniencyC:
+        ctx.settings.equipment_fault_thermal_load_leniency_c,
       minVentOpenPct: ctx.settings.equipment_fault_min_vent_open_pct,
       zones: anomalyZones,
     });
