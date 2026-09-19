@@ -507,8 +507,16 @@ export const systemSettingsConfigSchema = z.object({
   // signature of a borderline reading, not a sustained equipment problem.
   // Mirrors the clear-side dwell above: the failing condition must persist
   // for this long before a fault is actually declared, so one marginal tick
-  // can't trip the whole-system fail-safe on its own.
-  equipment_fault_trigger_dwell_minutes: z.number().positive().default(3),
+  // can't trip the whole-system fail-safe on its own. Raised from the
+  // original 3 to 15: a live audit of 21 triggers over 30 days found every
+  // single one self-cleared within 5-13 minutes — the one property that
+  // actually separates every false positive seen so far from a genuine,
+  // sustained equipment failure is duration, far more reliably than the
+  // differential reading itself (which stale sensors, near-closed vents,
+  // and structurally distant zones can all distort). 15 minutes is chosen
+  // to clear that entire observed false-positive range with margin, while
+  // still catching a real failure in well under an hour.
+  equipment_fault_trigger_dwell_minutes: z.number().positive().default(15),
   // A real, confirmed false-positive fail-safe trigger: a smart vent
   // sitting near-closed (satisfied, resting low) has little real airflow
   // through its own duct segment, so its duct temperature drifts toward
@@ -522,6 +530,25 @@ export const systemSettingsConfigSchema = z.object({
   // detectEquipmentFault and detectDuctAirflowAnomaly, the same way a
   // stale or missing reading already is.
   equipment_fault_min_vent_open_pct: z.number().min(0).max(100).default(20),
+  // A real, confirmed false-positive class: a zone flagged
+  // distant_high_duct_loss or high_internal_heat_load (see zoneConfig's
+  // thermal_load_flags) has a structurally smaller true duct-to-room
+  // differential even under a fully healthy, actively-running call.
+  // Confirmed live: Martin Office carries both flags and accounted for 4 of
+  // 5 fail-safe triggers in a 48-hour window, one within 0.01°C of the flat
+  // threshold. Subtracted from equipment_fault_duct_delta_threshold_c only
+  // for zones carrying at least one thermal load flag.
+  equipment_fault_thermal_load_leniency_c: z.number().min(0).default(1.0),
+  // A real, confirmed false-positive trigger distinct from the dwell
+  // settings above: a vent that has *just* crossed
+  // equipment_fault_min_vent_open_pct — especially one that's actively
+  // closing as its zone approaches satisfaction — hasn't had time for its
+  // duct segment to reach a representative airflow/temperature yet.
+  // Confirmed live: Luke Bedroom's sole usable vent sat exactly at the 20%
+  // floor while ramping closed at the moment of a fail-safe trigger. A vent
+  // must sit at/above the open floor continuously for this long before it
+  // counts as "usable" for detectEquipmentFault/detectDuctAirflowAnomaly.
+  equipment_fault_vent_open_dwell_minutes: z.number().min(0).default(2),
   // Alert-only backstop, never a fail-safe trigger — see the plan.
   hvac_no_improvement_alert_minutes: z.number().positive().default(75),
   // The zone-scoped sibling of the above, added after live hardware

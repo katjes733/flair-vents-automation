@@ -936,6 +936,34 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
         tier: "advanced",
       },
       {
+        path: "equipment_fault_trigger_dwell_minutes",
+        baseLabel: "Fault-trigger dwell",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long the differential has to keep failing before the fail-safe actually forces every vent open. A real equipment failure stays broken far longer than this; a sensor or calibration blip typically self-clears within minutes, so raising this filters those out without missing a genuine failure.",
+        tier: "advanced",
+      },
+      {
+        path: "equipment_fault_thermal_load_leniency_c",
+        baseLabel: "Thermal-load zone leniency",
+        kind: "tempDelta",
+        min: 0,
+        step: 0.1,
+        description:
+          "Subtracted from the duct-temperature differential threshold for any zone flagged as distant from the air handler or high internal heat load — those zones have a structurally smaller true differential even when the equipment is working correctly.",
+        tier: "advanced",
+      },
+      {
+        path: "equipment_fault_vent_open_dwell_minutes",
+        baseLabel: "Vent open dwell before counted usable",
+        kind: "minutes",
+        min: 0,
+        description:
+          "How long a vent has to sit continuously at or above the usable-open floor before its duct reading is trusted for fault detection — a vent that just crossed the floor, or is actively closing through it, hasn't had time to produce a representative reading.",
+        tier: "advanced",
+      },
+      {
         path: "hvac_no_improvement_alert_minutes",
         baseLabel: "Extended call, no improvement (whole system)",
         kind: "minutes",
