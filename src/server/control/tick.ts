@@ -698,6 +698,21 @@ export async function runTick(
       : priorFanRuntime.lastObservedAtMs,
     lastObservedKind: observedRuntimeKind ?? priorFanRuntime.lastObservedKind,
   };
+  if (fanRuntimeEnabled && deps.getFanRuntimeLedger) {
+    try {
+      const hourStartMs = fanRuntimeHourStartMs(
+        startedAtMs,
+        ctx.settings.home_timezone,
+      );
+      fanRuntimeLedger = await deps.getFanRuntimeLedger(
+        airHandler.id,
+        new Date(hourStartMs),
+      );
+    } catch (err) {
+      fanRuntimeError = err instanceof Error ? err.message : String(err);
+      log.warn({ err }, "Could not load current fan runtime ledger");
+    }
+  }
   // The single shared "which direction" input for every computation below
   // that needs a call-direction decision but isn't itself gated on
   // callActive (away/fallback setpoint selection, driving-zone deviation,
@@ -2875,11 +2890,7 @@ export async function runTick(
         startedAtMs,
         ctx.settings.home_timezone,
       );
-      const ledger = await deps.getFanRuntimeLedger(
-        airHandler.id,
-        new Date(hourStartMs),
-      );
-      fanRuntimeLedger = ledger;
+      const ledger = fanRuntimeLedger;
       const startsThisHour =
         nextFanRuntime.hourStartAtMs === hourStartMs
           ? nextFanRuntime.startsThisHour
@@ -2919,7 +2930,25 @@ export async function runTick(
           }),
         );
       if (block && ventsReady) {
-        await homeKitClient.setFanMode("manual");
+        try {
+          await homeKitClient.setFanMode("manual");
+        } catch (err) {
+          fanRuntimeError = err instanceof Error ? err.message : String(err);
+          await deps.alerting.alertOnce({
+            key: `alert:fanRuntimeStartWrite:${airHandler.id}`,
+            subject: `${airHandler.name}: fan-only start failed`,
+            text: `The app could not start the requested fan-only block: ${fanRuntimeError}`,
+            rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+            nowMs: startedAtMs,
+          });
+          nextFanRuntime = {
+            ...nextFanRuntime,
+            owner: null,
+            phase: "idle",
+          };
+        }
+      }
+      if (block && ventsReady && fanRuntimeError === null) {
         nextFanRuntime = {
           ...nextFanRuntime,
           owner: "app",

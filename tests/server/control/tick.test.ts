@@ -4695,13 +4695,16 @@ describe("runTick — HomeKit setpoint delivery", () => {
     homeKitClient: FakeHomeKitClient | null,
     persisted: Map<string, ZoneRuntimeState>,
     nowMs: number,
+    runtimeStore = createInMemoryAirHandlerRuntimeStore(),
   ): TickDeps {
     return {
       client,
       getHomeKitClient: async () => homeKitClient,
+      getFanRuntimeLedger: async () => null,
+      recordFanRuntimeInterval: vi.fn(async () => undefined),
       reconciliationQueue: createInMemoryReconciliationQueue(),
       spikeBufferStore: createInMemorySpikeBufferStore(),
-      airHandlerRuntimeStore: createInMemoryAirHandlerRuntimeStore(),
+      airHandlerRuntimeStore: runtimeStore,
       zoneDemandTrackingStore: createInMemoryZoneDemandTrackingStore(),
       alerting: createInMemoryAlertingClient(),
       persistZoneState: vi.fn(async (zoneId: string, patch) => {
@@ -4711,6 +4714,94 @@ describe("runTick — HomeKit setpoint delivery", () => {
       now: () => nowMs,
     };
   }
+
+  it("starts an app-owned fan block only after the vent is at the fan baseline", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 22,
+        percentOpen: 50,
+      },
+    ]);
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({
+      currentHeatingCoolingState: 0,
+      currentFanState: 0,
+    });
+    const zone = makeZone({ id: "z1", flairRoomId: "room-1" });
+    const airHandler = makeAirHandler({
+      fan_runtime_enabled: true,
+      fan_runtime_target_minutes_per_hour: 5,
+      fan_runtime_min_block_minutes: 5,
+    });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    await runTick(
+      airHandler,
+      [zone],
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW),
+    );
+
+    expect(
+      homeKitClient.writeHistory.some((write) => write.kind === "fan"),
+    ).toBe(true);
+    expect(
+      homeKitClient.writeHistory.find((write) => write.kind === "fan")?.value,
+    ).toBe(0);
+  });
+
+  it("restores Auto when a heat/cool call interrupts an app-owned fan block", async () => {
+    const client = new FakeFlairClient();
+    setupFlairFixture(client, [
+      {
+        roomId: "room-1",
+        ventId: "vent-1",
+        tempC: 22,
+        ductC: 14,
+        percentOpen: 50,
+      },
+    ]);
+    const homeKitClient = new FakeHomeKitClient();
+    homeKitClient.setState({
+      currentHeatingCoolingState: 2,
+      currentFanState: 2,
+    });
+    await homeKitClient.setFanMode("manual");
+    homeKitClient.writeHistory.length = 0;
+    const runtimeStore = createInMemoryAirHandlerRuntimeStore();
+    const prior = await runtimeStore.get("ah-1");
+    await runtimeStore.set("ah-1", {
+      ...prior,
+      fanRuntime: {
+        ...prior.fanRuntime!,
+        owner: "app",
+        phase: "running",
+        requestedStartAtMs: NOW - 10 * 60 * 1000,
+        requestedDurationMs: 15 * 60 * 1000,
+      },
+    });
+    const persisted = new Map<string, ZoneRuntimeState>();
+
+    await runTick(
+      makeAirHandler({
+        setpoint_delivery_mode: "homekit",
+        fan_runtime_enabled: true,
+        fan_runtime_target_minutes_per_hour: 5,
+        fan_runtime_min_block_minutes: 5,
+      }),
+      [makeZone({ id: "z1", flairRoomId: "room-1" })],
+      makeCtx(),
+      makeHomeKitDeps(client, homeKitClient, persisted, NOW, runtimeStore),
+    );
+
+    expect(
+      homeKitClient.writeHistory.find((write) => write.kind === "fan")?.value,
+    ).toBe(1);
+  });
 
   it("dispatches via setTargetTemperature when mode is Cool, and never touches the mode itself", async () => {
     const client = new FakeFlairClient();
