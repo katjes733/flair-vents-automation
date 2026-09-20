@@ -10,6 +10,8 @@ import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Checkbox from "@mui/material/Checkbox";
+import Tabs from "@mui/material/Tabs";
+import Tab from "@mui/material/Tab";
 import {
   updateAirHandler,
   deleteAirHandler,
@@ -80,6 +82,7 @@ export default function EditAirHandlerDialog({
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState(0);
 
   const [seededId, setSeededId] = useState<string | null>(null);
   if (airHandler && airHandler.id !== seededId) {
@@ -127,6 +130,7 @@ export default function EditAirHandlerDialog({
     setFanRuntimeEcobeeAcknowledged(
       airHandler.config.fan_runtime_ecobee_schedule_acknowledged ?? false,
     );
+    setActiveTab(0);
   }
 
   const handleSave = useCallback(async () => {
@@ -218,136 +222,183 @@ export default function EditAirHandlerDialog({
       <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
         <DialogTitle>{airHandler.name} — configuration</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              autoFocus
-              label="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={fanRuntimeEnabled}
-                  onChange={(e) => {
-                    if (e.target.checked && !fanRuntimeEcobeeAcknowledged) {
-                      setFanRuntimeConfirmOpen(true);
-                      return;
-                    }
-                    setFanRuntimeEnabled(e.target.checked);
-                  }}
-                />
-              }
-              label="App controls fan-only circulation"
-            />
-            <TextField
-              select
-              disabled={!fanRuntimeEnabled}
-              label="Fan runtime target per hour"
-              value={fanRuntimeTarget}
-              onChange={(e) => setFanRuntimeTarget(e.target.value)}
-              helperText="Heat/cool blower runtime counts toward this wall-clock hourly target."
-            >
-              {[5, 10, 15, 20, 25, 30]
-                .filter((minutes) => minutes >= Number(fanRuntimeMinBlock || 5))
-                .map((minutes) => (
+          <Tabs
+            value={activeTab}
+            onChange={(_, value: number) => setActiveTab(value)}
+            variant="scrollable"
+            scrollButtons="auto"
+            aria-label="Air handler configuration sections"
+            sx={{ mb: 2 }}
+          >
+            <Tab label="General" />
+            <Tab label="Away" />
+            <Tab label="Fan" />
+            <Tab label="Integrations" />
+          </Tabs>
+
+          {activeTab === 0 && (
+            <Stack spacing={2}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={active}
+                    onChange={(e) => setActive(e.target.checked)}
+                  />
+                }
+                label="Active"
+              />
+              <TextField
+                autoFocus
+                label="Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <TextField
+                label="Tonnage (tons)"
+                type="number"
+                value={tonnageTons}
+                onChange={(e) => setTonnageTons(e.target.value)}
+                helperText="Required before this handler can be activated — the pressure safeguard's baseline."
+              />
+              <FlairZoneSelect
+                value={flairZoneId}
+                onChange={setFlairZoneId}
+                currentAirHandlerId={airHandler.id}
+              />
+            </Stack>
+          )}
+
+          {activeTab === 1 && (
+            <Stack spacing={2}>
+              <TextField
+                label={`Away cooling setpoint override, °${temperatureUnit} (blank = use System Parameters)`}
+                type="number"
+                value={awayCoolOverride}
+                onChange={(e) => setAwayCoolOverride(e.target.value)}
+              />
+              <TextField
+                label={`Away heating setpoint override, °${temperatureUnit} (blank = use System Parameters)`}
+                type="number"
+                value={awayHeatOverride}
+                onChange={(e) => setAwayHeatOverride(e.target.value)}
+              />
+              <TextField
+                label={`Away tolerance override, °${temperatureUnit} (blank = use System Parameters)`}
+                type="number"
+                value={awayToleranceOverride}
+                onChange={(e) => setAwayToleranceOverride(e.target.value)}
+                helperText="Applies only while this handler's zones are away (Ecobee-reported or native) — overrides the global Away Mode setpoints/tolerance for this handler only."
+              />
+            </Stack>
+          )}
+
+          {activeTab === 2 && (
+            <Stack spacing={2}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={fanRuntimeEnabled}
+                    onChange={(e) => {
+                      if (e.target.checked && !fanRuntimeEcobeeAcknowledged) {
+                        setFanRuntimeConfirmOpen(true);
+                        return;
+                      }
+                      setFanRuntimeEnabled(e.target.checked);
+                    }}
+                  />
+                }
+                label="App controls fan-only circulation"
+              />
+              <TextField
+                select
+                disabled={!fanRuntimeEnabled}
+                label="Fan runtime target per hour"
+                value={fanRuntimeEnabled ? fanRuntimeTarget : ""}
+                onChange={(e) => setFanRuntimeTarget(e.target.value)}
+                helperText="Heat/cool blower runtime counts toward this wall-clock hourly target."
+              >
+                {[5, 10, 15, 20, 25, 30]
+                  .filter(
+                    (minutes) => minutes >= Number(fanRuntimeMinBlock || 5),
+                  )
+                  .map((minutes) => (
+                    <MenuItem key={minutes} value={String(minutes)}>
+                      {minutes} minutes/hour
+                    </MenuItem>
+                  ))}
+              </TextField>
+              <TextField
+                select
+                disabled={!fanRuntimeEnabled}
+                label="Advanced minimum fan-only block"
+                value={fanRuntimeMinBlock}
+                onChange={(e) => setFanRuntimeMinBlock(e.target.value)}
+                helperText="The system minimum is 5 minutes. Raising this value filters shorter targets."
+              >
+                {[5, 10, 15].map((minutes) => (
                   <MenuItem key={minutes} value={String(minutes)}>
-                    {minutes} minutes/hour
+                    {minutes} minutes
                   </MenuItem>
                 ))}
-            </TextField>
-            <TextField
-              select
-              disabled={!fanRuntimeEnabled}
-              label="Advanced minimum fan-only block"
-              value={fanRuntimeMinBlock}
-              onChange={(e) => setFanRuntimeMinBlock(e.target.value)}
-              helperText="The system minimum is 5 minutes. Raising this value filters shorter targets."
-            >
-              {[5, 10, 15].map((minutes) => (
-                <MenuItem key={minutes} value={String(minutes)}>
-                  {minutes} minutes
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              label="Tonnage (tons)"
-              type="number"
-              value={tonnageTons}
-              onChange={(e) => setTonnageTons(e.target.value)}
-              helperText="Required before this handler can be activated — the pressure safeguard's baseline."
-            />
-            <FlairZoneSelect
-              value={flairZoneId}
-              onChange={setFlairZoneId}
-              currentAirHandlerId={airHandler.id}
-            />
-            <TextField
-              label={`Away cooling setpoint override, °${temperatureUnit} (blank = use System Parameters)`}
-              type="number"
-              value={awayCoolOverride}
-              onChange={(e) => setAwayCoolOverride(e.target.value)}
-            />
-            <TextField
-              label={`Away heating setpoint override, °${temperatureUnit} (blank = use System Parameters)`}
-              type="number"
-              value={awayHeatOverride}
-              onChange={(e) => setAwayHeatOverride(e.target.value)}
-            />
-            <TextField
-              label={`Away tolerance override, °${temperatureUnit} (blank = use System Parameters)`}
-              type="number"
-              value={awayToleranceOverride}
-              onChange={(e) => setAwayToleranceOverride(e.target.value)}
-              helperText="Applies only while this handler's zones are away (Ecobee-reported or native) — overrides the global Away Mode setpoints/tolerance for this handler only."
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={active}
-                  onChange={(e) => setActive(e.target.checked)}
-                />
-              }
-              label="Active"
-            />
-            <TextField
-              select
-              label="Setpoint delivery"
-              value={setpointDeliveryMode}
-              onChange={(e) =>
-                setSetpointDeliveryMode(e.target.value as "flair" | "homekit")
-              }
-              helperText={
-                setpointDeliveryMode === "homekit"
-                  ? "Pushed directly to the thermostat over the local network, bypassing Flair's API."
-                  : 'Pushed through Flair\'s own API — known to require System Mode "auto," which fights vent control.'
-              }
-            >
-              <MenuItem value="flair">Flair API</MenuItem>
-              <MenuItem value="homekit">Direct (HomeKit)</MenuItem>
-            </TextField>
-            {setpointDeliveryMode === "homekit" && (
-              <Stack direction="row" spacing={1}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setHomeKitDialogOpen(true)}
+              </TextField>
+            </Stack>
+          )}
+
+          {activeTab === 3 && (
+            <Stack spacing={2}>
+              <TextField
+                select
+                label="Setpoint delivery"
+                value={setpointDeliveryMode}
+                onChange={(e) =>
+                  setSetpointDeliveryMode(e.target.value as "flair" | "homekit")
+                }
+                helperText={
+                  setpointDeliveryMode === "homekit"
+                    ? "Pushed directly to the thermostat over the local network, bypassing Flair's API."
+                    : 'Pushed through Flair\'s own API — known to require System Mode "auto," which fights vent control.'
+                }
+              >
+                <MenuItem value="flair">Flair API</MenuItem>
+                <MenuItem value="homekit">Direct (HomeKit)</MenuItem>
+              </TextField>
+              {setpointDeliveryMode === "homekit" && (
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{
+                    flexWrap: "nowrap",
+                    "& > button": {
+                      flex: 1,
+                      minWidth: 0,
+                      whiteSpace: "normal",
+                      lineHeight: 1.2,
+                    },
+                  }}
                 >
-                  Set up HomeKit pairing
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setSensorMatchDialogOpen(true)}
-                >
-                  Match HomeKit Sensors
-                </Button>
-              </Stack>
-            )}
-            {error && (
-              <DialogContentText color="error">{error}</DialogContentText>
-            )}
-          </Stack>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setHomeKitDialogOpen(true)}
+                  >
+                    Set up HomeKit pairing
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setSensorMatchDialogOpen(true)}
+                  >
+                    Match HomeKit Sensors
+                  </Button>
+                </Stack>
+              )}
+            </Stack>
+          )}
+          {error && (
+            <DialogContentText color="error" sx={{ mt: 2 }}>
+              {error}
+            </DialogContentText>
+          )}
         </DialogContent>
         <DialogActions sx={{ justifyContent: "space-between", px: 3 }}>
           <Button
@@ -391,6 +442,7 @@ export default function EditAirHandlerDialog({
             onClick={() => {
               setFanRuntimeEcobeeAcknowledged(true);
               setFanRuntimeEnabled(true);
+              if (fanRuntimeTarget === "0") setFanRuntimeTarget("5");
               setFanRuntimeConfirmOpen(false);
             }}
           >

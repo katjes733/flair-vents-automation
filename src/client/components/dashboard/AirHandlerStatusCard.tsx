@@ -56,6 +56,14 @@ const HVAC_STATE_LABELS: Record<string, string> = {
   IDLE: "Idle",
 };
 
+const FAN_PHASE_LABELS: Record<string, string> = {
+  idle: "Ready",
+  starting: "Starting",
+  running: "Running",
+  stopping: "Stopping",
+  interrupted: "Interrupted for call",
+};
+
 export default function AirHandlerStatusCard({
   airHandler,
   decision,
@@ -304,6 +312,52 @@ export default function AirHandlerStatusCard({
                       : "confirmed"}
                   </Typography>
                 </DiagnosticOnly>
+              </Box>
+            )}
+
+            {decision.fan_runtime?.enabled && (
+              <Box sx={{ mt: 1.5 }} data-testid="fan-runtime-status">
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    mb: 0.5,
+                  }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    Fan-only circulation
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {decision.fan_runtime.credited_minutes.toFixed(1)} /{" "}
+                    {decision.fan_runtime.target_minutes_per_hour} min
+                  </Typography>
+                </Box>
+                <LinearProgress
+                  variant="determinate"
+                  value={Math.min(
+                    100,
+                    decision.fan_runtime.target_minutes_per_hour > 0
+                      ? (decision.fan_runtime.credited_minutes /
+                          decision.fan_runtime.target_minutes_per_hour) *
+                          100
+                      : 100,
+                  )}
+                  color={
+                    decision.fan_runtime.remaining_minutes === 0
+                      ? "success"
+                      : "primary"
+                  }
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {FAN_PHASE_LABELS[decision.fan_runtime.phase] ??
+                    decision.fan_runtime.phase}
+                  {decision.fan_runtime.fan_is_blowing === true
+                    ? " · blower running"
+                    : decision.fan_runtime.fan_is_blowing === false
+                      ? " · blower stopped"
+                      : " · fan state unavailable"}
+                  {` · ${decision.fan_runtime.remaining_minutes.toFixed(1)} min remaining`}
+                </Typography>
               </Box>
             )}
           </>

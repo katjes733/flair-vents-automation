@@ -902,6 +902,11 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
           "How many times a dispatched command is re-checked against the vent's reported position before giving up and marking that vent degraded.",
         tier: "advanced",
       },
+    ],
+  },
+  {
+    title: "Fan scheduling",
+    fields: [
       {
         path: "fan_runtime_min_block_minutes",
         baseLabel: "Fan-only minimum block",

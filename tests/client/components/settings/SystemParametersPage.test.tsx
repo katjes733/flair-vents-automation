@@ -112,6 +112,7 @@ describe("SystemParametersPage", () => {
     expect(
       screen.getByText("Dynamic thermal spike detection"),
     ).toBeInTheDocument();
+    expect(screen.getByText("Fan scheduling")).toBeInTheDocument();
     expect(
       screen.getByText("Show advanced parameters (74 shown)"),
     ).toBeInTheDocument();

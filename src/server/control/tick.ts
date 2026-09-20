@@ -387,6 +387,10 @@ export async function runTick(
   // differently, but keeps the two states honest rather than conflated.
   let homeKitSensorReadings: Map<string, HomeKitSensorReading> | null = null;
   const fanRuntimeEnabled = airHandler.config.fan_runtime_enabled === true;
+  let fanRuntimeLedger: {
+    creditedRuntimeSeconds: number;
+  } | null = null;
+  let fanRuntimeError: string | null = null;
   if (deliveryMode === "homekit" || fanRuntimeEnabled) {
     try {
       homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
@@ -2875,6 +2879,7 @@ export async function runTick(
         airHandler.id,
         new Date(hourStartMs),
       );
+      fanRuntimeLedger = ledger;
       const startsThisHour =
         nextFanRuntime.hourStartAtMs === hourStartMs
           ? nextFanRuntime.startsThisHour
@@ -3064,6 +3069,23 @@ export async function runTick(
       homekit_paired: deliveryMode === "homekit" ? homeKitState !== null : null,
       homekit_write_kind: homeKitWriteKind,
       homekit_error: setpointDispatchError,
+    },
+    fan_runtime: {
+      enabled: fanRuntimeEnabled,
+      target_minutes_per_hour:
+        airHandler.config.fan_runtime_target_minutes_per_hour ?? 0,
+      credited_minutes: (fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) / 60,
+      remaining_minutes: Math.max(
+        0,
+        (airHandler.config.fan_runtime_target_minutes_per_hour ?? 0) -
+          (fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) / 60,
+      ),
+      phase: nextFanRuntime.phase,
+      owner: nextFanRuntime.owner,
+      starts_this_hour: nextFanRuntime.startsThisHour,
+      fan_is_blowing:
+        fanControlState === null ? null : fanControlState.currentFanState === 2,
+      error: fanRuntimeError,
     },
     narrative: `${hvac.state}, tracking ${
       drivingSelection.zoneId
