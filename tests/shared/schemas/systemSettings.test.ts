@@ -26,6 +26,10 @@ describe("resolveSystemSettings", () => {
     expect(settings.token_budget_alert_threshold_pct).toBe(70);
     expect(settings.disarm_reminder_interval_hours).toBe(24);
     expect(settings.control_tick_interval_seconds).toBe(60);
+    expect(settings.fan_runtime_min_block_minutes).toBe(5);
+    expect(settings.fan_runtime_max_block_minutes).toBe(15);
+    expect(settings.fan_runtime_max_starts_per_hour).toBe(3);
+    expect(settings.fan_runtime_min_gap_minutes).toBe(15);
     expect(settings.control_disarmed).toBe(false);
     expect(settings.live_air_handler_ids).toEqual([]);
     expect(settings.away_native_zone_ids).toEqual([]);

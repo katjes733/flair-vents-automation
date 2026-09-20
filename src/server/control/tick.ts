@@ -2,6 +2,7 @@ import type { FlairClient } from "~/server/util/flair/client";
 import type {
   HomeKitClient,
   HomeKitCurrentState,
+  HomeKitFanControlState,
   HomeKitSensorReading,
 } from "~/server/util/homekit/client";
 import { fetchAirHandlerSnapshot } from "~/server/util/flair/resources";
@@ -101,6 +102,12 @@ import type {
   ZoneDemandTrackingState,
 } from "~/server/control/zoneDemandTrackingStore";
 import type { AlertingClient } from "~/server/util/alerting";
+import type { RuntimeInterval } from "~/server/domain/fanRuntime/scheduler";
+import {
+  fanRuntimeHourStartMs,
+  selectNextFanBlock,
+} from "~/server/domain/fanRuntime/scheduler";
+import type { FanRuntimeLedgerDetails } from "~/server/database/models/fanRuntimeLedger";
 import { detectNoImprovement } from "~/server/domain/state/noImprovement";
 import { dispatchZoneCommand } from "~/server/control/dispatcher";
 import {
@@ -163,6 +170,20 @@ export interface TickDeps {
     message: string,
   ) => Promise<void>;
   clearHomeKitConnectError?: (airHandlerId: string) => Promise<void>;
+  recordFanRuntimeInterval?: (params: {
+    airHandlerId: string;
+    interval: RuntimeInterval;
+    timeZone: string;
+  }) => Promise<void>;
+  getFanRuntimeLedger?: (
+    airHandlerId: string,
+    hourStartAt: Date,
+  ) => Promise<{
+    heatCoolRuntimeSeconds: number;
+    fanOnlyRuntimeSeconds: number;
+    creditedRuntimeSeconds: number;
+    details: FanRuntimeLedgerDetails;
+  } | null>;
   reconciliationQueue: ReconciliationQueue;
   spikeBufferStore: SpikeBufferStore;
   airHandlerRuntimeStore: AirHandlerRuntimeStore;
@@ -357,6 +378,7 @@ export async function runTick(
   const deliveryMode = airHandler.config.setpoint_delivery_mode ?? "flair";
   let homeKitClient: HomeKitClient | null = null;
   let homeKitState: HomeKitCurrentState | null = null;
+  let fanControlState: HomeKitFanControlState | null = null;
   let homeKitReadError: string | null = null;
   // Keyed by Serial Number — see homekit_sensor_serial's own comment on
   // why that, not `aid`, is this app's persisted mapping key. Left `null`
@@ -364,13 +386,21 @@ export async function runTick(
   // attempted" from "attempted, found nothing" — not currently consumed
   // differently, but keeps the two states honest rather than conflated.
   let homeKitSensorReadings: Map<string, HomeKitSensorReading> | null = null;
-  if (deliveryMode === "homekit") {
+  const fanRuntimeEnabled = airHandler.config.fan_runtime_enabled === true;
+  let fanRuntimeLedger: {
+    creditedRuntimeSeconds: number;
+  } | null = null;
+  let fanRuntimeError: string | null = null;
+  if (deliveryMode === "homekit" || fanRuntimeEnabled) {
     try {
       homeKitClient = (await deps.getHomeKitClient?.(airHandler.id)) ?? null;
       if (!homeKitClient) {
         throw new Error("No HomeKit pairing available for this air handler");
       }
       homeKitState = await homeKitClient.getCurrentState();
+      if (fanRuntimeEnabled) {
+        fanControlState = await homeKitClient.getFanControlState();
+      }
       try {
         homeKitSensorReadings = await homeKitClient.getSensorReadings();
       } catch {
@@ -617,6 +647,72 @@ export async function runTick(
   }
   const callActive =
     hvac.state === "COOLING_CALL" || hvac.state === "HEATING_CALL";
+  const observedRuntimeKind = fanRuntimeEnabled
+    ? callActive
+      ? ("heat_cool" as const)
+      : fanControlState?.currentFanState === 2
+        ? ("fan_only" as const)
+        : null
+    : null;
+  const priorFanRuntime = priorRuntime.fanRuntime ?? {
+    owner: null,
+    phase: "idle" as const,
+    requestedStartAtMs: null,
+    requestedDurationMs: null,
+    observedStartAtMs: null,
+    requestedStopAtMs: null,
+    observedStopAtMs: null,
+    confirmationDeadlineMs: null,
+    hourStartAtMs: null,
+    startsThisHour: 0,
+    lastFanOnlyEndMs: null,
+    lastObservedAtMs: null,
+    lastObservedKind: null,
+  };
+  if (
+    observedRuntimeKind &&
+    priorFanRuntime.lastObservedAtMs !== null &&
+    deps.recordFanRuntimeInterval
+  ) {
+    const intervalStartMs = priorFanRuntime.lastObservedAtMs;
+    if (startedAtMs > intervalStartMs && priorFanRuntime.lastObservedKind) {
+      try {
+        await deps.recordFanRuntimeInterval({
+          airHandlerId: airHandler.id,
+          interval: {
+            startMs: intervalStartMs,
+            endMs: startedAtMs,
+            kind: priorFanRuntime.lastObservedKind,
+          },
+          timeZone: ctx.settings.home_timezone,
+        });
+      } catch (err) {
+        log.warn({ err }, "Could not persist observed fan runtime interval");
+      }
+    }
+  }
+  let nextFanRuntime = {
+    ...priorFanRuntime,
+    lastObservedAtMs: observedRuntimeKind
+      ? startedAtMs
+      : priorFanRuntime.lastObservedAtMs,
+    lastObservedKind: observedRuntimeKind ?? priorFanRuntime.lastObservedKind,
+  };
+  if (fanRuntimeEnabled && deps.getFanRuntimeLedger) {
+    try {
+      const hourStartMs = fanRuntimeHourStartMs(
+        startedAtMs,
+        ctx.settings.home_timezone,
+      );
+      fanRuntimeLedger = await deps.getFanRuntimeLedger(
+        airHandler.id,
+        new Date(hourStartMs),
+      );
+    } catch (err) {
+      fanRuntimeError = err instanceof Error ? err.message : String(err);
+      log.warn({ err }, "Could not load current fan runtime ledger");
+    }
+  }
   // The single shared "which direction" input for every computation below
   // that needs a call-direction decision but isn't itself gated on
   // callActive (away/fallback setpoint selection, driving-zone deviation,
@@ -2672,6 +2768,205 @@ export async function runTick(
     });
   }
 
+  // --- App-owned fan-only circulation ---------------------------------
+  // Fan control happens after vent dispatch so a newly requested block can
+  // never start the blower before the fan-only baseline has been sent to the
+  // vents. Physical start/stop confirmation remains a later-tick concern.
+  if (fanRuntimeEnabled && fanControlState && homeKitClient && !dryRun) {
+    const fanTargetIsManual = fanControlState.targetFanState === 0;
+    const fanCallActive = callActive;
+    if (fanCallActive) {
+      if (nextFanRuntime.owner === "app" && fanTargetIsManual) {
+        try {
+          await homeKitClient.setFanMode("auto");
+          nextFanRuntime = {
+            ...nextFanRuntime,
+            owner: "app",
+            phase: "interrupted",
+            requestedStopAtMs: startedAtMs,
+            confirmationDeadlineMs:
+              startedAtMs +
+              ctx.settings.fan_runtime_stop_confirmation_timeout_seconds * 1000,
+          };
+        } catch (err) {
+          await deps.alerting.alertOnce({
+            key: `alert:fanRuntimeAutoRestore:${airHandler.id}`,
+            subject: `${airHandler.name}: fan-only override could not be released`,
+            text: `A heat/cool call took priority, but the app could not restore the thermostat fan target to Auto: ${String(err)}`,
+            rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+            nowMs: startedAtMs,
+          });
+        }
+      } else if (nextFanRuntime.owner === "app") {
+        nextFanRuntime = {
+          ...nextFanRuntime,
+          phase: "interrupted",
+          requestedStopAtMs: nextFanRuntime.requestedStopAtMs ?? startedAtMs,
+        };
+      }
+    } else if (fanTargetIsManual && nextFanRuntime.owner !== "app") {
+      await deps.alerting.alertOnce({
+        key: `alert:fanRuntimeExternalManual:${airHandler.id}`,
+        subject: `${airHandler.name}: external manual fan override detected`,
+        text: "The thermostat fan is in Manual mode outside an app-owned fan block. Return it to Auto before app-owned fan scheduling can begin.",
+        rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+        nowMs: startedAtMs,
+      });
+      nextFanRuntime = { ...nextFanRuntime, owner: "external", phase: "idle" };
+    } else if (
+      nextFanRuntime.owner === "app" &&
+      (nextFanRuntime.phase === "stopping" ||
+        nextFanRuntime.phase === "interrupted") &&
+      fanControlState.currentFanState !== 2
+    ) {
+      nextFanRuntime = {
+        ...nextFanRuntime,
+        owner: null,
+        phase: "idle",
+        lastFanOnlyEndMs:
+          nextFanRuntime.requestedStopAtMs ?? nextFanRuntime.lastFanOnlyEndMs,
+        requestedStartAtMs: null,
+        requestedDurationMs: null,
+        requestedStopAtMs: null,
+        confirmationDeadlineMs: null,
+      };
+    } else if (nextFanRuntime.owner === "app" && fanTargetIsManual) {
+      if (
+        nextFanRuntime.phase === "starting" &&
+        nextFanRuntime.confirmationDeadlineMs !== null &&
+        startedAtMs > nextFanRuntime.confirmationDeadlineMs &&
+        fanControlState.currentFanState !== 2
+      ) {
+        await homeKitClient.setFanMode("auto");
+        await deps.alerting.alertOnce({
+          key: `alert:fanRuntimeStart:${airHandler.id}`,
+          subject: `${airHandler.name}: fan-only run did not start`,
+          text: "The thermostat accepted the fan-only request but the blower was not observed before the confirmation timeout. The app restored Auto and recorded the run as failed.",
+          rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+          nowMs: startedAtMs,
+        });
+        nextFanRuntime = {
+          ...nextFanRuntime,
+          owner: null,
+          phase: "idle",
+          requestedStartAtMs: null,
+          requestedDurationMs: null,
+          requestedStopAtMs: startedAtMs,
+          confirmationDeadlineMs: null,
+        };
+      }
+      const blockExpired =
+        nextFanRuntime.requestedStartAtMs !== null &&
+        nextFanRuntime.requestedDurationMs !== null &&
+        startedAtMs >=
+          nextFanRuntime.requestedStartAtMs +
+            nextFanRuntime.requestedDurationMs;
+      if (blockExpired) {
+        await homeKitClient.setFanMode("auto");
+        nextFanRuntime = {
+          ...nextFanRuntime,
+          phase: "stopping",
+          requestedStopAtMs: startedAtMs,
+          confirmationDeadlineMs:
+            startedAtMs +
+            ctx.settings.fan_runtime_stop_confirmation_timeout_seconds * 1000,
+        };
+      } else if (
+        nextFanRuntime.phase === "starting" &&
+        fanControlState.currentFanState === 2
+      ) {
+        nextFanRuntime = {
+          ...nextFanRuntime,
+          phase: "running",
+          observedStartAtMs: nextFanRuntime.observedStartAtMs ?? startedAtMs,
+        };
+      }
+    } else if (
+      fanControlState.targetFanState === 1 &&
+      nextFanRuntime.owner !== "external" &&
+      deps.getFanRuntimeLedger
+    ) {
+      const hourStartMs = fanRuntimeHourStartMs(
+        startedAtMs,
+        ctx.settings.home_timezone,
+      );
+      const ledger = fanRuntimeLedger;
+      const startsThisHour =
+        nextFanRuntime.hourStartAtMs === hourStartMs
+          ? nextFanRuntime.startsThisHour
+          : 0;
+      const block = selectNextFanBlock(
+        {
+          durationMinutes: 0,
+          startsThisHour,
+          targetMinutesPerHour:
+            airHandler.config.fan_runtime_target_minutes_per_hour ?? 0,
+          creditedMinutes: (ledger?.creditedRuntimeSeconds ?? 0) / 60,
+          hourStartMs,
+          nowMs: startedAtMs,
+          lastFanOnlyEndMs: nextFanRuntime.lastFanOnlyEndMs,
+          timeZone: ctx.settings.home_timezone,
+        },
+        {
+          minBlockMinutes: Math.max(
+            ctx.settings.fan_runtime_min_block_minutes,
+            airHandler.config.fan_runtime_min_block_minutes ?? 5,
+          ),
+          maxBlockMinutes: ctx.settings.fan_runtime_max_block_minutes,
+          maxStartsPerHour: ctx.settings.fan_runtime_max_starts_per_hour,
+          minGapMinutes: ctx.settings.fan_runtime_min_gap_minutes,
+          maxTargetMinutesPerHour: 30,
+        },
+      );
+      const ventsReady = zones
+        .filter((zone) => isControllable(zone.ventHardwareType))
+        .every((zone) =>
+          (readings.get(zone.id)?.vents ?? []).every((vent) => {
+            const target = finalPositions[zone.id] ?? 0;
+            return (
+              vent.reportedPositionPct !== null &&
+              vent.reportedPositionPct >= target - 5
+            );
+          }),
+        );
+      if (block && ventsReady) {
+        try {
+          await homeKitClient.setFanMode("manual");
+        } catch (err) {
+          fanRuntimeError = err instanceof Error ? err.message : String(err);
+          await deps.alerting.alertOnce({
+            key: `alert:fanRuntimeStartWrite:${airHandler.id}`,
+            subject: `${airHandler.name}: fan-only start failed`,
+            text: `The app could not start the requested fan-only block: ${fanRuntimeError}`,
+            rateFloorMinutes: ctx.settings.email_rate_floor_minutes,
+            nowMs: startedAtMs,
+          });
+          nextFanRuntime = {
+            ...nextFanRuntime,
+            owner: null,
+            phase: "idle",
+          };
+        }
+      }
+      if (block && ventsReady && fanRuntimeError === null) {
+        nextFanRuntime = {
+          ...nextFanRuntime,
+          owner: "app",
+          phase: "starting",
+          requestedStartAtMs: startedAtMs,
+          requestedDurationMs: block.durationMinutes * 60 * 1000,
+          observedStartAtMs: null,
+          requestedStopAtMs: null,
+          confirmationDeadlineMs:
+            startedAtMs +
+            ctx.settings.fan_runtime_start_confirmation_timeout_seconds * 1000,
+          hourStartAtMs: hourStartMs,
+          startsThisHour: startsThisHour + 1,
+        };
+      }
+    }
+  }
+
   await deps.airHandlerRuntimeStore.set(airHandler.id, {
     trackedDrivingZoneId: drivingSelection.zoneId,
     ticksSinceLeadChanged,
@@ -2689,6 +2984,7 @@ export async function runTick(
     // own comment on AirHandlerRuntimeState.
     terminationAnchorZoneId:
       drivingSelection.zoneId ?? priorRuntime.terminationAnchorZoneId,
+    fanRuntime: nextFanRuntime,
   });
 
   const finishedAtMs = deps.now();
@@ -2802,6 +3098,23 @@ export async function runTick(
       homekit_paired: deliveryMode === "homekit" ? homeKitState !== null : null,
       homekit_write_kind: homeKitWriteKind,
       homekit_error: setpointDispatchError,
+    },
+    fan_runtime: {
+      enabled: fanRuntimeEnabled,
+      target_minutes_per_hour:
+        airHandler.config.fan_runtime_target_minutes_per_hour ?? 0,
+      credited_minutes: (fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) / 60,
+      remaining_minutes: Math.max(
+        0,
+        (airHandler.config.fan_runtime_target_minutes_per_hour ?? 0) -
+          (fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) / 60,
+      ),
+      phase: nextFanRuntime.phase,
+      owner: nextFanRuntime.owner,
+      starts_this_hour: nextFanRuntime.startsThisHour,
+      fan_is_blowing:
+        fanControlState === null ? null : fanControlState.currentFanState === 2,
+      error: fanRuntimeError,
     },
     narrative: `${hvac.state}, tracking ${
       drivingSelection.zoneId

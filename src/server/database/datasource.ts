@@ -14,6 +14,7 @@ import { InstallationMember } from "~/server/database/models/installationMember"
 import { WebauthnCredential } from "~/server/database/models/webauthnCredential";
 import { SignupVerification } from "~/server/database/models/signupVerification";
 import { PasswordResetCode } from "~/server/database/models/passwordResetCode";
+import { FanRuntimeLedger } from "~/server/database/models/fanRuntimeLedger";
 import { dataMigrations } from "~/server/database/dataMigrations";
 
 // TypeORM's own repository/query-builder APIs apply the DataSource's
@@ -88,6 +89,7 @@ class AppDataSource {
               WebauthnCredential,
               SignupVerification,
               PasswordResetCode,
+              FanRuntimeLedger,
             ],
           })
         : (() => {
@@ -105,6 +107,26 @@ class AppDataSource {
         }
         await dataSource.query(`CREATE SCHEMA IF NOT EXISTS "${schema}";`);
         log("✅ Database schema ensured successfully.");
+        await dataSource.query(`
+          CREATE TABLE IF NOT EXISTS "${schema}"."fan_runtime_ledgers" (
+            "id" uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+            "creation_time" timestamptz NOT NULL,
+            "modified_time" timestamptz NOT NULL,
+            "air_handler_id" uuid NOT NULL,
+            "hour_start_at" timestamptz NOT NULL,
+            "heat_cool_runtime_seconds" integer NOT NULL DEFAULT 0,
+            "fan_only_runtime_seconds" integer NOT NULL DEFAULT 0,
+            "credited_runtime_seconds" integer NOT NULL DEFAULT 0,
+            "details" jsonb NOT NULL DEFAULT '{}'::jsonb,
+            CONSTRAINT "fk_fan_runtime_ledgers_air_handler"
+              FOREIGN KEY ("air_handler_id")
+              REFERENCES "${schema}"."air_handlers"("id")
+              ON DELETE CASCADE
+          );
+          CREATE UNIQUE INDEX IF NOT EXISTS
+            "uq_fan_runtime_ledgers_air_handler_hour"
+            ON "${schema}"."fan_runtime_ledgers"("air_handler_id", "hour_start_at");
+        `);
         await dataSource.synchronize();
         log("✅ Database schema synchronised successfully.");
         for (const migration of dataMigrations) {

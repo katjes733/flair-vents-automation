@@ -905,6 +905,70 @@ export const SYSTEM_PARAMETER_GROUPS: ParamGroupDef[] = [
     ],
   },
   {
+    title: "Fan scheduling",
+    fields: [
+      {
+        path: "fan_runtime_min_block_minutes",
+        baseLabel: "Fan-only minimum block",
+        kind: "minutes",
+        min: 5,
+        max: 15,
+        step: 1,
+        description:
+          "System-wide minimum duration for an app-created fan-only run. Shorter runs are not useful circulation and create avoidable equipment cycling.",
+        tier: "advanced",
+      },
+      {
+        path: "fan_runtime_max_block_minutes",
+        baseLabel: "Fan-only maximum block",
+        kind: "minutes",
+        min: 5,
+        max: 15,
+        step: 1,
+        description: "Maximum duration of one app-created fan-only run.",
+        tier: "advanced",
+      },
+      {
+        path: "fan_runtime_max_starts_per_hour",
+        baseLabel: "Fan-only starts per hour",
+        kind: "int",
+        min: 1,
+        max: 3,
+        description:
+          "Maximum number of app-created fan-only starts in one wall-clock hour.",
+        tier: "advanced",
+      },
+      {
+        path: "fan_runtime_min_gap_minutes",
+        baseLabel: "Fan-only minimum gap",
+        kind: "minutes",
+        min: 0,
+        max: 55,
+        step: 1,
+        description: "Hard minimum gap between app-created fan-only runs.",
+        tier: "advanced",
+      },
+      {
+        path: "fan_runtime_start_confirmation_timeout_seconds",
+        baseLabel: "Fan start confirmation timeout",
+        kind: "seconds",
+        min: 1,
+        description:
+          "How long the app waits for HomeKit to report the blower running after a fan-only request.",
+        tier: "advanced",
+      },
+      {
+        path: "fan_runtime_stop_confirmation_timeout_seconds",
+        baseLabel: "Fan stop confirmation timeout",
+        kind: "seconds",
+        min: 1,
+        description:
+          "How long the app waits for HomeKit to report the blower stopped after returning control to Auto.",
+        tier: "advanced",
+      },
+    ],
+  },
+  {
     title: "Emergency fail-safe",
     fields: [
       {

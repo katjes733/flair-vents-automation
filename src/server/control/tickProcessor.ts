@@ -43,6 +43,10 @@ import { redis } from "~/server/util/redis";
 import { tickQueue } from "~/server/control/queue";
 import { getActiveInstallations } from "~/server/util/routes/installation";
 import { logQueueHealthSnapshot } from "~/server/logEvents";
+import {
+  getFanRuntimeLedger,
+  recordFanRuntimeInterval,
+} from "~/server/util/services/fanRuntimeLedgerService";
 
 const log = logger.child({ service: "control-loop" });
 
@@ -252,6 +256,8 @@ async function runTickForInstallation(
       getHomeKitClient: getHomeKitClientForAirHandler,
       recordHomeKitConnectError: recordHomekitConnectError,
       clearHomeKitConnectError: clearHomekitConnectError,
+      recordFanRuntimeInterval,
+      getFanRuntimeLedger,
       reconciliationQueue,
       spikeBufferStore,
       airHandlerRuntimeStore,

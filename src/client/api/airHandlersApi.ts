@@ -17,6 +17,10 @@ export interface AirHandlerConfig {
   // Which channel this handler's driving setpoint push is delivered
   // through — see "Direct HomeKit Thermostat Control" in the plan.
   setpoint_delivery_mode: "flair" | "homekit";
+  fan_runtime_enabled?: boolean;
+  fan_runtime_target_minutes_per_hour?: number;
+  fan_runtime_min_block_minutes?: number;
+  fan_runtime_ecobee_schedule_acknowledged?: boolean;
 }
 
 export interface AirHandler {
@@ -179,6 +183,17 @@ export interface AirHandlerTickDecision {
     homekit_write_kind: "target" | "threshold" | "skip" | null;
     homekit_error: string | null;
   } | null;
+  fan_runtime?: {
+    enabled: boolean;
+    target_minutes_per_hour: number;
+    credited_minutes: number;
+    remaining_minutes: number;
+    phase: "idle" | "starting" | "running" | "stopping" | "interrupted";
+    owner: "app" | "external" | null;
+    starts_this_hour: number;
+    fan_is_blowing: boolean | null;
+    error: string | null;
+  };
   narrative: string;
 }
 

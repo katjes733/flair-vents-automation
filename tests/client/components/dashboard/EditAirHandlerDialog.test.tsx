@@ -63,6 +63,13 @@ function renderDialog(
   );
 }
 
+async function selectTab(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) {
+  await user.click(screen.getByRole("tab", { name }));
+}
+
 describe("EditAirHandlerDialog", () => {
   beforeEach(() => {
     useSession.mockReturnValue({ user: { profile: "admin", role: "owner" } });
@@ -106,7 +113,17 @@ describe("EditAirHandlerDialog", () => {
     });
   });
 
+  it("shows Active before the other General controls", () => {
+    renderDialog();
+    const active = screen.getByRole("checkbox", { name: "Active" });
+    const name = screen.getByLabelText("Name");
+    expect(
+      active.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("seeds the away-override fields from the air handler's config, converted to the (bare-default Celsius) display unit", async () => {
+    const user = userEvent.setup();
     renderDialog({
       ...AIR_HANDLER,
       config: {
@@ -116,6 +133,7 @@ describe("EditAirHandlerDialog", () => {
         away_tolerance_override: 3,
       },
     });
+    await selectTab(user, "Away");
     expect(screen.getByLabelText(/Away cooling setpoint override/)).toHaveValue(
       26,
     );
@@ -126,18 +144,25 @@ describe("EditAirHandlerDialog", () => {
   });
 
   it("leaves the away-override fields blank when unset", () => {
+    const user = userEvent.setup();
     renderDialog();
-    expect(screen.getByLabelText(/Away cooling setpoint override/)).toHaveValue(
-      null,
-    );
-    expect(screen.getByLabelText(/Away heating setpoint override/)).toHaveValue(
-      null,
-    );
-    expect(screen.getByLabelText(/Away tolerance override/)).toHaveValue(null);
+    return selectTab(user, "Away").then(() => {
+      expect(
+        screen.getByLabelText(/Away cooling setpoint override/),
+      ).toHaveValue(null);
+      expect(
+        screen.getByLabelText(/Away heating setpoint override/),
+      ).toHaveValue(null);
+      expect(screen.getByLabelText(/Away tolerance override/)).toHaveValue(
+        null,
+      );
+    });
   });
 
   it("saves a newly-entered away-override value", async () => {
+    const user = userEvent.setup();
     renderDialog();
+    await selectTab(user, "Away");
     fireEvent.change(screen.getByLabelText(/Away cooling setpoint override/), {
       target: { value: "26" },
     });
@@ -157,10 +182,12 @@ describe("EditAirHandlerDialog", () => {
   });
 
   it("clears a previously-set away-override back to null (not an omitted key) when blanked", async () => {
+    const user = userEvent.setup();
     renderDialog({
       ...AIR_HANDLER,
       config: { ...AIR_HANDLER.config, away_tolerance_override: 3 },
     });
+    await selectTab(user, "Away");
     fireEvent.change(screen.getByLabelText(/Away tolerance override/), {
       target: { value: "" },
     });
@@ -219,21 +246,25 @@ describe("EditAirHandlerDialog", () => {
   });
 
   it("defaults the Setpoint delivery field to Flair API and hides both HomeKit buttons", () => {
+    const user = userEvent.setup();
     renderDialog();
-    expect(
-      screen.getByRole("combobox", { name: "Setpoint delivery" }),
-    ).toHaveTextContent("Flair API");
-    expect(
-      screen.queryByRole("button", { name: "Set up HomeKit pairing" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Match HomeKit Sensors" }),
-    ).not.toBeInTheDocument();
+    return selectTab(user, "Integrations").then(() => {
+      expect(
+        screen.getByRole("combobox", { name: "Setpoint delivery" }),
+      ).toHaveTextContent("Flair API");
+      expect(
+        screen.queryByRole("button", { name: "Set up HomeKit pairing" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Match HomeKit Sensors" }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("reveals the HomeKit pairing and sensor-matching buttons when Direct (HomeKit) is selected", async () => {
     const user = userEvent.setup();
     renderDialog();
+    await selectTab(user, "Integrations");
     await user.click(
       screen.getByRole("combobox", { name: "Setpoint delivery" }),
     );
@@ -246,11 +277,19 @@ describe("EditAirHandlerDialog", () => {
     expect(
       screen.getByRole("button", { name: "Match HomeKit Sensors" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Set up HomeKit pairing" })
+        .parentElement,
+    ).toBe(
+      screen.getByRole("button", { name: "Match HomeKit Sensors" })
+        .parentElement,
+    );
   });
 
   it("saves the selected setpoint delivery mode", async () => {
     const user = userEvent.setup();
     renderDialog();
+    await selectTab(user, "Integrations");
     await user.click(
       screen.getByRole("combobox", { name: "Setpoint delivery" }),
     );
@@ -268,5 +307,26 @@ describe("EditAirHandlerDialog", () => {
         }),
       );
     });
+  });
+
+  it("preserves fan settings when switching tabs", async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      ...AIR_HANDLER,
+      config: {
+        ...AIR_HANDLER.config,
+        fan_runtime_enabled: true,
+        fan_runtime_target_minutes_per_hour: 10,
+        fan_runtime_min_block_minutes: 5,
+        fan_runtime_ecobee_schedule_acknowledged: true,
+      },
+    });
+    await selectTab(user, "Fan");
+    expect(
+      screen.getByRole("combobox", { name: "Fan runtime target per hour" }),
+    ).toHaveTextContent("10 minutes/hour");
+    await user.click(screen.getByRole("tab", { name: "General" }));
+    await user.click(screen.getByRole("tab", { name: "Fan" }));
+    expect(screen.getByRole("checkbox", { name: /fan-only/i })).toBeChecked();
   });
 });

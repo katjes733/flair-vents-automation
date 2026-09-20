@@ -15,6 +15,11 @@ const { getZonesForInstallation } = vi.hoisted(() => ({
 }));
 vi.mock("~/server/util/routes/zone", () => ({ getZonesForInstallation }));
 
+const { getActiveAirHandlers } = vi.hoisted(() => ({
+  getActiveAirHandlers: vi.fn(),
+}));
+vi.mock("~/server/util/routes/airHandler", () => ({ getActiveAirHandlers }));
+
 const { redisDel } = vi.hoisted(() => ({ redisDel: vi.fn() }));
 vi.mock("~/server/util/redis", () => ({ redis: { del: redisDel } }));
 
@@ -26,6 +31,7 @@ describe("updateSettingsForInstallation", () => {
     getSystemSettings.mockReset().mockResolvedValue(resolveSystemSettings({}));
     updateSystemSettings.mockReset().mockResolvedValue(undefined);
     getZonesForInstallation.mockReset().mockResolvedValue([]);
+    getActiveAirHandlers.mockReset().mockResolvedValue([]);
     redisDel.mockReset().mockResolvedValue(1);
   });
 
@@ -93,6 +99,26 @@ describe("updateSettingsForInstallation", () => {
       result.warnings.some((w) => w.toLowerCase().includes("priority")),
     ).toBe(false);
     expect(updateSystemSettings).toHaveBeenCalledOnce();
+  });
+
+  it("rejects system changes that make an enabled fan target infeasible", async () => {
+    getActiveAirHandlers.mockResolvedValue([
+      {
+        name: "Upstairs",
+        config: {
+          fan_runtime_enabled: true,
+          fan_runtime_target_minutes_per_hour: 30,
+          fan_runtime_min_block_minutes: 5,
+        },
+      },
+    ]);
+
+    await expect(
+      updateSettingsForInstallation("inst-1", {
+        fan_runtime_max_block_minutes: 9,
+      }),
+    ).rejects.toThrow(/Upstairs/);
+    expect(updateSystemSettings).not.toHaveBeenCalled();
   });
 
   describe("reseeding startup reconciliation on a shadow→live promotion", () => {

@@ -81,6 +81,20 @@ describe("resolveAirHandlerConfig", () => {
       resolveAirHandlerConfig({ away_tolerance_override: -1 }),
     ).toThrow();
   });
+
+  it("defaults app-owned fan runtime to disabled", () => {
+    const config = resolveAirHandlerConfig({});
+    expect(config.fan_runtime_enabled).toBe(false);
+    expect(config.fan_runtime_target_minutes_per_hour).toBe(0);
+    expect(config.fan_runtime_min_block_minutes).toBe(5);
+    expect(config.fan_runtime_ecobee_schedule_acknowledged).toBe(false);
+  });
+
+  it("rejects fan targets above the supported maximum", () => {
+    expect(() =>
+      resolveAirHandlerConfig({ fan_runtime_target_minutes_per_hour: 35 }),
+    ).toThrow();
+  });
 });
 
 // Regression test: `airHandlerConfigSchema.partial()` alone does NOT
