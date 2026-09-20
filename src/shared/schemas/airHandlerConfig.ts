@@ -79,6 +79,23 @@ export const airHandlerConfigSchema = z.object({
   // Flair's slower relay for no reason. A zone's own
   // `config.homekit_sensor_serial` is inert while this stays "flair".
   setpoint_delivery_mode: z.enum(["flair", "homekit"]).default("flair"),
+  // App-owned fan-only circulation. The target is a wall-clock hourly
+  // minimum; zero is the disabled target and is kept separate from the
+  // enablement flag so a saved target can be restored when re-enabled.
+  fan_runtime_enabled: z.boolean().default(false),
+  fan_runtime_target_minutes_per_hour: z
+    .number()
+    .int()
+    .min(0)
+    .max(30)
+    .default(0),
+  // The global system minimum is 5 minutes; this per-handler value may only
+  // raise that floor, never lower it. Validation against system parameters
+  // happens when the combined configuration is saved.
+  fan_runtime_min_block_minutes: z.number().int().min(5).max(15).default(5),
+  // HomeKit cannot inspect Ecobee's cloud-side fan-minutes setting. This is
+  // a durable acknowledgement of the one-time manual migration step.
+  fan_runtime_ecobee_schedule_acknowledged: z.boolean().default(false),
 });
 
 export type AirHandlerConfig = z.infer<typeof airHandlerConfigSchema>;

@@ -487,6 +487,23 @@ export const systemSettingsConfigSchema = z.object({
   // --- Control loop ---
   control_tick_interval_seconds: z.number().positive().default(60),
   tick_watchdog_seconds: z.number().positive().default(45),
+  // App-owned fan-only circulation policy. The five-minute lower bound is
+  // intentional: shorter blower runs are not useful circulation and create
+  // avoidable equipment/noise cycling.
+  fan_runtime_min_block_minutes: z.number().int().min(5).max(15).default(5),
+  fan_runtime_max_block_minutes: z.number().int().min(5).max(15).default(15),
+  fan_runtime_max_starts_per_hour: z.number().int().min(1).max(3).default(3),
+  fan_runtime_min_gap_minutes: z.number().int().min(0).max(55).default(15),
+  fan_runtime_start_confirmation_timeout_seconds: z
+    .number()
+    .int()
+    .positive()
+    .default(120),
+  fan_runtime_stop_confirmation_timeout_seconds: z
+    .number()
+    .int()
+    .positive()
+    .default(120),
   reconciliation_retry_count: z.number().int().positive().default(3),
 
   // --- Emergency fail-safe (duct-temperature differential — see the plan's

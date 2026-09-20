@@ -9,7 +9,7 @@ import type {
 // the HomeKit delivery path with zero real network/HAP dependency.
 
 export interface HomeKitWriteCall {
-  kind: "target" | "threshold-heat" | "threshold-cool";
+  kind: "target" | "threshold-heat" | "threshold-cool" | "fan";
   value: number;
   at: number;
 }
@@ -24,6 +24,7 @@ export class FakeHomeKitClient implements HomeKitClient {
     currentHeatingCoolingState: 2,
     currentFanState: 2,
   };
+  private targetFanState: 0 | 1 = 1;
   private paired = true;
   private forcedError: Error | null = null;
   private sensorReadings = new Map<string, HomeKitSensorReading>();
@@ -76,6 +77,28 @@ export class FakeHomeKitClient implements HomeKitClient {
   async getCurrentState(): Promise<HomeKitCurrentState> {
     this.maybeThrow();
     return this.state;
+  }
+
+  async getFanControlState() {
+    this.maybeThrow();
+    return {
+      currentHeatingCoolingState: this.state.currentHeatingCoolingState,
+      currentFanState: this.state.currentFanState,
+      targetFanState: this.targetFanState,
+    };
+  }
+
+  async setFanMode(mode: "manual" | "auto"): Promise<void> {
+    this.maybeThrow();
+    this.writeHistory.push({
+      kind: "fan",
+      value: mode === "manual" ? 0 : 1,
+      at: Date.now(),
+    });
+    this.state = {
+      ...this.state,
+    };
+    this.targetFanState = mode === "manual" ? 0 : 1;
   }
 
   async setTargetTemperature(valueC: number): Promise<void> {

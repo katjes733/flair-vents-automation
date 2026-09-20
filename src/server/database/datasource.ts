@@ -14,6 +14,7 @@ import { InstallationMember } from "~/server/database/models/installationMember"
 import { WebauthnCredential } from "~/server/database/models/webauthnCredential";
 import { SignupVerification } from "~/server/database/models/signupVerification";
 import { PasswordResetCode } from "~/server/database/models/passwordResetCode";
+import { FanRuntimeLedger } from "~/server/database/models/fanRuntimeLedger";
 import { dataMigrations } from "~/server/database/dataMigrations";
 
 // TypeORM's own repository/query-builder APIs apply the DataSource's
@@ -88,6 +89,7 @@ class AppDataSource {
               WebauthnCredential,
               SignupVerification,
               PasswordResetCode,
+              FanRuntimeLedger,
             ],
           })
         : (() => {

@@ -73,6 +73,12 @@ export interface HomeKitCurrentState {
   currentFanState: HapCurrentFanState | null;
 }
 
+export interface HomeKitFanControlState {
+  currentHeatingCoolingState: HapCurrentHeatingCoolingState | null;
+  currentFanState: HapCurrentFanState | null;
+  targetFanState: 0 | 1 | null;
+}
+
 // One Ecobee SmartSensor's live reading, keyed by its own Serial Number
 // (never `aid` — see resolveSensorAccessories' own comment on why). A
 // field is `null` when that particular characteristic isn't exposed by
@@ -99,6 +105,8 @@ export interface HomeKitClient {
   /** Live check — attempts to actually connect/authenticate, not just "do we have stored bytes." */
   isPaired(): Promise<boolean>;
   getCurrentState(): Promise<HomeKitCurrentState>;
+  getFanControlState(): Promise<HomeKitFanControlState>;
+  setFanMode(mode: "manual" | "auto"): Promise<void>;
   setTargetTemperature(valueC: number): Promise<void>;
   setThresholdTemperature(
     which: "heat" | "cool",
@@ -211,6 +219,7 @@ interface ThermostatCharacteristicMap {
   heatingThresholdMinStep: number;
   currentHeatingCoolingStateIid: number | null;
   currentFanStateIid: number | null;
+  targetFanStateIid: number | null;
 }
 
 const DEFAULT_TEMPERATURE_MIN_STEP = 0.1;
@@ -269,6 +278,7 @@ async function resolveThermostatCharacteristics(
       currentHeatingCoolingStateIid:
         find(HAP_TYPE.CURRENT_HEATING_COOLING_STATE)?.iid ?? null,
       currentFanStateIid: find(HAP_TYPE.CURRENT_FAN_STATE)?.iid ?? null,
+      targetFanStateIid: find("000000BF")?.iid ?? null,
     };
   }
   throw new Error("No Thermostat service found on this HAP accessory");
@@ -603,6 +613,62 @@ export class HapControllerClient implements HomeKitClient {
 
   async getCurrentState(): Promise<HomeKitCurrentState> {
     return this.retryReadAfterReconnect(() => this.getCurrentStateOnce());
+  }
+
+  async getFanControlState(): Promise<HomeKitFanControlState> {
+    return this.retryReadAfterReconnect(() => this.getFanControlStateOnce());
+  }
+
+  private async getFanControlStateOnce(): Promise<HomeKitFanControlState> {
+    const client = await this.connect();
+    const chars = this.characteristics!;
+    if (!chars.currentHeatingCoolingStateIid || !chars.currentFanStateIid) {
+      throw new Error(
+        "This accessory does not expose the current HVAC and fan state characteristics",
+      );
+    }
+    if (!chars.targetFanStateIid) {
+      throw new Error("This accessory does not expose TargetFanState");
+    }
+    const result = (await client.getCharacteristics(
+      [
+        `${chars.aid}.${chars.currentHeatingCoolingStateIid}`,
+        `${chars.aid}.${chars.currentFanStateIid}`,
+        `${chars.aid}.${chars.targetFanStateIid}`,
+      ],
+      { meta: false, perms: false, type: false, ev: false },
+    )) as { characteristics: Array<{ iid: number; value: number }> };
+    const byIid = new Map(result.characteristics.map((c) => [c.iid, c.value]));
+    return {
+      currentHeatingCoolingState: (byIid.get(
+        chars.currentHeatingCoolingStateIid,
+      ) ?? null) as HapCurrentHeatingCoolingState | null,
+      currentFanState: (byIid.get(chars.currentFanStateIid) ??
+        null) as HapCurrentFanState | null,
+      targetFanState: (byIid.get(chars.targetFanStateIid) ?? null) as
+        0 | 1 | null,
+    };
+  }
+
+  async setFanMode(mode: "manual" | "auto"): Promise<void> {
+    try {
+      const client = await this.connect();
+      const chars = this.characteristics!;
+      if (!chars.targetFanStateIid) {
+        throw new Error("This accessory does not expose TargetFanState");
+      }
+      const result = await client.setCharacteristics({
+        [`${chars.aid}.${chars.targetFanStateIid}`]: mode === "manual" ? 0 : 1,
+      });
+      assertCharacteristicWriteSucceeded(
+        result,
+        chars.aid,
+        chars.targetFanStateIid,
+      );
+    } catch (err) {
+      this.invalidateConnection();
+      throw err;
+    }
   }
 
   private async getCurrentStateOnce(): Promise<HomeKitCurrentState> {
