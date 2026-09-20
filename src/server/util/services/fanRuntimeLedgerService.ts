@@ -1,4 +1,8 @@
 import AppDataSource from "~/server/database/datasource";
+import {
+  bucketRuntimeByHour,
+  type RuntimeInterval,
+} from "~/server/domain/fanRuntime/scheduler";
 import { touch, withTimestamps } from "~/server/util/entityTimestamps";
 import type { FanRuntimeLedgerDetails } from "~/server/database/models/fanRuntimeLedger";
 
@@ -9,6 +13,31 @@ export interface FanRuntimeLedgerUpdate {
   fanOnlyRuntimeSeconds: number;
   creditedRuntimeSeconds: number;
   details?: FanRuntimeLedgerDetails;
+}
+
+export async function recordFanRuntimeInterval(params: {
+  airHandlerId: string;
+  interval: RuntimeInterval;
+  timeZone: string;
+}): Promise<void> {
+  const buckets = bucketRuntimeByHour([params.interval], params.timeZone);
+  for (const bucket of buckets) {
+    const existing = await getFanRuntimeLedger(
+      params.airHandlerId,
+      new Date(bucket.hourStartMs),
+    );
+    await upsertFanRuntimeLedger({
+      airHandlerId: params.airHandlerId,
+      hourStartAt: new Date(bucket.hourStartMs),
+      heatCoolRuntimeSeconds:
+        (existing?.heatCoolRuntimeSeconds ?? 0) + bucket.heatCoolSeconds,
+      fanOnlyRuntimeSeconds:
+        (existing?.fanOnlyRuntimeSeconds ?? 0) + bucket.fanOnlySeconds,
+      creditedRuntimeSeconds:
+        (existing?.creditedRuntimeSeconds ?? 0) + bucket.creditedSeconds,
+      details: existing?.details,
+    });
+  }
 }
 
 export async function upsertFanRuntimeLedger(

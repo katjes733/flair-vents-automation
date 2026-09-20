@@ -9,6 +9,8 @@ import {
   type AirHandlerData,
 } from "~/server/util/routes/airHandler";
 import { getZonesForAirHandler } from "~/server/util/routes/zone";
+import { getSystemSettings } from "~/server/util/routes/systemSettings";
+import { isFanRuntimeConfigurationValid } from "~/server/domain/fanRuntime/scheduler";
 import type { AirHandlerConfig } from "~/shared/schemas/airHandlerConfig";
 
 /**
@@ -43,16 +45,42 @@ async function assertNoFlairZoneConflict(
  * Decisions"). Checked here, at save time, rather than only at tick time,
  * so a misconfigured handler can't silently go live without it.
  */
-function assertNoConfigIssues(fields: {
-  active: boolean;
-  config: AirHandlerConfig;
-}): void {
+async function assertNoConfigIssues(
+  installationId: string,
+  fields: {
+    active: boolean;
+    config: AirHandlerConfig;
+  },
+): Promise<void> {
   const issues = validateAirHandlerConfig({
     active: fields.active,
     tonnageTons: fields.config.tonnage_tons,
   }).filter((i) => i.severity === "error");
   if (issues.length > 0) {
     throw new HttpError(issues.map((i) => i.message).join(" "), 400);
+  }
+  if (fields.config.fan_runtime_enabled) {
+    const settings = await getSystemSettings(installationId);
+    const valid = isFanRuntimeConfigurationValid(
+      {
+        enabled: true,
+        targetMinutesPerHour: fields.config.fan_runtime_target_minutes_per_hour,
+        minBlockMinutes: fields.config.fan_runtime_min_block_minutes,
+      },
+      {
+        minBlockMinutes: settings.fan_runtime_min_block_minutes,
+        maxBlockMinutes: settings.fan_runtime_max_block_minutes,
+        maxStartsPerHour: settings.fan_runtime_max_starts_per_hour,
+        minGapMinutes: settings.fan_runtime_min_gap_minutes,
+        maxTargetMinutesPerHour: 30,
+      },
+    );
+    if (!valid) {
+      throw new HttpError(
+        `Fan runtime target for this air handler is infeasible under the current system fan policy.`,
+        400,
+      );
+    }
   }
 }
 
@@ -63,7 +91,7 @@ export async function createAirHandlerForInstallation(params: {
   active: boolean;
   config: AirHandlerConfig;
 }): Promise<AirHandlerData> {
-  assertNoConfigIssues(params);
+  await assertNoConfigIssues(params.installationId, params);
   await assertNoFlairZoneConflict(params.installationId, params.flairZoneId);
   return createAirHandler(params);
 }
@@ -89,7 +117,7 @@ export async function updateAirHandlerWithValidation(
     ...existing.config,
     ...patch.config,
   };
-  assertNoConfigIssues({
+  await assertNoConfigIssues(installationId, {
     active: patch.active ?? existing.active,
     config: mergedConfig,
   });

@@ -17,6 +17,10 @@ export interface AirHandlerConfig {
   // Which channel this handler's driving setpoint push is delivered
   // through — see "Direct HomeKit Thermostat Control" in the plan.
   setpoint_delivery_mode: "flair" | "homekit";
+  fan_runtime_enabled?: boolean;
+  fan_runtime_target_minutes_per_hour?: number;
+  fan_runtime_min_block_minutes?: number;
+  fan_runtime_ecobee_schedule_acknowledged?: boolean;
 }
 
 export interface AirHandler {

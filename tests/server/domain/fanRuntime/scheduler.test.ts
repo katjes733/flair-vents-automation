@@ -7,7 +7,6 @@ import {
   type FanBlockPolicy,
 } from "~/server/domain/fanRuntime/scheduler";
 
-const HOUR = 60 * 60 * 1000;
 const policy: FanBlockPolicy = {
   minBlockMinutes: 5,
   maxBlockMinutes: 15,
@@ -185,5 +184,3 @@ describe("selectNextFanBlock", () => {
     ).toBeNull();
   });
 });
-
-void HOUR;

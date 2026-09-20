@@ -28,7 +28,7 @@ afterEach(cleanup);
 // started failing in CI more than it ever did locally. Bumped file-wide
 // (not per-test) with real margin against that gap; expect to revisit this
 // again as more settings fields land here.
-vi.setConfig({ testTimeout: 30000 });
+vi.setConfig({ testTimeout: 60000 });
 
 const { fetchSettings, updateSettings, fetchZones } = vi.hoisted(() => ({
   fetchSettings: vi.fn(),
@@ -103,7 +103,7 @@ describe("SystemParametersPage", () => {
     renderPage();
     await screen.findByLabelText("Staleness threshold (min)");
     expect(
-      screen.getByText("Show advanced parameters (68 hidden)"),
+      screen.getByText("Show advanced parameters (74 hidden)"),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch"));
@@ -113,7 +113,7 @@ describe("SystemParametersPage", () => {
       screen.getByText("Dynamic thermal spike detection"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Show advanced parameters (68 shown)"),
+      screen.getByText("Show advanced parameters (74 shown)"),
     ).toBeInTheDocument();
     expect(localStorage.getItem("systemParametersShowAdvanced")).toBe("true");
   });

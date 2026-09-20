@@ -37,6 +37,7 @@ export interface FanBlockRequest {
   hourStartMs: number;
   nowMs: number;
   lastFanOnlyEndMs: number | null;
+  timeZone?: string;
 }
 
 export interface FanBlockDecision {
@@ -44,7 +45,10 @@ export interface FanBlockDecision {
   reason: "deficit" | "minimum_overshoot";
 }
 
-function hourStartMs(timestampMs: number, timeZone: string): number {
+export function fanRuntimeHourStartMs(
+  timestampMs: number,
+  timeZone: string,
+): number {
   return moment.tz(timestampMs, timeZone).startOf("hour").valueOf();
 }
 
@@ -110,11 +114,11 @@ export function bucketRuntimeByHour(
   );
   if (validIntervals.length === 0) return [];
 
-  const firstHour = hourStartMs(
+  const firstHour = fanRuntimeHourStartMs(
     Math.min(...validIntervals.map((interval) => interval.startMs)),
     timeZone,
   );
-  const lastHour = hourStartMs(
+  const lastHour = fanRuntimeHourStartMs(
     Math.max(...validIntervals.map((interval) => interval.endMs - 1)),
     timeZone,
   );
@@ -234,7 +238,10 @@ export function selectNextFanBlock(
   if (deficitMinutes <= 0) return null;
   if (request.startsThisHour >= policy.maxStartsPerHour) return null;
 
-  const hourEndMs = request.hourStartMs + 60 * 60 * 1000;
+  const hourEndMs = nextHourStartMs(
+    request.hourStartMs,
+    request.timeZone ?? "UTC",
+  );
   const remainingMs = hourEndMs - request.nowMs;
   const minimumMs = policy.minBlockMinutes * 60 * 1000;
   if (remainingMs < minimumMs) return null;

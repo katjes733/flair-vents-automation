@@ -8,6 +8,9 @@ import {
   updateSystemSettings,
 } from "~/server/util/routes/systemSettings";
 import { getZonesForInstallation } from "~/server/util/routes/zone";
+import { getActiveAirHandlers } from "~/server/util/routes/airHandler";
+import { isFanRuntimeConfigurationValid } from "~/server/domain/fanRuntime/scheduler";
+import { HttpError } from "~/server/util/httpError";
 import { redis } from "~/server/util/redis";
 import type { SystemSettingsConfig } from "~/shared/schemas/systemSettings";
 
@@ -65,6 +68,38 @@ export async function updateSettingsForInstallation(
     );
   }
   merged.zone_priority_order = reconciledOrder;
+
+  const fanPolicy = {
+    minBlockMinutes: merged.fan_runtime_min_block_minutes,
+    maxBlockMinutes: merged.fan_runtime_max_block_minutes,
+    maxStartsPerHour: merged.fan_runtime_max_starts_per_hour,
+    minGapMinutes: merged.fan_runtime_min_gap_minutes,
+    maxTargetMinutesPerHour: 30,
+  };
+  const impactedAirHandlers = (await getActiveAirHandlers(installationId))
+    .filter((airHandler) => airHandler.config.fan_runtime_enabled)
+    .filter(
+      (airHandler) =>
+        !isFanRuntimeConfigurationValid(
+          {
+            enabled: true,
+            targetMinutesPerHour:
+              airHandler.config.fan_runtime_target_minutes_per_hour,
+            minBlockMinutes: airHandler.config.fan_runtime_min_block_minutes,
+          },
+          fanPolicy,
+        ),
+    )
+    .map(
+      (airHandler) =>
+        `${airHandler.name} (${airHandler.config.fan_runtime_target_minutes_per_hour} min/hour target)`,
+    );
+  if (impactedAirHandlers.length > 0) {
+    throw new HttpError(
+      `Fan runtime settings would make these air handlers infeasible: ${impactedAirHandlers.join(", ")}. Adjust the air-handler target or the proposed system parameters first.`,
+      400,
+    );
+  }
 
   await updateSystemSettings(installationId, merged);
 

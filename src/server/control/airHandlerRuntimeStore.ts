@@ -54,7 +54,40 @@ export interface AirHandlerRuntimeState {
   // takes to actually confirm — see tick.ts's own none_eligible branch.
   // Only replaced once a new zone actually starts demanding again.
   terminationAnchorZoneId: string | null;
+  fanRuntime?: FanRuntimeRuntimeState;
 }
+
+export interface FanRuntimeRuntimeState {
+  owner: "app" | "external" | null;
+  phase: "idle" | "starting" | "running" | "stopping" | "interrupted";
+  requestedStartAtMs: number | null;
+  requestedDurationMs: number | null;
+  observedStartAtMs: number | null;
+  requestedStopAtMs: number | null;
+  observedStopAtMs: number | null;
+  confirmationDeadlineMs: number | null;
+  hourStartAtMs: number | null;
+  startsThisHour: number;
+  lastFanOnlyEndMs: number | null;
+  lastObservedAtMs: number | null;
+  lastObservedKind: "heat_cool" | "fan_only" | null;
+}
+
+export const EMPTY_FAN_RUNTIME_STATE: FanRuntimeRuntimeState = {
+  owner: null,
+  phase: "idle",
+  requestedStartAtMs: null,
+  requestedDurationMs: null,
+  observedStartAtMs: null,
+  requestedStopAtMs: null,
+  observedStopAtMs: null,
+  confirmationDeadlineMs: null,
+  hourStartAtMs: null,
+  startsThisHour: 0,
+  lastFanOnlyEndMs: null,
+  lastObservedAtMs: null,
+  lastObservedKind: null,
+};
 
 export const EMPTY_AIR_HANDLER_RUNTIME_STATE: AirHandlerRuntimeState = {
   trackedDrivingZoneId: null,
@@ -69,6 +102,7 @@ export const EMPTY_AIR_HANDLER_RUNTIME_STATE: AirHandlerRuntimeState = {
   equipmentFaultTriggerDwellSinceMs: null,
   ticksSinceDriftCheck: 0,
   terminationAnchorZoneId: null,
+  fanRuntime: { ...EMPTY_FAN_RUNTIME_STATE },
 };
 
 export interface AirHandlerRuntimeStore {
@@ -81,7 +115,14 @@ export function createRedisAirHandlerRuntimeStore(): AirHandlerRuntimeStore {
     async get(airHandlerId) {
       const raw = await redis.get(`ah:${airHandlerId}:runtime`);
       return raw
-        ? { ...EMPTY_AIR_HANDLER_RUNTIME_STATE, ...JSON.parse(raw) }
+        ? {
+            ...EMPTY_AIR_HANDLER_RUNTIME_STATE,
+            ...JSON.parse(raw),
+            fanRuntime: {
+              ...EMPTY_FAN_RUNTIME_STATE,
+              ...JSON.parse(raw).fanRuntime,
+            },
+          }
         : { ...EMPTY_AIR_HANDLER_RUNTIME_STATE };
     },
     async set(airHandlerId, state) {
