@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findOne, insert, update } = vi.hoisted(() => ({
+const { findOne, insert, update, remove } = vi.hoisted(() => ({
   findOne: vi.fn(),
   insert: vi.fn(),
   update: vi.fn(),
+  remove: vi.fn(),
 }));
 
 vi.mock("~/server/database/datasource", () => ({
   default: {
     getInstance: vi.fn(async () => ({
-      getRepository: vi.fn(() => ({ findOne, insert, update })),
+      getRepository: vi.fn(() => ({ findOne, insert, update, delete: remove })),
     })),
   },
 }));
@@ -22,6 +23,7 @@ describe("recordFanRuntimeInterval", () => {
     findOne.mockReset().mockResolvedValue(null);
     insert.mockReset().mockResolvedValue(undefined);
     update.mockReset().mockResolvedValue(undefined);
+    remove.mockReset().mockResolvedValue({ affected: 0 });
   });
 
   it("persists runtime split across two wall-clock hours", async () => {
@@ -73,6 +75,37 @@ describe("recordFanRuntimeInterval", () => {
       fan_only_runtime_seconds: 360,
       credited_runtime_seconds: 420,
       details: { attempted_blocks: 1 },
+    });
+  });
+
+  it("rounds fractional interval seconds before writing integer ledger columns", async () => {
+    await recordFanRuntimeInterval({
+      airHandlerId: "ah-1",
+      timeZone: "UTC",
+      interval: {
+        startMs: Date.UTC(2026, 0, 1, 12, 0, 0, 123),
+        endMs: Date.UTC(2026, 0, 1, 12, 0, 1, 456),
+        kind: "heat_cool",
+      },
+    });
+
+    expect(insert.mock.calls[0][0]).toMatchObject({
+      heat_cool_runtime_seconds: 1,
+      credited_runtime_seconds: 1,
+    });
+  });
+
+  it("purges rows older than the 24-hour retention window", async () => {
+    const { purgeOldFanRuntimeLedgers } =
+      await import("~/server/util/services/fanRuntimeLedgerService");
+    const now = new Date("2026-01-02T12:00:00.000Z");
+
+    await purgeOldFanRuntimeLedgers("ah-1", now);
+
+    expect(remove).toHaveBeenCalledOnce();
+    expect(remove.mock.calls[0][0]).toMatchObject({
+      air_handler_id: "ah-1",
+      hour_start_at: expect.anything(),
     });
   });
 });
