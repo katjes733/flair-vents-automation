@@ -55,9 +55,9 @@ export async function upsertFanRuntimeLedger(
   const fields = {
     air_handler_id: update.airHandlerId,
     hour_start_at: update.hourStartAt,
-    heat_cool_runtime_seconds: update.heatCoolRuntimeSeconds,
-    fan_only_runtime_seconds: update.fanOnlyRuntimeSeconds,
-    credited_runtime_seconds: update.creditedRuntimeSeconds,
+    heat_cool_runtime_seconds: Math.round(update.heatCoolRuntimeSeconds),
+    fan_only_runtime_seconds: Math.round(update.fanOnlyRuntimeSeconds),
+    credited_runtime_seconds: Math.round(update.creditedRuntimeSeconds),
     details: update.details ?? {},
   };
   if (existing) {

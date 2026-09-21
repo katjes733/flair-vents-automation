@@ -75,4 +75,21 @@ describe("recordFanRuntimeInterval", () => {
       details: { attempted_blocks: 1 },
     });
   });
+
+  it("rounds fractional interval seconds before writing integer ledger columns", async () => {
+    await recordFanRuntimeInterval({
+      airHandlerId: "ah-1",
+      timeZone: "UTC",
+      interval: {
+        startMs: Date.UTC(2026, 0, 1, 12, 0, 0, 123),
+        endMs: Date.UTC(2026, 0, 1, 12, 0, 1, 456),
+        kind: "heat_cool",
+      },
+    });
+
+    expect(insert.mock.calls[0][0]).toMatchObject({
+      heat_cool_runtime_seconds: 1,
+      credited_runtime_seconds: 1,
+    });
+  });
 });
