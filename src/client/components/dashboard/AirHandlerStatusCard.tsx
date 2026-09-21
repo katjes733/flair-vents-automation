@@ -80,20 +80,7 @@ export default function AirHandlerStatusCard({
     ? decision.zones.find((z) => z.zone_id === decision.driving_zone?.zone_id)
         ?.name
     : null;
-
-  // The true, combined effective state — `decision.dry_run` is computed
-  // server-side every tick as `globalDryRun || !live_air_handler_ids
-  // .includes(id)`, so it already reflects both gates at once. Driving the
-  // badge off this (not off `isPromoted` alone) is what makes "promoted but
-  // DRY_RUN is still on" a visibly distinct state instead of silently
-  // looking identical to genuinely live.
   const actuallyLive = decision !== null && decision.dry_run === false;
-
-  // The full breakdown behind the badge, so a not-yet-promoted handler
-  // (whose own decision.dry_run is always `true` regardless of the real
-  // global value) doesn't leave the actual DRY_RUN state a mystery —
-  // see "close the gap" in the implementation plan's DRY_RUN/
-  // live_air_handler_ids discussion.
   const badgeTooltip = `DRY_RUN (global, redeploy-gated): ${globalDryRun ? "on" : "off"} · Promoted (live_air_handler_ids): ${isPromoted ? "yes" : "no"}`;
 
   const handleConfirm = useCallback(async () => {
@@ -316,49 +303,7 @@ export default function AirHandlerStatusCard({
             )}
 
             {decision.fan_runtime?.enabled && (
-              <Box sx={{ mt: 1.5 }} data-testid="fan-runtime-status">
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    mb: 0.5,
-                  }}
-                >
-                  <Typography variant="caption" color="text.secondary">
-                    Fan-only circulation
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {decision.fan_runtime.credited_minutes.toFixed(1)} /{" "}
-                    {decision.fan_runtime.target_minutes_per_hour} min
-                  </Typography>
-                </Box>
-                <LinearProgress
-                  variant="determinate"
-                  value={Math.min(
-                    100,
-                    decision.fan_runtime.target_minutes_per_hour > 0
-                      ? (decision.fan_runtime.credited_minutes /
-                          decision.fan_runtime.target_minutes_per_hour) *
-                          100
-                      : 100,
-                  )}
-                  color={
-                    decision.fan_runtime.remaining_minutes === 0
-                      ? "success"
-                      : "primary"
-                  }
-                />
-                <Typography variant="caption" color="text.secondary">
-                  {FAN_PHASE_LABELS[decision.fan_runtime.phase] ??
-                    decision.fan_runtime.phase}
-                  {decision.fan_runtime.fan_is_blowing === true
-                    ? " · blower running"
-                    : decision.fan_runtime.fan_is_blowing === false
-                      ? " · blower stopped"
-                      : " · fan state unavailable"}
-                  {` · ${decision.fan_runtime.remaining_minutes.toFixed(1)} min remaining`}
-                </Typography>
-              </Box>
+              <FanRuntimeStatus decision={decision.fan_runtime} />
             )}
           </>
         )}
@@ -396,5 +341,66 @@ export default function AirHandlerStatusCard({
         </DialogActions>
       </Dialog>
     </Card>
+  );
+}
+
+function FanRuntimeStatus({
+  decision,
+}: {
+  decision: NonNullable<AirHandlerTickDecision["fan_runtime"]>;
+}) {
+  const totalBlowerMinutes =
+    decision.total_blower_minutes ?? decision.credited_minutes ?? 0;
+  const fanOnlyMinutes = decision.fan_only_minutes ?? 0;
+  const remainingMinutes =
+    decision.remaining_minutes ??
+    Math.max(0, decision.target_minutes_per_hour - totalBlowerMinutes);
+
+  return (
+    <Box sx={{ mt: 1.5 }} data-testid="fan-runtime-status">
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          mb: 0.5,
+        }}
+      >
+        <Typography variant="caption" color="text.secondary">
+          Blower runtime
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {totalBlowerMinutes.toFixed(1)} / {decision.target_minutes_per_hour}{" "}
+          min
+        </Typography>
+      </Box>
+      <LinearProgress
+        variant="determinate"
+        value={Math.min(
+          100,
+          decision.target_minutes_per_hour > 0
+            ? (totalBlowerMinutes / decision.target_minutes_per_hour) * 100
+            : 100,
+        )}
+        color={remainingMinutes === 0 ? "success" : "primary"}
+      />
+      <Typography variant="caption" color="text.secondary">
+        Fan-only runtime: {fanOnlyMinutes.toFixed(1)} min
+      </Typography>
+      <DiagnosticOnly>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 0.25 }}
+        >
+          {FAN_PHASE_LABELS[decision.phase] ?? decision.phase}
+          {decision.fan_is_blowing === true
+            ? " · blower running"
+            : decision.fan_is_blowing === false
+              ? " · blower stopped"
+              : " · fan state unavailable"}
+          {` · ${remainingMinutes.toFixed(1)} min remaining`}
+        </Typography>
+      </DiagnosticOnly>
+    </Box>
   );
 }

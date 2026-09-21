@@ -149,6 +149,8 @@ export interface AirHandlerTickDecision {
     enabled: boolean;
     target_minutes_per_hour: number;
     credited_minutes: number;
+    total_blower_minutes: number;
+    fan_only_minutes: number;
     remaining_minutes: number;
     phase: "idle" | "starting" | "running" | "stopping" | "interrupted";
     owner: "app" | "external" | null;

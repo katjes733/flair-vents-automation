@@ -388,7 +388,9 @@ export async function runTick(
   let homeKitSensorReadings: Map<string, HomeKitSensorReading> | null = null;
   const fanRuntimeEnabled = airHandler.config.fan_runtime_enabled === true;
   let fanRuntimeLedger: {
+    heatCoolRuntimeSeconds: number;
     creditedRuntimeSeconds: number;
+    fanOnlyRuntimeSeconds: number;
   } | null = null;
   let fanRuntimeError: string | null = null;
   if (deliveryMode === "homekit" || fanRuntimeEnabled) {
@@ -686,6 +688,16 @@ export async function runTick(
           },
           timeZone: ctx.settings.home_timezone,
         });
+        if (deps.getFanRuntimeLedger) {
+          const currentHourStartMs = fanRuntimeHourStartMs(
+            startedAtMs,
+            ctx.settings.home_timezone,
+          );
+          fanRuntimeLedger = await deps.getFanRuntimeLedger(
+            airHandler.id,
+            new Date(currentHourStartMs),
+          );
+        }
       } catch (err) {
         log.warn({ err }, "Could not persist observed fan runtime interval");
       }
@@ -750,6 +762,20 @@ export async function runTick(
   const callDurationMinutes =
     callActive && callStartedAtMs !== null
       ? (startedAtMs - callStartedAtMs) / 60000
+      : 0;
+  const liveObservedRuntimeSeconds =
+    fanRuntimeEnabled &&
+    nextFanRuntime.lastObservedAtMs !== null &&
+    nextFanRuntime.lastObservedKind !== null
+      ? Math.max(0, (startedAtMs - nextFanRuntime.lastObservedAtMs) / 1000)
+      : 0;
+  const liveHeatCoolSeconds =
+    nextFanRuntime.lastObservedKind === "heat_cool"
+      ? liveObservedRuntimeSeconds
+      : 0;
+  const liveFanOnlySeconds =
+    nextFanRuntime.lastObservedKind === "fan_only"
+      ? liveObservedRuntimeSeconds
       : 0;
 
   const setpointWriteFailingKey = `alert:setpointWriteFailing:${airHandler.id}`;
@@ -3103,11 +3129,26 @@ export async function runTick(
       enabled: fanRuntimeEnabled,
       target_minutes_per_hour:
         airHandler.config.fan_runtime_target_minutes_per_hour ?? 0,
-      credited_minutes: (fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) / 60,
+      credited_minutes:
+        ((fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) +
+          liveHeatCoolSeconds +
+          liveFanOnlySeconds) /
+        60,
+      total_blower_minutes:
+        ((fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) +
+          liveHeatCoolSeconds +
+          liveFanOnlySeconds) /
+        60,
+      fan_only_minutes:
+        ((fanRuntimeLedger?.fanOnlyRuntimeSeconds ?? 0) + liveFanOnlySeconds) /
+        60,
       remaining_minutes: Math.max(
         0,
         (airHandler.config.fan_runtime_target_minutes_per_hour ?? 0) -
-          (fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) / 60,
+          ((fanRuntimeLedger?.creditedRuntimeSeconds ?? 0) +
+            liveHeatCoolSeconds +
+            liveFanOnlySeconds) /
+            60,
       ),
       phase: nextFanRuntime.phase,
       owner: nextFanRuntime.owner,
