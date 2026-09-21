@@ -1,10 +1,13 @@
 import AppDataSource from "~/server/database/datasource";
+import { LessThan } from "typeorm";
 import {
   bucketRuntimeByHour,
   type RuntimeInterval,
 } from "~/server/domain/fanRuntime/scheduler";
 import { touch, withTimestamps } from "~/server/util/entityTimestamps";
 import type { FanRuntimeLedgerDetails } from "~/server/database/models/fanRuntimeLedger";
+
+const FAN_RUNTIME_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export interface FanRuntimeLedgerUpdate {
   airHandlerId: string;
@@ -38,6 +41,21 @@ export async function recordFanRuntimeInterval(params: {
       details: existing?.details,
     });
   }
+  await purgeOldFanRuntimeLedgers(params.airHandlerId);
+}
+
+/** Keep only the current and preceding 24 wall-clock hours per handler. */
+export async function purgeOldFanRuntimeLedgers(
+  airHandlerId: string,
+  now = new Date(),
+): Promise<void> {
+  const repo = (await AppDataSource.getInstance()).getRepository(
+    "FanRuntimeLedger",
+  );
+  await repo.delete({
+    air_handler_id: airHandlerId,
+    hour_start_at: LessThan(new Date(now.getTime() - FAN_RUNTIME_RETENTION_MS)),
+  });
 }
 
 export async function upsertFanRuntimeLedger(
